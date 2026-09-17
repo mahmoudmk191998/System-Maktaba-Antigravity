@@ -30,11 +30,63 @@ export const APP_VERSION = '2.4.0';
 /**
  * Standard modules mapping to their respective Firestore collections
  */
+/**
+ * Standard modules mapping to their respective Firestore collections
+ */
 export const MODULE_COLLECTION_MAP: Record<string, string[]> = {
+  catalog: [
+    'books',
+    'book_copies',
+    'authors',
+    'publishers',
+    'book_categories',
+    'shelves',
+    // Legacy catalog collections for archive compatibility
+    'menu_categories',
+    'menu_items',
+    'products',
+    'addons',
+  ],
+  circulation: [
+    'loans',
+    'loan_items',
+    'loan_renewals',
+    'holds',
+    'fines',
+    'fine_payments',
+    // Legacy orders for archive compatibility
+    'orders',
+    'order_items',
+    'order_status_history',
+    'pos_shifts',
+    'call_center_orders',
+  ],
+  members: [
+    'members',
+    'membership_plans',
+    'customers',
+  ],
+  acquisitions: [
+    'acquisition_orders',
+    'acquisition_items',
+    'suppliers',
+    'purchase_orders',
+  ],
+  inventory: [
+    'inventory_sessions',
+    'inventory_items',
+    'book_movements',
+    'book_transfers',
+    'lost_damaged_records',
+    'units',
+    'branch_stock',
+    'stock_movements',
+  ],
   hr: [
     'employees',
     'shifts',
     'attendance',
+    'employee_leaves',
     'payrolls',
     'salary_payments',
     'advances',
@@ -50,29 +102,7 @@ export const MODULE_COLLECTION_MAP: Record<string, string[]> = {
     'advance_installments',
     'accounting_records',
     'payments',
-  ],
-  inventory: [
-    'inventory_items',
-    'units',
-    'suppliers',
-    'purchase_orders',
-    'recipes',
-    'recipe_ingredients',
-    'branch_stock',
-    'stock_movements',
-  ],
-  orders: [
-    'orders',
-    'order_items',
-    'order_status_history',
-    'pos_shifts',
-    'call_center_orders',
-  ],
-  catalog: [
-    'menu_categories',
-    'menu_items',
-    'products',
-    'addons',
+    'fine_payments',
   ],
   operations: [
     'tables',
@@ -81,7 +111,11 @@ export const MODULE_COLLECTION_MAP: Record<string, string[]> = {
     'promotions',
     'coupons',
     'offers',
-    'customers',
+  ],
+  audit_system: [
+    'audit_logs',
+    'notifications',
+    'notification_reads',
   ],
   config: [
     'tenants',

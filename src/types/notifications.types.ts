@@ -1,13 +1,24 @@
 export type NotificationType = 'info' | 'success' | 'warning' | 'critical';
 
 export type NotificationCategory =
-  | 'orders'
+  | 'loan'
+  | 'overdue'
+  | 'reservation'
+  | 'fine'
+  | 'membership'
   | 'inventory'
+  | 'acquisition'
+  | 'transfer'
+  | 'hr'
+  | 'attendance'
+  | 'payroll'
+  | 'leave'
+  | 'system'
+  // Legacy aliases for backwards-compatibility
+  | 'orders'
   | 'purchases'
   | 'suppliers'
   | 'waste'
-  | 'attendance'
-  | 'payroll'
   | 'advances'
   | 'expenses'
   | 'security'
@@ -26,7 +37,24 @@ export interface AppNotification {
   message: string;
   branchId?: string | 'all';
   tenantId?: string;
-  relatedEntityType?: 'product' | 'order' | 'payroll' | 'expense' | 'supplier' | 'employee' | 'user' | 'setting' | 'purchase';
+  relatedEntityType?:
+    | 'book'
+    | 'copy'
+    | 'member'
+    | 'loan'
+    | 'fine'
+    | 'hold'
+    | 'acquisition'
+    | 'transfer'
+    | 'product'
+    | 'order'
+    | 'payroll'
+    | 'expense'
+    | 'supplier'
+    | 'employee'
+    | 'user'
+    | 'setting'
+    | 'purchase';
   relatedEntityId?: string;
   requiredPermission?: string;
   targetUserId?: string;
