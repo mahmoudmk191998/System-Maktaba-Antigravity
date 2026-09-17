@@ -1,0 +1,30 @@
+services:
+  - type: web
+    name: rms-api
+    env: node
+    rootDir: server
+    plan: free
+    buildCommand: npm ci && npm run build
+    startCommand: npm run start
+    healthCheckPath: /api/v1/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: RATE_LIMIT_STORE
+        value: in-memory
+      - key: WEBHOOK_QUEUE_PROVIDER
+        value: in-memory
+      - key: WEBHOOK_WORKER_ENABLED
+        value: "true"
+      - key: REALTIME_EVENT_BUS_PROVIDER
+        value: in-memory
+      - key: REALTIME_EVENT_REPLAY_ENABLED
+        value: "true"
+      - key: ALLOWED_ORIGINS
+        sync: false
+      - key: FIREBASE_PROJECT_ID
+        sync: false
+      - key: FIREBASE_CLIENT_EMAIL
+        sync: false
+      - key: FIREBASE_PRIVATE_KEY
+        sync: false

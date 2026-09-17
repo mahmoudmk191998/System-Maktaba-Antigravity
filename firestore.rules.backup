@@ -1,0 +1,13 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Basic rules: require auth for most things, but since some profiles are created during signup we allow write if auth != null
+    match /{document=**} {
+      allow read, write: if request.auth != null;
+    }
+    
+    // Specifically allow anyone to read public config or tenant stuff if needed
+    // But for this MVP, logged-in users can read/write everything they need
+  }
+}

@@ -1,0 +1,62 @@
+{
+  "name": "@rms/sdk",
+  "version": "1.0.0",
+  "description": "Official Universal TypeScript/JavaScript SDK for Restaurant Management System (RMS) API",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mahmoudmk191998/SYSTEM-Mat3am-Antigravity.git",
+    "directory": "packages/rms-sdk"
+  },
+  "homepage": "https://github.com/mahmoudmk191998/SYSTEM-Mat3am-Antigravity/tree/main/packages/rms-sdk#readme",
+  "bugs": {
+    "url": "https://github.com/mahmoudmk191998/SYSTEM-Mat3am-Antigravity/issues"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "lint": "tsc --noEmit",
+    "audit:package": "node scripts/audit-package.mjs",
+    "audit:secrets": "node scripts/scan-secrets.mjs",
+    "prepublishOnly": "npm run lint && npm test && npm run audit:secrets && npm run audit:package && npm run build"
+  },
+  "keywords": [
+    "rms",
+    "restaurant",
+    "sdk",
+    "api",
+    "pos",
+    "online-ordering",
+    "kiosk",
+    "webhooks"
+  ],
+  "author": "RMS Engineering Team",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^22.13.4",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.5"
+  }
+}

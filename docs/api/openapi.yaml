@@ -1,0 +1,1493 @@
+openapi: 3.0.3
+info:
+  title: RMS Restaurant Management System - Public SaaS REST API
+  description: >
+    Public REST API allowing external restaurant websites and client applications (e.g. Sushi Bar)
+    to query menu catalogs, categories, branches, delivery zones, promotions, and settings safely
+    under multi-tenant isolation.
+  version: 1.0.0
+servers:
+  - url: http://localhost:4000/api/v1
+    description: Local Development Server
+  - url: https://api.rms.example.com/api/v1
+    description: Production API Gateway
+
+components:
+  securitySchemes:
+    ApiKeyBearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: rms_live_<clientId>.<secret>
+      description: API Key credential issued to the restaurant client.
+
+  schemas:
+    ApiResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        request_id:
+          type: string
+          example: 6954d013-acf1-465d-979b-e4b20420532a
+
+    ApiError:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+              example: FORBIDDEN
+            message:
+              type: string
+              example: Permission denied. Missing required permission 'menu:read'
+            details:
+              type: object
+
+    PublicCategory:
+      type: object
+      properties:
+        id:
+          type: string
+          example: cat_sushi_rolls
+        name:
+          type: string
+          example: سوشي رول
+        name_en:
+          type: string
+          example: Sushi Rolls
+        icon:
+          type: string
+          example: 🍣
+        color:
+          type: string
+          example: bg-primary
+        sort_order:
+          type: integer
+          example: 1
+
+    PublicMenuItem:
+      type: object
+      properties:
+        id:
+          type: string
+          example: prod_california
+        category_id:
+          type: string
+          nullable: true
+          example: cat_sushi_rolls
+        name:
+          type: string
+          example: كاليفورنيا رول
+        name_en:
+          type: string
+          example: California Roll
+        description:
+          type: string
+          example: كراب طازج مع أفوكادو وخيار
+        description_en:
+          type: string
+          example: Fresh crab with avocado and cucumber
+        price:
+          type: number
+          example: 150
+        image_url:
+          type: string
+          nullable: true
+          example: https://cdn.example.com/california.jpg
+        preparation_time:
+          type: integer
+          example: 15
+        calories:
+          type: integer
+          nullable: true
+          example: 320
+        allergens:
+          type: array
+          items:
+            type: string
+          example: ["fish", "crustaceans"]
+        is_available:
+          type: boolean
+          example: true
+
+    PublicBranch:
+      type: object
+      properties:
+        id:
+          type: string
+          example: branch_sushi_main
+        name:
+          type: string
+          example: Sushi Bar Main Branch
+        address:
+          type: string
+          example: 123 Ocean Ave
+        phone:
+          type: string
+          example: 01011111111
+        is_active:
+          type: boolean
+          example: true
+
+    PublicDeliveryZone:
+      type: object
+      properties:
+        id:
+          type: string
+          example: zone_zamalek
+        name:
+          type: string
+          example: الزمالك
+        price:
+          type: number
+          example: 35
+        estimated_time:
+          type: integer
+          example: 40
+
+    PublicOffer:
+      type: object
+      properties:
+        id:
+          type: string
+          example: promo_active_10
+        name:
+          type: string
+          example: خصم الافتتاح 10%
+        type:
+          type: string
+          enum: [percentage, fixed, free_delivery]
+          example: percentage
+        value:
+          type: number
+          example: 10
+        min_order:
+          type: number
+          example: 200
+        max_discount:
+          type: number
+          nullable: true
+          example: 50
+        start_date:
+          type: string
+          format: date-time
+        end_date:
+          type: string
+          format: date-time
+        is_active:
+          type: boolean
+          example: true
+
+    PublicRestaurantSettings:
+      type: object
+      properties:
+        restaurant_name:
+          type: string
+          example: Sushi Bar Cairo
+        logo:
+          type: string
+          example: https://cdn.example.com/sushi-logo.png
+        currency:
+          type: string
+          example: EGP
+        locale:
+          type: string
+          example: ar-EG
+        timezone:
+          type: string
+          example: Africa/Cairo
+        tax_rate:
+          type: number
+          example: 14
+        tax_included:
+          type: boolean
+          example: false
+        phone:
+          type: string
+          example: 01000000000
+        address:
+          type: string
+          example: Cairo, Egypt
+        primary_color:
+          type: string
+          example: "#ea580c"
+
+security:
+  - ApiKeyBearerAuth: []
+
+paths:
+  /health:
+    get:
+      summary: Health Check
+      security: []
+      responses:
+        200:
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  service:
+                    type: string
+                    example: rms-api
+                  version:
+                    type: string
+                    example: v1
+
+  /menu:
+    get:
+      summary: Complete Public Menu Catalog
+      parameters:
+        - name: branch_id
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: X-Branch-ID
+          in: header
+          required: false
+          schema:
+            type: string
+      responses:
+        200:
+          description: Full menu catalog with categories and products
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          categories:
+                            type: array
+                            items:
+                              $ref: '#/components/schemas/PublicCategory'
+                          products:
+                            type: array
+                            items:
+                              $ref: '#/components/schemas/PublicMenuItem'
+                          branch:
+                            $ref: '#/components/schemas/PublicBranch'
+        401:
+          $ref: '#/components/schemas/ApiError'
+        403:
+          $ref: '#/components/schemas/ApiError'
+
+  /categories:
+    get:
+      summary: List Active Menu Categories
+      responses:
+        200:
+          description: List of sorted categories
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/PublicCategory'
+
+  /products:
+    get:
+      summary: List Products with Filtering & Pagination
+      parameters:
+        - name: category_id
+          in: query
+          schema:
+            type: string
+        - name: search
+          in: query
+          schema:
+            type: string
+        - name: available_only
+          in: query
+          schema:
+            type: boolean
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+            maximum: 100
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        200:
+          description: List of products
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/PublicMenuItem'
+
+  /products/{id}:
+    get:
+      summary: Get Product Details
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Product details
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/PublicMenuItem'
+        404:
+          description: Product not found
+
+  /products/{id}/availability:
+    get:
+      summary: Check Product Availability
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: branch_id
+          in: query
+          schema:
+            type: string
+      responses:
+        200:
+          description: Availability status
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          available:
+                            type: boolean
+                          reason:
+                            type: string
+                            nullable: true
+                            enum: [out_of_stock, disabled, branch_unavailable, not_found, null]
+
+  /branches:
+    get:
+      summary: List Restaurant Branches
+      responses:
+        200:
+          description: List of active branches
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/PublicBranch'
+
+  /delivery-zones:
+    get:
+      summary: List Delivery Zones
+      parameters:
+        - name: branch_id
+          in: query
+          schema:
+            type: string
+      responses:
+        200:
+          description: List of delivery zones
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/PublicDeliveryZone'
+
+  /delivery-zones/check:
+    post:
+      summary: Validate Delivery Zone and Calculate Fee
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - zone_id
+              properties:
+                zone_id:
+                  type: string
+                branch_id:
+                  type: string
+      responses:
+        200:
+          description: Delivery fee calculation
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          available:
+                            type: boolean
+                          delivery_fee:
+                            type: number
+                          estimated_time:
+                            type: integer
+        404:
+          description: Delivery zone not found
+
+  /offers:
+    get:
+      summary: List Active Promotions & Offers
+      responses:
+        200:
+          description: List of active promotions
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/PublicOffer'
+
+  /settings:
+    get:
+      summary: Public Restaurant Branding & Settings
+      responses:
+        200:
+          description: Public settings
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/PublicRestaurantSettings'
+
+  /pricing/preview:
+    post:
+      summary: Server-Side Order Pricing Preview & Calculation
+      description: >
+        Calculates authoritative product prices, addons, subtotal, discounts,
+        delivery fees, taxes, and final payable grand total. Client prices and
+        totals are strictly ignored/rejected.
+      parameters:
+        - name: X-Branch-ID
+          in: header
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - branch_id
+                - order_type
+                - items
+              properties:
+                branch_id:
+                  type: string
+                  example: branch_sushi_main
+                order_type:
+                  type: string
+                  enum: [dine_in, takeaway, delivery, curbside]
+                  example: delivery
+                items:
+                  type: array
+                  items:
+                    type: object
+                    required:
+                      - product_id
+                      - quantity
+                    properties:
+                      product_id:
+                        type: string
+                        example: prod_california
+                      quantity:
+                        type: integer
+                        minimum: 1
+                        maximum: 999
+                        example: 2
+                      addon_ids:
+                        type: array
+                        items:
+                          type: string
+                        example: ["addon_extra_ginger", "addon_spicy_mayo"]
+                      notes:
+                        type: string
+                coupon_code:
+                  type: string
+                  example: WELCOME20
+                promotion_id:
+                  type: string
+                delivery:
+                  type: object
+                  properties:
+                    zone_id:
+                      type: string
+                      example: zone_zamalek
+                    address:
+                      type: string
+      responses:
+        200:
+          description: Detailed authoritative pricing breakdown
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          tenant_id:
+                            type: string
+                          branch_id:
+                            type: string
+                          order_type:
+                            type: string
+                          currency:
+                            type: string
+                            example: EGP
+                          items:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                product_id:
+                                  type: string
+                                name:
+                                  type: string
+                                quantity:
+                                  type: integer
+                                unit_price:
+                                  type: number
+                                addons_total:
+                                  type: number
+                                line_subtotal:
+                                  type: number
+                                discount:
+                                  type: number
+                                line_total:
+                                  type: number
+                          subtotal:
+                            type: number
+                            example: 600
+                          discounts:
+                            type: array
+                            items:
+                              type: object
+                          discount_total:
+                            type: number
+                            example: 60
+                          delivery_fee:
+                            type: number
+                            example: 45
+                          tax_rate:
+                            type: number
+                            example: 14
+                          tax_included:
+                            type: boolean
+                            example: false
+                          tax_amount:
+                            type: number
+                            example: 75.6
+                          grand_total:
+                            type: number
+                            example: 660.6
+                          calculated_at:
+                            type: string
+                            format: date-time
+        400:
+          $ref: '#/components/schemas/ApiError'
+        403:
+          $ref: '#/components/schemas/ApiError'
+        404:
+          $ref: '#/components/schemas/ApiError'
+
+  /orders:
+    post:
+      summary: Create a Secure, Authoritatively-Priced Order
+      description: >
+        Creates an immutable historical order in the RMS with atomic order numbering,
+        server-calculated pricing, idempotency deduplication, and customer snapshotting.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: false
+          schema:
+            type: string
+          description: Unique client key for deduplication and retry protection.
+        - name: X-Branch-ID
+          in: header
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - branch_id
+                - order_type
+                - items
+              properties:
+                branch_id:
+                  type: string
+                  example: branch_sushi_main
+                order_type:
+                  type: string
+                  enum: [dine_in, takeaway, delivery, curbside]
+                  example: delivery
+                items:
+                  type: array
+                  items:
+                    type: object
+                    required:
+                      - product_id
+                      - quantity
+                    properties:
+                      product_id:
+                        type: string
+                        example: prod_california
+                      quantity:
+                        type: integer
+                        minimum: 1
+                        maximum: 999
+                        example: 2
+                      addon_ids:
+                        type: array
+                        items:
+                          type: string
+                        example: ["addon_extra_ginger", "addon_spicy_mayo"]
+                      notes:
+                        type: string
+                customer:
+                  type: object
+                  properties:
+                    name:
+                      type: string
+                      example: أحمد محمود
+                    phone:
+                      type: string
+                      example: "01012345678"
+                    address:
+                      type: string
+                      example: شارع 26 يوليو، الزمالك
+                delivery:
+                  type: object
+                  properties:
+                    zone_id:
+                      type: string
+                      example: zone_zamalek
+                    address:
+                      type: string
+                coupon_code:
+                  type: string
+                  example: WELCOME20
+                promotion_id:
+                  type: string
+                payment_method:
+                  type: string
+                  example: cash
+                notes:
+                  type: string
+                  example: بدون شطة
+      responses:
+        201:
+          description: Order created successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          order_id:
+                            type: string
+                            example: ord_a1b2c3d4e5f6g7h8i9j0
+                          order_number:
+                            type: string
+                            example: "#105"
+                          status:
+                            type: string
+                            example: pending
+                          payment_status:
+                            type: string
+                            example: pending
+                          pricing:
+                            type: object
+                            properties:
+                              subtotal:
+                                type: number
+                                example: 600
+                              discount_total:
+                                type: number
+                                example: 100
+                              delivery_fee:
+                                type: number
+                                example: 45
+                              tax_rate:
+                                type: number
+                                example: 14
+                              tax_amount:
+                                type: number
+                                example: 70
+                              grand_total:
+                                type: number
+                                example: 615
+                              currency:
+                                type: string
+                                example: EGP
+                          items_count:
+                            type: integer
+                            example: 1
+                          created_at:
+                            type: string
+                            format: date-time
+        400:
+          $ref: '#/components/schemas/ApiError'
+        401:
+          $ref: '#/components/schemas/ApiError'
+        403:
+          $ref: '#/components/schemas/ApiError'
+        409:
+          description: Idempotency Key Reused with Different Payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+
+  /orders/{id}:
+    get:
+      summary: Track Order by ID (Customer-Safe Snapshot)
+      description: >
+        Returns public order details, current status, item breakdown, and pricing snapshot.
+        Cross-tenant lookups return 404. Internal costs, recipes, and private credentials are stripped.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            example: ord_a1b2c3d4e5f6g7h8i9j0
+      responses:
+        200:
+          description: Safe public order details
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          id:
+                            type: string
+                          order_number:
+                            type: string
+                          branch_id:
+                            type: string
+                          order_type:
+                            type: string
+                          status:
+                            type: string
+                            enum: [pending, confirmed, preparing, ready, out_for_delivery, delivered, completed, cancelled]
+                          payment_status:
+                            type: string
+                          payment_method:
+                            type: string
+                          customer:
+                            type: object
+                          delivery:
+                            type: object
+                          pricing:
+                            type: object
+                          items:
+                            type: array
+                            items:
+                              type: object
+                          created_at:
+                            type: string
+                            format: date-time
+        401:
+          $ref: '#/components/schemas/ApiError'
+        403:
+          $ref: '#/components/schemas/ApiError'
+        404:
+          $ref: '#/components/schemas/ApiError'
+
+  /webhooks:
+    post:
+      summary: Create a Webhook Endpoint Subscription
+      description: >
+        Registers a new webhook URL to receive HMAC-SHA256 signed events for order updates.
+        The signing secret is returned ONLY ONCE in the 201 Created response.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - url
+                - events
+              properties:
+                url:
+                  type: string
+                  format: uri
+                  example: https://sushibar.example.com/api/webhooks
+                events:
+                  type: array
+                  items:
+                    type: string
+                    enum: [order.created, order.status_updated, order.confirmed, order.preparing, order.ready, order.out_for_delivery, order.delivered, order.completed, order.cancelled, menu.updated]
+                  example: ["order.status_updated", "order.ready"]
+                active:
+                  type: boolean
+                  default: true
+      responses:
+        201:
+          description: Webhook endpoint created with plaintext signing secret
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          endpoint:
+                            type: object
+                            properties:
+                              id:
+                                type: string
+                              url:
+                                type: string
+                              events:
+                                type: array
+                                items:
+                                  type: string
+                              active:
+                                type: boolean
+                              created_at:
+                                type: string
+                          secret:
+                            type: string
+                            example: whsec_8f9e0a1b2c3d4e5f6a7b8c9d0e1f2a3b
+        400:
+          $ref: '#/components/schemas/ApiError'
+        401:
+          $ref: '#/components/schemas/ApiError'
+        403:
+          $ref: '#/components/schemas/ApiError'
+
+    get:
+      summary: List Webhook Endpoints
+      description: Lists all registered webhook endpoints for the authenticated tenant. Secrets are never exposed.
+      responses:
+        200:
+          description: List of active webhook endpoints
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id:
+                              type: string
+                            url:
+                              type: string
+                            events:
+                              type: array
+                              items:
+                                type: string
+                            active:
+                              type: boolean
+
+  /webhooks/{id}:
+    delete:
+      summary: Delete a Webhook Endpoint
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Webhook endpoint deleted
+        401:
+          $ref: '#/components/schemas/ApiError'
+        403:
+          $ref: '#/components/schemas/ApiError'
+        404:
+          $ref: '#/components/schemas/ApiError'
+
+  /admin/api-clients:
+    post:
+      summary: Create API Client Credentials
+      description: >
+        Registers a new API client with role-based permissions and optional branch restrictions.
+        The plaintext client_secret is returned ONLY ONCE in the 201 Created response and NEVER stored in plaintext.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - name
+                - permissions
+              properties:
+                name:
+                  type: string
+                  example: Sushi Bar Mobile App
+                description:
+                  type: string
+                  example: External customer ordering mobile application
+                permissions:
+                  type: array
+                  items:
+                    type: string
+                  example: ["menu:read", "orders:create", "orders:read"]
+                allowed_branch_ids:
+                  type: array
+                  items:
+                    type: string
+                  example: ["branch_sushi_main"]
+                allowed_origins:
+                  type: array
+                  items:
+                    type: string
+                  example: ["https://sushibar.example.com"]
+                expires_in_days:
+                  type: integer
+                  example: 365
+      responses:
+        201:
+          description: API client created with plaintext secret (shown once)
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          client_id:
+                            type: string
+                            example: cli_8f9e0a1b2c3d
+                          client_secret:
+                            type: string
+                            example: rms_sec_9f8e7d6c5b4a3f2e1d0c9b8a
+                          credential_header:
+                            type: string
+                            example: rms_live_cli_8f9e0a1b2c3d.rms_sec_9f8e7d6c5b4a3f2e1d0c9b8a
+                          warning:
+                            type: string
+                            example: Store this secret securely. It will not be shown again.
+        400:
+          $ref: '#/components/schemas/ApiError'
+        401:
+          $ref: '#/components/schemas/ApiError'
+        403:
+          $ref: '#/components/schemas/ApiError'
+
+    get:
+      summary: List Tenant API Clients
+      description: Returns safe metadata of all API clients for the authenticated tenant. Never exposes secrets or hashes.
+      responses:
+        200:
+          description: List of API clients
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          type: object
+
+  /admin/api-clients/{id}:
+    get:
+      summary: Get Single API Client Metadata
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Safe API client metadata
+        401:
+          $ref: '#/components/schemas/ApiError'
+        403:
+          $ref: '#/components/schemas/ApiError'
+        404:
+          $ref: '#/components/schemas/ApiError'
+
+    patch:
+      summary: Update API Client Configuration
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                description:
+                  type: string
+                permissions:
+                  type: array
+                  items:
+                    type: string
+                allowed_branch_ids:
+                  type: array
+                  items:
+                    type: string
+                allowed_origins:
+                  type: array
+                  items:
+                    type: string
+      responses:
+        200:
+          description: Updated API client metadata
+        400:
+          $ref: '#/components/schemas/ApiError'
+        401:
+          $ref: '#/components/schemas/ApiError'
+        403:
+          $ref: '#/components/schemas/ApiError'
+        404:
+          $ref: '#/components/schemas/ApiError'
+
+  /admin/api-clients/{id}/enable:
+    post:
+      summary: Enable API Client
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Client enabled
+        400:
+          $ref: '#/components/schemas/ApiError'
+        404:
+          $ref: '#/components/schemas/ApiError'
+
+  /admin/api-clients/{id}/disable:
+    post:
+      summary: Disable API Client
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Client disabled
+        404:
+          $ref: '#/components/schemas/ApiError'
+
+  /admin/api-clients/{id}/revoke:
+    post:
+      summary: Permanently Revoke API Client
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Client permanently revoked
+        404:
+          $ref: '#/components/schemas/ApiError'
+
+  /admin/api-clients/{id}/rotate-secret:
+    post:
+      summary: Rotate Secret for API Client
+      description: Invalidates old secret immediately, generates new random secret, and returns plaintext secret once.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: New client secret returned once
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          client_id:
+                            type: string
+                          client_secret:
+                            type: string
+                          rotated_at:
+                            type: string
+                          warning:
+                            type: string
+        400:
+          $ref: '#/components/schemas/ApiError'
+  /admin/api-clients/{id}/audit-logs:
+    get:
+      summary: Get Audit Logs for API Client
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Audit log history for the client
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id:
+                              type: string
+                            action:
+                              type: string
+                            actor_id:
+                              type: string
+                            timestamp:
+                              type: string
+                            metadata:
+                              type: object
+        404:
+          $ref: '#/components/schemas/ApiError'
+
+  /admin/api-clients/{id}/usage:
+    get:
+      summary: Get Usage Analytics for API Client
+      description: Returns aggregated metrics (total requests, 4xx, 5xx, rate limit violations, avg response time) and paginated event records.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: startDate
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: endDate
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: endpoint
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: statusCode
+          in: query
+          required: false
+          schema:
+            type: integer
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 1
+        - name: pageSize
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 20
+      responses:
+        200:
+          description: Client usage summary and event metrics
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          client_id:
+                            type: string
+                          tenant_id:
+                            type: string
+                          total_requests:
+                            type: integer
+                          successful_requests:
+                            type: integer
+                          failed_requests:
+                            type: integer
+                          count_4xx:
+                            type: integer
+                          count_5xx:
+                            type: integer
+                          rate_limit_violations:
+                            type: integer
+                          avg_response_time_ms:
+                            type: number
+                          page:
+                            type: integer
+                          page_size:
+                            type: integer
+                          total_events:
+                            type: integer
+                          events:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                id:
+                                  type: string
+                                endpoint:
+                                  type: string
+                                method:
+                                  type: string
+                                status_code:
+                                  type: integer
+                                response_time_ms:
+                                  type: integer
+                                request_id:
+                                  type: string
+                                timestamp:
+                                  type: string
+        404:
+          $ref: '#/components/schemas/ApiError'
+
+  /admin/integrations:
+    post:
+      summary: Onboard new universal integration
+      description: Creates an integration, underlying API client, and optional Webhook in one step.
+      tags:
+        - Admin Integrations
+      security:
+        - ApiKeyBearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - name
+                - type
+                - permissions
+              properties:
+                name:
+                  type: string
+                type:
+                  type: string
+                  enum: [custom_website, mobile_app, kiosk, delivery_aggregator, pos_terminal, third_party_service, other]
+                allowed_branch_ids:
+                  type: array
+                  items:
+                    type: string
+                allowed_origins:
+                  type: array
+                  items:
+                    type: string
+                permissions:
+                  type: array
+                  items:
+                    type: string
+                rate_limit_tier:
+                  type: string
+                  enum: [free, standard, premium]
+                webhook_url:
+                  type: string
+                webhook_events:
+                  type: array
+                  items:
+                    type: string
+      responses:
+        201:
+          description: Integration onboarded successfully
+        400:
+          $ref: '#/components/schemas/ApiError'
+    get:
+      summary: List universal integrations
+      tags:
+        - Admin Integrations
+      security:
+        - ApiKeyBearerAuth: []
+      responses:
+        200:
+          description: List of integrations
+
+  /admin/integrations/{id}:
+    get:
+      summary: Get integration details
+      tags:
+        - Admin Integrations
+      security:
+        - ApiKeyBearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Integration details
+        404:
+          $ref: '#/components/schemas/ApiError'
+    patch:
+      summary: Update integration
+      tags:
+        - Admin Integrations
+      security:
+        - ApiKeyBearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Updated integration
+    delete:
+      summary: Revoke integration
+      tags:
+        - Admin Integrations
+      security:
+        - ApiKeyBearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Revoked integration
+
+  /admin/integrations/{id}/rotate-secret:
+    post:
+      summary: Rotate integration secret
+      tags:
+        - Admin Integrations
+      security:
+        - ApiKeyBearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: New secret revealed once
+

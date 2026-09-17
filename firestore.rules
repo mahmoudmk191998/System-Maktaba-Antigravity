@@ -1,0 +1,387 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // =========================================================================
+    // 1. SENSITIVE SERVER-ONLY COLLECTIONS
+    // Direct Browser / Mobile Client SDK access is STRICTLY FORBIDDEN.
+    // Only RMS Backend (Firebase Admin SDK) can access these collections.
+    // =========================================================================
+
+    // API Credentials, Hashes, and Secrets
+    match /api_clients/{clientId} {
+      allow read, write: if false;
+    }
+    match /integrations/{integrationId} {
+      allow read, write: if false;
+    }
+
+    // Audit logs of API client key lifecycle actions
+    match /api_client_audit_logs/{logId} {
+      allow read, write: if false;
+    }
+
+    // API Usage telemetry and event streams
+    match /api_usage_events/{eventId} {
+      allow read, write: if false;
+    }
+
+    // Webhook destination endpoints and secret hashes
+    match /webhook_endpoints/{endpointId} {
+      allow read, write: if false;
+    }
+
+    // Outgoing webhook delivery queues and payloads
+    match /webhook_events/{eventId} {
+      allow read, write: if false;
+    }
+
+    // Webhook delivery attempts and response metadata
+    match /webhook_delivery_attempts/{attemptId} {
+      allow read, write: if false;
+    }
+    match /webhook_dead_letters/{letterId} {
+      allow read, write: if false;
+    }
+
+    // Atomic sequential order numbering counters
+    match /branch_counters/{counterId} {
+      allow read, write: if false;
+    }
+    match /orderCounters/{counterId} {
+      allow read, write: if false;
+    }
+
+    // SHA-256 request fingerprints and cached idempotent snapshots
+    match /idempotency_records/{recordId} {
+      allow read, write: if false;
+    }
+
+    // =========================================================================
+    // 2. POS & AUTHENTICATED STAFF APPLICATION COLLECTIONS
+    // Authenticated users with valid session can interact according to POS workflows.
+    // =========================================================================
+
+    // Core Restaurant & Branch Configuration
+    match /tenants/{tenantId} {
+      allow read, write: if isAuthenticated();
+    }
+    match /branches/{branchId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    // HR Attendance Settings (Public read for unauthenticated QR token validation)
+    match /hr_settings/{tenantId} {
+      allow read: if true;
+      allow write: if isAuthenticated();
+    }
+
+    // HR Employees (Public read for active employee selection in QR screen; modifications restricted to authenticated managers)
+    match /employees/{employeeId} {
+      allow read: if true;
+      allow write: if isAuthenticated();
+    }
+
+    // HR Shifts (Public read for shift schedule calculations)
+    match /shifts/{shiftId} {
+      allow read: if true;
+      allow write: if isAuthenticated();
+    }
+
+    // HR Attendance Records
+    // Public attendance screen can check status (read), check-in (create), and check-out (update).
+    // Deletion is STRICTLY RESTRICTED to authenticated managers only.
+    match /attendance/{attendanceId} {
+      allow read: if true;
+      allow create: if request.resource.data.keys().hasAll(['employee_id', 'tenant_id']);
+      allow update: if request.resource.data.employee_id == resource.data.employee_id
+                    && request.resource.data.tenant_id == resource.data.tenant_id;
+      allow delete: if isAuthenticated();
+    }
+
+    // HR Payroll, Advances, and Salary Payments (Strictly Authenticated Staff/Managers)
+    match /payrolls/{payrollId} {
+      allow read, write: if isAuthenticated();
+    }
+    match /salary_payments/{paymentId} {
+      allow read, write: if isAuthenticated();
+    }
+    match /advances/{advanceId} {
+      allow read, write: if isAuthenticated();
+    }
+    match /advance_installments/{installmentId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    // Audit Logs (Authenticated read and creation; updates and deletions strictly forbidden)
+    match /audit_logs/{logId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update, delete: if false;
+    }
+
+    // Menu Catalog, Items, Categories, Addons
+    match /menu_categories/{categoryId} {
+      allow read, write: if isAuthenticated();
+    }
+    match /menu_items/{itemId} {
+      allow read, write: if isAuthenticated();
+    }
+    match /products/{productId} {
+      allow read, write: if isAuthenticated();
+    }
+    match /addons/{addonId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    // Orders, Line Items, and Status History
+    match /orders/{orderId} {
+      allow read, write: if isAuthenticated();
+    }
+    match /order_items/{itemId} {
+      allow read, write: if isAuthenticated();
+    }
+    match /order_status_history/{historyId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    // Transactions, Shifts, Financial Records
+    match /payments/{paymentId} {
+      allow read, write: if isAuthenticated();
+    }
+    match /pos_shifts/{shiftId} {
+      allow read, write: if isAuthenticated();
+    }
+    match /accounting_records/{recordId} {
+      allow read, write: if isAuthenticated();
+    }
+    match /daily_closings/{closingId} {
+      allow read, write: if isAuthenticated();
+    }
+    match /expenses/{expenseId} {
+      allow read, write: if isAuthenticated();
+    }
+    match /call_center_orders/{orderId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    // Dining Tables & Reservations
+    match /tables/{tableId} {
+      allow read, write: if isAuthenticated();
+    }
+    match /reservations/{resId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    // Inventory, Recipes & Procurement
+    match /inventory_items/{itemId} {
+      allow read, write: if isAuthenticated();
+    }
+    match /units/{unitId} {
+      allow read, write: if isAuthenticated();
+    }
+    match /suppliers/{supplierId} {
+      allow read, write: if isAuthenticated();
+    }
+    match /purchase_orders/{orderId} {
+      allow read, write: if isAuthenticated();
+    }
+    match /recipes/{recipeId} {
+      allow read, write: if isAuthenticated();
+    }
+    match /recipe_ingredients/{ingredientId} {
+      allow read, write: if isAuthenticated();
+    }
+    match /branch_stock/{stockId} {
+      allow read, write: if isAuthenticated();
+    }
+    match /stock_movements/{movementId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    // Marketing, Discounts & Delivery Zones
+    match /delivery_zones/{zoneId} {
+      allow read, write: if isAuthenticated();
+    }
+    match /promotions/{promoId} {
+      allow read, write: if isAuthenticated();
+    }
+    match /coupons/{couponId} {
+      allow read, write: if isAuthenticated();
+    }
+    match /offers/{offerId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    // User Profiles (Users cannot change their own role or self-activate)
+    match /profiles/{profileId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update: if isAuthenticated() && (
+        !('role' in request.resource.data) || request.resource.data.role == resource.data.role || request.auth.uid != profileId
+      ) && (
+        !('status' in request.resource.data) || request.resource.data.status == resource.data.status || request.auth.uid != profileId
+      );
+      allow delete: if isAuthenticated() && request.auth.uid != profileId;
+    }
+
+    // User Roles (Prevent self-granting / privilege escalation)
+    match /user_roles/{roleId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && request.resource.data.user_id != request.auth.uid;
+      allow update, delete: if isAuthenticated() && resource.data.user_id != request.auth.uid;
+    }
+
+    // User Permissions (Prevent self-granting / privilege escalation)
+    match /user_permissions/{permId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && request.resource.data.user_id != request.auth.uid;
+      allow update, delete: if isAuthenticated() && resource.data.user_id != request.auth.uid;
+    }
+
+    match /users/{userId} {
+      allow read, write: if isAuthenticated();
+    }
+    match /customers/{customerId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    // =========================================================================
+    // Smart Notifications Center & Read State Security
+    // =========================================================================
+    match /notifications/{notificationId} {
+      allow read: if isAuthenticated();
+
+      // System Notifications Creation Guard:
+      // Strictly prevent client forgery of sensitive notifications (security, settings, payroll, expenses, etc.)
+      allow create: if isAuthenticated() && (
+        // 1. Sovereign Admins and Owners can create validated notifications
+        request.auth.token.role in ['owner', 'admin'] ||
+        get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.role in ['owner', 'admin'] ||
+
+        // 2. Staff members can only create notifications corresponding to their authorized department:
+        (
+          request.resource.data.category in ['orders', 'inventory', 'purchases', 'suppliers', 'waste', 'attendance', 'payroll', 'advances', 'expenses'] &&
+          request.resource.data.type in ['info', 'success', 'warning', 'critical'] &&
+          request.resource.data.priority in ['low', 'normal', 'high', 'critical'] &&
+          request.resource.data.status in ['active', 'resolved'] &&
+
+          // Non-admins can NEVER forge security or settings notifications
+          request.resource.data.category != 'security' &&
+          request.resource.data.category != 'settings' &&
+
+          (
+            // Orders: cashiers, waiters, managers, accountants
+            (request.resource.data.category == 'orders' &&
+              get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.role in ['cashier', 'waiter', 'manager', 'accountant']) ||
+
+            // Inventory, Waste, Purchases, Suppliers: inventory, accountant, manager
+            (request.resource.data.category in ['inventory', 'waste', 'purchases', 'suppliers'] &&
+              get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.role in ['inventory', 'manager', 'accountant']) ||
+
+            // Attendance: hr, manager
+            (request.resource.data.category == 'attendance' &&
+              get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.role in ['hr', 'manager']) ||
+
+            // Payroll, Advances, Expenses: accountant
+            (request.resource.data.category in ['payroll', 'advances', 'expenses'] &&
+              get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.role in ['accountant'])
+          )
+        )
+      );
+
+      // Notification Updates Guard:
+      // Content fields (title, message, category, priority, deduplicationKey, branchId, requiredPermission) are strictly IMMUTABLE.
+      // Only status / resolvedAt can be updated, and only by authorized personnel (admin/owner/manager or inventory for stock)
+      allow update: if isAuthenticated() && (
+        request.resource.data.title == resource.data.title &&
+        request.resource.data.message == resource.data.message &&
+        request.resource.data.category == resource.data.category &&
+        request.resource.data.priority == resource.data.priority &&
+        request.resource.data.branchId == resource.data.branchId &&
+        (!('deduplicationKey' in resource.data) || request.resource.data.deduplicationKey == resource.data.deduplicationKey) &&
+        (!('requiredPermission' in resource.data) || request.resource.data.requiredPermission == resource.data.requiredPermission) &&
+        (
+          request.auth.token.role in ['owner', 'admin'] ||
+          get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.role in ['owner', 'admin', 'manager'] ||
+          (resource.data.category in ['inventory', 'waste'] &&
+            get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.role in ['inventory'])
+        )
+      );
+
+      // Deletion is strictly restricted to Owner / Admin
+      allow delete: if isAuthenticated() && (
+        request.auth.token.role in ['owner', 'admin'] || 
+        get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.role in ['owner', 'admin']
+      );
+    }
+
+    match /notification_reads/{readId} {
+      // User can only view and manage their own read tracking
+      allow read, write: if isAuthenticated() && (
+        readId.matches('^' + request.auth.uid + '_.*') ||
+        (resource != null && resource.data.userId == request.auth.uid) ||
+        (request.resource != null && request.resource.data.userId == request.auth.uid)
+      );
+    }
+
+    // =========================================================================
+    // Backup & Disaster Recovery Subsystem
+    // Access is strictly restricted to Sovereign Owners and System Admins
+    // =========================================================================
+    match /backups/{backupId} {
+      allow read, write: if isAuthenticated() && (
+        request.auth.token.role in ['owner', 'admin'] ||
+        get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.role in ['owner', 'admin']
+      );
+    }
+    match /restore_jobs/{jobId} {
+      allow read, write: if isAuthenticated() && (
+        request.auth.token.role in ['owner', 'admin'] ||
+        get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.role in ['owner', 'admin']
+      );
+    }
+
+    // =========================================================================
+    // Employee Leave Management Subsystem
+    // =========================================================================
+    match /employee_leaves/{leaveId} {
+      allow read: if isAuthenticated() && (
+        resource == null ||
+        hasTenantAccess(resource.data.tenant_id)
+      );
+
+      allow create: if isAuthenticated() && (
+        hasTenantAccess(request.resource.data.tenant_id) &&
+        (
+          request.auth.token.role in ['owner', 'admin', 'hr', 'manager'] ||
+          get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.role in ['owner', 'admin', 'hr', 'manager']
+        )
+      );
+
+      allow update: if isAuthenticated() && (
+        hasTenantAccess(resource.data.tenant_id) &&
+        (
+          request.auth.token.role in ['owner', 'admin', 'hr', 'manager'] ||
+          get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.role in ['owner', 'admin', 'hr', 'manager']
+        )
+      );
+
+      allow delete: if isAuthenticated() && (
+        request.auth.token.role in ['owner', 'admin'] ||
+        get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.role in ['owner', 'admin']
+      );
+    }
+
+    // Default catch-all: reject unauthenticated access to any unspecified document
+    match /{document=**} {
+      allow read, write: if isAuthenticated();
+    }
+  }
+}

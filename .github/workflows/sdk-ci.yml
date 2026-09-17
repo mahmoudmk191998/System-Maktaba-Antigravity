@@ -1,0 +1,53 @@
+name: SDK CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'packages/rms-sdk/**'
+      - '.github/workflows/sdk-ci.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'packages/rms-sdk/**'
+      - '.github/workflows/sdk-ci.yml'
+
+jobs:
+  validate-sdk:
+    name: Validate @rms/sdk (Node ${{ matrix.node-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [18.x, 20.x, 22.x]
+
+    defaults:
+      run:
+        working-directory: packages/rms-sdk
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci || npm install
+
+      - name: Run Typecheck (Lint)
+        run: npm run lint
+
+      - name: Run SDK Unit Tests
+        run: npm test
+
+      - name: Build Distribution Bundle
+        run: npm run build
+
+      - name: Run Secret Scan
+        run: npm run audit:secrets
+
+      - name: Run Package Content Audit
+        run: npm run audit:package
