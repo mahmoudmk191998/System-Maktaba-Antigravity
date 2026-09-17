@@ -93,8 +93,8 @@ export function MobileBottomNav() {
   const filteredModules = useMemo(() => {
     if (!searchQuery.trim()) return allowedModules;
     const q = searchQuery.toLowerCase();
-    return allowedModules.filter(m => 
-      m.label.toLowerCase().includes(q) || 
+    return allowedModules.filter(m =>
+      m.label.toLowerCase().includes(q) ||
       m.category.toLowerCase().includes(q)
     );
   }, [allowedModules, searchQuery]);
@@ -124,7 +124,7 @@ export function MobileBottomNav() {
   return (
     <>
       {/* Native App Bottom Dock - Strictly Mobile Only (md:hidden) */}
-      <nav 
+      <nav
         className="md:hidden fixed inset-x-0 bottom-0 z-50 bg-card/90 dark:bg-slate-950/95 backdrop-blur-2xl border-t border-border/70 shadow-[0_-4px_24px_rgba(0,0,0,0.08)] select-none pointer-events-auto"
         style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
         dir="rtl"
@@ -136,8 +136,8 @@ export function MobileBottomNav() {
             to="/"
             className={cn(
               "flex flex-col items-center justify-center flex-1 h-full py-1 text-center transition-all duration-200 active:scale-90",
-              isHomeActive 
-                ? "text-primary font-bold" 
+              isHomeActive
+                ? "text-primary font-bold"
                 : "text-muted-foreground hover:text-foreground"
             )}
           >
@@ -155,8 +155,8 @@ export function MobileBottomNav() {
             to="/pos"
             className={cn(
               "flex flex-col items-center justify-center flex-1 h-full py-1 text-center transition-all duration-200 active:scale-90",
-              isPosActive 
-                ? "text-primary font-bold" 
+              isPosActive
+                ? "text-primary font-bold"
                 : "text-muted-foreground hover:text-foreground"
             )}
           >
@@ -174,8 +174,8 @@ export function MobileBottomNav() {
             to="/inventory"
             className={cn(
               "flex flex-col items-center justify-center flex-1 h-full py-1 text-center transition-all duration-200 active:scale-90",
-              isInventoryActive 
-                ? "text-primary font-bold" 
+              isInventoryActive
+                ? "text-primary font-bold"
                 : "text-muted-foreground hover:text-foreground"
             )}
           >
@@ -193,8 +193,8 @@ export function MobileBottomNav() {
             to="/hr"
             className={cn(
               "flex flex-col items-center justify-center flex-1 h-full py-1 text-center transition-all duration-200 active:scale-90",
-              isHrActive 
-                ? "text-primary font-bold" 
+              isHrActive
+                ? "text-primary font-bold"
                 : "text-muted-foreground hover:text-foreground"
             )}
           >
@@ -214,7 +214,7 @@ export function MobileBottomNav() {
             className={cn(
               "flex flex-col items-center justify-center flex-1 h-full py-1 text-center transition-all duration-200 active:scale-90 outline-none",
               (isMoreActive || isMoreOpen)
-                ? "text-primary font-bold" 
+                ? "text-primary font-bold"
                 : "text-muted-foreground hover:text-foreground"
             )}
             aria-label="فتح قائمة المزيد من أقسام التطبيق"
@@ -232,8 +232,8 @@ export function MobileBottomNav() {
 
       {/* More Menu Bottom Sheet (App Drawer) */}
       <Sheet open={isMoreOpen} onOpenChange={setIsMoreOpen}>
-        <SheetContent 
-          side="bottom" 
+        <SheetContent
+          side="bottom"
           className="p-0 max-h-[85dvh] h-[85dvh] rounded-t-[28px] border-t border-border/70 bg-card/95 dark:bg-slate-950/95 backdrop-blur-2xl flex flex-col font-cairo shadow-2xl"
           dir="rtl"
         >
@@ -250,9 +250,9 @@ export function MobileBottomNav() {
                   تصفح سريع لجميع وحدات إدارة المطعم
                 </SheetDescription>
               </div>
-              <Button 
-                variant="ghost" 
-                size="icon" 
+              <Button
+                variant="ghost"
+                size="icon"
                 onClick={() => setIsMoreOpen(false)}
                 className="h-9 w-9 rounded-full text-muted-foreground hover:bg-muted/80"
               >
@@ -305,8 +305,8 @@ export function MobileBottomNav() {
                         >
                           <div className={cn(
                             "w-11 h-11 rounded-2xl flex items-center justify-center mb-1.5 transition-transform group-hover:scale-105 shadow-sm",
-                            isCurrent 
-                              ? "bg-primary text-primary-foreground shadow-[0_4px_12px_rgba(var(--primary),0.3)]" 
+                            isCurrent
+                              ? "bg-primary text-primary-foreground shadow-[0_4px_12px_rgba(var(--primary),0.3)]"
                               : "bg-muted/60 text-muted-foreground group-hover:text-primary group-hover:bg-primary/10"
                           )}>
                             <Icon className="w-5 h-5" />
@@ -324,7 +324,7 @@ export function MobileBottomNav() {
           </div>
 
           {/* Quick Footer Controls */}
-          <div 
+          <div
             className="p-3 border-t border-border/50 bg-muted/20 flex items-center justify-between gap-2 flex-shrink-0"
             style={{ paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 12px)' }}
           >

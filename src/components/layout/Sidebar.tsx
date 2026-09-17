@@ -319,7 +319,7 @@ export function Sidebar() {
         setActiveGroup(null);
       }
     }
-    
+
     if (activeGroup) {
       document.addEventListener('mousedown', handleClickOutside);
     }

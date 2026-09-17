@@ -44,7 +44,7 @@ export default function Purchasing() {
   const filteredOrders = useMemo(() => {
     return orders.filter((o) => {
       const matchSearch = (o.order_number || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
-                          (suppliers.find(s => s.id === o.supplier_id)?.name || '').toLowerCase().includes(searchQuery.toLowerCase());
+        (suppliers.find(s => s.id === o.supplier_id)?.name || '').toLowerCase().includes(searchQuery.toLowerCase());
       const matchStatus = filterStatus === 'all' || o.status === filterStatus;
       return matchSearch && matchStatus;
     });
@@ -91,12 +91,12 @@ export default function Purchasing() {
     newItems[index] = { ...newItems[index], [field]: value };
 
     if (field === 'itemId') {
-       const invItem = inventoryItems.find((i: any) => i.id === value);
-       if (invItem) {
-          newItems[index].unitPrice = invItem.cost || 0;
-          newItems[index].name = invItem.name || '';
-          newItems[index].unitId = invItem.unit_id || '';
-       }
+      const invItem = inventoryItems.find((i: any) => i.id === value);
+      if (invItem) {
+        newItems[index].unitPrice = invItem.cost || 0;
+        newItems[index].name = invItem.name || '';
+        newItems[index].unitId = invItem.unit_id || '';
+      }
     }
 
     setOrderItems(newItems);
@@ -115,13 +115,9 @@ export default function Purchasing() {
     e.preventDefault();
     if (!supplierId || orderItems.length === 0) return;
 
-    if (orderItems.some(i => {
-      const price = Number(i.unitPrice ?? (i as any).unit_price);
-      const qty = Number(i.quantity);
-      return !i.itemId || !i.unitId || qty <= 0 || price < 0 || isNaN(qty) || isNaN(price);
-    })) {
-        alert("يرجى التأكد من اختيار جميع الأصناف، وحدات القياس والكميات والأسعار بشكل صحيح وغير سالب.");
-        return;
+    if (orderItems.some(i => !i.itemId || !i.unitId || Number(i.quantity) <= 0 || Number(i.unit_price) < 0 || isNaN(Number(i.quantity)) || isNaN(Number(i.unit_price)))) {
+      alert("يرجى التأكد من اختيار جميع الأصناف، وحدات القياس والكميات والأسعار بشكل صحيح وغير سالب.");
+      return;
     }
 
     if (totalAmount <= 0) {
@@ -208,7 +204,7 @@ export default function Purchasing() {
         }
 
         // Register expense
-        const expenseAmount = viewingOrder.payment_type === 'deferred' 
+        const expenseAmount = viewingOrder.payment_type === 'deferred'
           ? Number(viewingOrder.paid_amount || 0)
           : Number(viewingOrder.total_amount);
 
@@ -282,8 +278,8 @@ export default function Purchasing() {
 
   const handleDeleteOrder = async (id: string) => {
     if (window.confirm("هل أنت متأكد من حذف أمر الشراء هذا نهائياً؟")) {
-       await removeOrder(id);
-       if (viewingOrder?.id === id) setViewingOrder(null);
+      await removeOrder(id);
+      if (viewingOrder?.id === id) setViewingOrder(null);
     }
   };
 
@@ -347,17 +343,17 @@ export default function Purchasing() {
                   <td>${getUnitName(item.unitId) || '-'}</td>
                   <td>${item.quantity}</td>
                   <td>${Number(item.unitPrice).toLocaleString('ar-EG')} ج.م</td>
-                  <td>${(Number(item.quantity) * Number(item.unitPrice)).toLocaleString('ar-EG', {minimumFractionDigits: 2, maximumFractionDigits: 2})} ج.م</td>
+                  <td>${(Number(item.quantity) * Number(item.unitPrice)).toLocaleString('ar-EG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ج.م</td>
                 </tr>
               `).join('')}
             </tbody>
           </table>
-          <div class="total">الإجمالي الكلي: ${Number(order.total_amount).toLocaleString('ar-EG', {minimumFractionDigits: 2, maximumFractionDigits: 2})} ج.م</div>
+          <div class="total">الإجمالي الكلي: ${Number(order.total_amount).toLocaleString('ar-EG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ج.م</div>
           ${order.payment_type === 'deferred' ? `
           <div class="payment-box">
             <h3>بيان الدفع الآجل</h3>
-            <p><strong>المبلغ المدفوع مقدماً:</strong> ${paidAmt.toLocaleString('ar-EG', {minimumFractionDigits: 2})} ج.م</p>
-            <p class="unpaid-label">المبلغ المتبقي (الآجل): ${remainAmt.toLocaleString('ar-EG', {minimumFractionDigits: 2})} ج.م</p>
+            <p><strong>المبلغ المدفوع مقدماً:</strong> ${paidAmt.toLocaleString('ar-EG', { minimumFractionDigits: 2 })} ج.م</p>
+            <p class="unpaid-label">المبلغ المتبقي (الآجل): ${remainAmt.toLocaleString('ar-EG', { minimumFractionDigits: 2 })} ج.م</p>
             ${dueDateStr ? `<p><strong>تاريخ استحقاق السداد:</strong> ${dueDateStr}</p>` : ''}
             <p><strong>حالة السداد:</strong> ${order.payment_status === 'paid' ? 'مسدد بالكامل ✓' : order.payment_status === 'partial' ? 'مسدد جزئياً' : 'غير مسدد'}</p>
           </div>
@@ -419,7 +415,7 @@ export default function Purchasing() {
             </CardHeader>
             <CardContent className="p-4 sm:p-5 pt-0">
               <div className="text-xl sm:text-2xl font-bold text-green-600 dark:text-green-400 truncate">
-                {kpis.totalPurchasesValue.toLocaleString('ar-EG', {minimumFractionDigits: 0, maximumFractionDigits: 0})} ج.م
+                {kpis.totalPurchasesValue.toLocaleString('ar-EG', { minimumFractionDigits: 0, maximumFractionDigits: 0 })} ج.م
               </div>
               <p className="text-xs text-muted-foreground mt-1">من {kpis.receivedCount} طلب شراء</p>
             </CardContent>
@@ -434,7 +430,7 @@ export default function Purchasing() {
             </CardHeader>
             <CardContent className="p-4 sm:p-5 pt-0">
               <div className="text-xl sm:text-2xl font-bold text-yellow-600 dark:text-yellow-400 truncate">
-                {kpis.pendingOrdersValue.toLocaleString('ar-EG', {minimumFractionDigits: 0, maximumFractionDigits: 0})} ج.م
+                {kpis.pendingOrdersValue.toLocaleString('ar-EG', { minimumFractionDigits: 0, maximumFractionDigits: 0 })} ج.م
               </div>
               <p className="text-xs text-muted-foreground mt-1">{kpis.pendingCount} طلب قيد الانتظار</p>
             </CardContent>
@@ -449,7 +445,7 @@ export default function Purchasing() {
             </CardHeader>
             <CardContent className="p-4 sm:p-5 pt-0">
               <div className="text-xl sm:text-2xl font-bold text-red-600 dark:text-red-400 truncate">
-                {kpis.totalDeferred.toLocaleString('ar-EG', {minimumFractionDigits: 0, maximumFractionDigits: 0})} ج.م
+                {kpis.totalDeferred.toLocaleString('ar-EG', { minimumFractionDigits: 0, maximumFractionDigits: 0 })} ج.م
               </div>
               <p className="text-xs text-muted-foreground mt-1">{kpis.deferredCount} فاتورة غير مسددة</p>
             </CardContent>
@@ -781,7 +777,7 @@ export default function Purchasing() {
                                 />
                               </TableCell>
                               <TableCell className="p-3 text-center font-bold text-base text-primary">
-                                {(Number(item.quantity) * Number(item.unitPrice)).toLocaleString('ar-EG', {minimumFractionDigits: 2, maximumFractionDigits: 2})} ج.م
+                                {(Number(item.quantity) * Number(item.unitPrice)).toLocaleString('ar-EG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ج.م
                               </TableCell>
                               <TableCell className="p-3 text-center">
                                 <Button type="button" variant="ghost" size="icon" className="text-destructive hover:bg-destructive/10 hover:text-destructive rounded-full" onClick={() => handleRemoveItem(index)} disabled={isSubmitting}>
@@ -868,7 +864,7 @@ export default function Purchasing() {
                           </div>
 
                           <div className="bg-primary/5 p-2 rounded-lg text-center font-bold text-xs text-primary">
-                            إجمالي البند: {(Number(item.quantity) * Number(item.unitPrice)).toLocaleString('ar-EG', {minimumFractionDigits: 2, maximumFractionDigits: 2})} ج.م
+                            إجمالي البند: {(Number(item.quantity) * Number(item.unitPrice)).toLocaleString('ar-EG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ج.م
                           </div>
                         </div>
                       ))}
@@ -877,7 +873,7 @@ export default function Purchasing() {
                     <div className="bg-primary/5 border p-3.5 sm:p-5 flex justify-between items-center rounded-xl">
                       <span className="text-base sm:text-xl font-bold">إجمالي فاتورة الشراء:</span>
                       <span className="text-xl sm:text-3xl font-black text-primary">
-                        {totalAmount.toLocaleString('ar-EG', {minimumFractionDigits: 2, maximumFractionDigits: 2})} ج.م
+                        {totalAmount.toLocaleString('ar-EG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ج.م
                       </span>
                     </div>
                   </>
@@ -950,15 +946,15 @@ export default function Purchasing() {
                       <div className="bg-background rounded-xl border p-3.5 sm:p-4 grid grid-cols-1 sm:grid-cols-3 gap-2.5 sm:gap-4 text-center">
                         <div className="bg-muted/20 p-2 rounded-lg sm:bg-transparent">
                           <p className="text-xs text-muted-foreground mb-0.5">إجمالي الفاتورة</p>
-                          <p className="text-base sm:text-lg font-bold text-primary">{totalAmount.toLocaleString('ar-EG', {minimumFractionDigits: 2})} ج.م</p>
+                          <p className="text-base sm:text-lg font-bold text-primary">{totalAmount.toLocaleString('ar-EG', { minimumFractionDigits: 2 })} ج.م</p>
                         </div>
                         <div className="bg-muted/20 p-2 rounded-lg sm:bg-transparent">
                           <p className="text-xs text-muted-foreground mb-0.5">المدفوع مقدماً</p>
-                          <p className="text-base sm:text-lg font-bold text-green-600">{Number(paidAmount).toLocaleString('ar-EG', {minimumFractionDigits: 2})} ج.م</p>
+                          <p className="text-base sm:text-lg font-bold text-green-600">{Number(paidAmount).toLocaleString('ar-EG', { minimumFractionDigits: 2 })} ج.م</p>
                         </div>
                         <div className="bg-muted/20 p-2 rounded-lg sm:bg-transparent">
                           <p className="text-xs text-muted-foreground mb-0.5">الآجل (المتبقي)</p>
-                          <p className="text-base sm:text-lg font-bold text-red-600">{remainingAmount.toLocaleString('ar-EG', {minimumFractionDigits: 2})} ج.م</p>
+                          <p className="text-base sm:text-lg font-bold text-red-600">{remainingAmount.toLocaleString('ar-EG', { minimumFractionDigits: 2 })} ج.م</p>
                         </div>
                       </div>
 
@@ -1029,16 +1025,16 @@ export default function Purchasing() {
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 sm:gap-4 text-center">
                     <div className="bg-background rounded-lg p-2.5 sm:p-3 border">
                       <p className="text-xs text-muted-foreground mb-0.5">إجمالي الفاتورة</p>
-                      <p className="text-lg sm:text-xl font-black text-primary">{Number(viewingOrder.total_amount).toLocaleString('ar-EG', {minimumFractionDigits: 2})} ج.م</p>
+                      <p className="text-lg sm:text-xl font-black text-primary">{Number(viewingOrder.total_amount).toLocaleString('ar-EG', { minimumFractionDigits: 2 })} ج.م</p>
                     </div>
                     <div className="bg-background rounded-lg p-2.5 sm:p-3 border">
                       <p className="text-xs text-muted-foreground mb-0.5">المدفوع</p>
-                      <p className="text-lg sm:text-xl font-black text-green-600">{Number(viewingOrder.paid_amount || 0).toLocaleString('ar-EG', {minimumFractionDigits: 2})} ج.م</p>
+                      <p className="text-lg sm:text-xl font-black text-green-600">{Number(viewingOrder.paid_amount || 0).toLocaleString('ar-EG', { minimumFractionDigits: 2 })} ج.م</p>
                     </div>
                     <div className="bg-background rounded-lg p-2.5 sm:p-3 border">
                       <p className="text-xs text-muted-foreground mb-0.5">المتبقي (الآجل)</p>
                       <p className="text-lg sm:text-xl font-black text-red-600">
-                        {(Number(viewingOrder.total_amount) - Number(viewingOrder.paid_amount || 0)).toLocaleString('ar-EG', {minimumFractionDigits: 2})} ج.م
+                        {(Number(viewingOrder.total_amount) - Number(viewingOrder.paid_amount || 0)).toLocaleString('ar-EG', { minimumFractionDigits: 2 })} ج.م
                       </p>
                     </div>
                   </div>
@@ -1072,7 +1068,7 @@ export default function Purchasing() {
                       disabled={isMarkingPaid}
                     >
                       <CheckCircle className="w-5 h-5" />
-                      {isMarkingPaid ? 'جاري التسجيل...' : `تسجيل سداد المبلغ المتبقي (${(Number(viewingOrder.total_amount) - Number(viewingOrder.paid_amount || 0)).toLocaleString('ar-EG', {minimumFractionDigits: 2})} ج.م)`}
+                      {isMarkingPaid ? 'جاري التسجيل...' : `تسجيل سداد المبلغ المتبقي (${(Number(viewingOrder.total_amount) - Number(viewingOrder.paid_amount || 0)).toLocaleString('ar-EG', { minimumFractionDigits: 2 })} ج.م)`}
                     </Button>
                   )}
 
@@ -1121,7 +1117,7 @@ export default function Purchasing() {
                           <TableCell className="text-center text-muted-foreground">{getUnitName(item.unitId) || '-'}</TableCell>
                           <TableCell className="text-center font-medium">{item.quantity}</TableCell>
                           <TableCell className="text-center">{Number(item.unitPrice).toLocaleString('ar-EG')} ج.م</TableCell>
-                          <TableCell className="text-left font-bold text-base px-4">{(Number(item.quantity) * Number(item.unitPrice)).toLocaleString('ar-EG', {minimumFractionDigits: 2, maximumFractionDigits: 2})} ج.م</TableCell>
+                          <TableCell className="text-left font-bold text-base px-4">{(Number(item.quantity) * Number(item.unitPrice)).toLocaleString('ar-EG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ج.م</TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
@@ -1142,7 +1138,7 @@ export default function Purchasing() {
                       </div>
                       <div className="pt-1 border-t flex justify-between font-bold text-primary">
                         <span>الإجمالي:</span>
-                        <span>{(Number(item.quantity) * Number(item.unitPrice)).toLocaleString('ar-EG', {minimumFractionDigits: 2, maximumFractionDigits: 2})} ج.م</span>
+                        <span>{(Number(item.quantity) * Number(item.unitPrice)).toLocaleString('ar-EG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ج.م</span>
                       </div>
                     </div>
                   ))}
@@ -1151,7 +1147,7 @@ export default function Purchasing() {
                 <div className="bg-primary/5 border p-3.5 sm:p-4 flex justify-between items-center rounded-xl mt-3">
                   <span className="text-sm sm:text-base font-bold">الإجمالي الكلي للفاتورة:</span>
                   <span className="text-lg sm:text-2xl font-black text-primary px-2">
-                    {Number(viewingOrder.total_amount).toLocaleString('ar-EG', {minimumFractionDigits: 2, maximumFractionDigits: 2})} ج.م
+                    {Number(viewingOrder.total_amount).toLocaleString('ar-EG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ج.م
                   </span>
                 </div>
               </div>
@@ -1186,16 +1182,16 @@ export default function Purchasing() {
           <DialogFooter className="mt-2 border-t pt-4 flex flex-col-reverse sm:flex-row items-stretch sm:items-center justify-between w-full gap-2.5 sm:gap-0">
             <div>
               {viewingOrder?.status !== 'pending' && (
-                 <Button variant="ghost" className="text-destructive hover:bg-destructive/10 hover:text-destructive w-full sm:w-auto min-h-[44px] rounded-xl font-bold" onClick={() => handleDeleteOrder(viewingOrder.id)}>
-                   <Trash2 className="w-4 h-4 ml-1.5" />
-                   حذف الفاتورة
-                 </Button>
+                <Button variant="ghost" className="text-destructive hover:bg-destructive/10 hover:text-destructive w-full sm:w-auto min-h-[44px] rounded-xl font-bold" onClick={() => handleDeleteOrder(viewingOrder.id)}>
+                  <Trash2 className="w-4 h-4 ml-1.5" />
+                  حذف الفاتورة
+                </Button>
               )}
             </div>
             <div className="flex flex-col sm:flex-row gap-2">
               <Button type="button" variant="outline" className="gap-2 border-primary text-primary hover:bg-primary/5 min-h-[44px] rounded-xl font-bold" onClick={() => handlePrintOrder(viewingOrder)}>
-                 <Printer className="w-4 h-4" />
-                 طباعة الفاتورة
+                <Printer className="w-4 h-4" />
+                طباعة الفاتورة
               </Button>
               <Button type="button" variant="outline" onClick={() => setViewingOrder(null)} disabled={isSubmitting} className="min-h-[44px] rounded-xl font-bold px-6">إغلاق</Button>
             </div>

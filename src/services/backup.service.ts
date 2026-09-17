@@ -30,63 +30,11 @@ export const APP_VERSION = '2.4.0';
 /**
  * Standard modules mapping to their respective Firestore collections
  */
-/**
- * Standard modules mapping to their respective Firestore collections
- */
 export const MODULE_COLLECTION_MAP: Record<string, string[]> = {
-  catalog: [
-    'books',
-    'book_copies',
-    'authors',
-    'publishers',
-    'book_categories',
-    'shelves',
-    // Legacy catalog collections for archive compatibility
-    'menu_categories',
-    'menu_items',
-    'products',
-    'addons',
-  ],
-  circulation: [
-    'loans',
-    'loan_items',
-    'loan_renewals',
-    'holds',
-    'fines',
-    'fine_payments',
-    // Legacy orders for archive compatibility
-    'orders',
-    'order_items',
-    'order_status_history',
-    'pos_shifts',
-    'call_center_orders',
-  ],
-  members: [
-    'members',
-    'membership_plans',
-    'customers',
-  ],
-  acquisitions: [
-    'acquisition_orders',
-    'acquisition_items',
-    'suppliers',
-    'purchase_orders',
-  ],
-  inventory: [
-    'inventory_sessions',
-    'inventory_items',
-    'book_movements',
-    'book_transfers',
-    'lost_damaged_records',
-    'units',
-    'branch_stock',
-    'stock_movements',
-  ],
   hr: [
     'employees',
     'shifts',
     'attendance',
-    'employee_leaves',
     'payrolls',
     'salary_payments',
     'advances',
@@ -102,7 +50,29 @@ export const MODULE_COLLECTION_MAP: Record<string, string[]> = {
     'advance_installments',
     'accounting_records',
     'payments',
-    'fine_payments',
+  ],
+  inventory: [
+    'inventory_items',
+    'units',
+    'suppliers',
+    'purchase_orders',
+    'recipes',
+    'recipe_ingredients',
+    'branch_stock',
+    'stock_movements',
+  ],
+  orders: [
+    'orders',
+    'order_items',
+    'order_status_history',
+    'pos_shifts',
+    'call_center_orders',
+  ],
+  catalog: [
+    'menu_categories',
+    'menu_items',
+    'products',
+    'addons',
   ],
   operations: [
     'tables',
@@ -111,11 +81,7 @@ export const MODULE_COLLECTION_MAP: Record<string, string[]> = {
     'promotions',
     'coupons',
     'offers',
-  ],
-  audit_system: [
-    'audit_logs',
-    'notifications',
-    'notification_reads',
+    'customers',
   ],
   config: [
     'tenants',
@@ -459,7 +425,7 @@ export async function performRestoreDryRun(
     try {
       const existingSnap = await getDocs(query(collection(db, collName), where('tenant_id', '==', targetTenantId)));
       existingSnap.docs.forEach((d) => existingIds.add(d.id));
-    } catch (_) {}
+    } catch (_) { }
 
     for (const d of docs) {
       const docId = d._id || d.id;
@@ -597,7 +563,7 @@ export async function executeSafeRestore(
 
   try {
     await setDoc(doc(db, 'restore_jobs', restoreJobId), jobRecord);
-  } catch (_) {}
+  } catch (_) { }
 
   // 5. Audit Log: RESTORE_STARTED
   try {
@@ -615,7 +581,7 @@ export async function executeSafeRestore(
         mode,
       },
     });
-  } catch (_) {}
+  } catch (_) { }
 
   // 6. Execute Chunked Batch Writes
   let totalRestored = 0;
@@ -677,7 +643,7 @@ export async function executeSafeRestore(
         },
         { merge: true }
       );
-    } catch (_) {}
+    } catch (_) { }
 
     // 8. Audit Log: RESTORE_COMPLETED
     try {
@@ -697,7 +663,7 @@ export async function executeSafeRestore(
           restoredCollections,
         },
       });
-    } catch (_) {}
+    } catch (_) { }
 
     return { success: true, documentsRestoredCount: totalRestored, safetyBackupId };
   } catch (err: any) {
@@ -715,7 +681,7 @@ export async function executeSafeRestore(
         },
         { merge: true }
       );
-    } catch (_) {}
+    } catch (_) { }
 
     try {
       const auditId = `audit_restore_failed_${Date.now()}`;
@@ -731,7 +697,7 @@ export async function executeSafeRestore(
           safetyBackupId,
         },
       });
-    } catch (_) {}
+    } catch (_) { }
 
     throw new Error(`فشلت عملية الاستعادة: ${errorMsg}`);
   }
@@ -780,7 +746,7 @@ export async function deleteBackupRecord(backupId: string, tenantId: string, del
       timestamp: new Date().toISOString(),
       details: { backupId },
     });
-  } catch (_) {}
+  } catch (_) { }
 }
 
 /**
@@ -824,7 +790,7 @@ export async function getDisasterRecoveryStatus(tenantId: string): Promise<Disas
     if (!auditSnap.empty) {
       lastRestoreTestAt = auditSnap.docs[0].data().timestamp || null;
     }
-  } catch (_) {}
+  } catch (_) { }
 
   let healthStatus: 'healthy' | 'warning' | 'critical' = 'healthy';
   let healthMessage = 'حالة النسخ الاحتياطي ممتازة. البيانات مؤمنة وجاهزة للتعافي.';

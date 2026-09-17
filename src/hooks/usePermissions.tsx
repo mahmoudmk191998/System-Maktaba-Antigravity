@@ -152,7 +152,7 @@ export function useUserPermissions(): PermissionsHookResult {
   const isDisabled = userStatus === 'disabled';
   const hasAnyRole = userStatus !== 'disabled' && roles.length > 0;
 
-  const refresh = useCallback(() => {}, []);
+  const refresh = useCallback(() => { }, []);
 
   return {
     permissions,
@@ -203,29 +203,19 @@ export function Can({
 
 export const routePermissions: Record<string, string[]> = {
   '/': ['dashboard.view'],
-  '/circulation': ['circulation.view', 'pos.view'],
-  '/loans': ['loans.view', 'orders.view'],
-  '/books': ['books.view', 'menu.view'],
-  '/copies': ['book_copies.view', 'books.view'],
-  '/members': ['members.view', 'customers.view'],
-  '/holds': ['holds.view'],
-  '/fines': ['fines.view'],
-  '/acquisitions': ['acquisitions.view', 'purchasing.view'],
-  '/transfers': ['transfers.manage'],
-  '/inventory': ['inventory.view'],
-  '/lost-damaged': ['lost_damaged.manage', 'inventory.waste'],
-  '/pos': ['pos.view', 'circulation.view'],
+  '/pos': ['pos.view'],
   '/kitchen': ['kitchen.view'],
   '/tables': ['tables.view'],
-  '/menu': ['menu.view', 'books.view'],
-  '/waste': ['inventory.waste', 'lost_damaged.manage'],
-  '/purchasing': ['purchasing.view', 'acquisitions.view'],
+  '/menu': ['menu.view'],
+  '/inventory': ['inventory.view'],
+  '/waste': ['inventory.waste'],
+  '/purchasing': ['purchasing.view'],
   '/production': ['production.view'],
   '/delivery': ['delivery.view'],
   '/callcenter': ['callcenter.view'],
-  '/customers': ['customers.view', 'members.view'],
+  '/customers': ['customers.view'],
   '/loyalty': ['loyalty.view'],
-  '/promotions': ['promotions.view', 'membership_plans.manage'],
+  '/promotions': ['promotions.view'],
   '/shifts': ['hr.manage_shifts'],
   '/hr': ['hr.view_employees'],
   '/reports': ['reports.view'],
