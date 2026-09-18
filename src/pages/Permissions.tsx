@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { MainLayout } from '@/components/layout';
 import { cn } from '@/lib/utils';
 import { db, firebaseConfig } from '@/lib/firebase';
-import { collection, query, where, getDocs, doc, deleteDoc, addDoc, updateDoc, setDoc } from 'firebase/firestore';
+import { collection, query, where, getDocs, doc, deleteDoc, addDoc, updateDoc, setDoc, writeBatch } from 'firebase/firestore';
 import { initializeApp } from 'firebase/app';
 import { getAuth, createUserWithEmailAndPassword, updateProfile } from 'firebase/auth';
 import { useTenantBranch } from '@/hooks/useDatabase';
@@ -279,20 +279,25 @@ export default function Permissions() {
         updated_at: new Date().toISOString(),
       });
 
-      // 3. Update user_permissions collection
+      // 3. Update user_permissions collection using atomic batch
       const permsQ = query(collection(db, 'user_permissions'), where('user_id', '==', selectedUser.id));
       const permsSnap = await getDocs(permsQ);
+      const permBatch = writeBatch(db);
       for (const pDoc of permsSnap.docs) {
-        await deleteDoc(pDoc.ref);
+        permBatch.delete(pDoc.ref);
       }
+      const nowStr = new Date().toISOString();
       for (const p of newPerms) {
-        await addDoc(collection(db, 'user_permissions'), {
+        const pRef = doc(collection(db, 'user_permissions'));
+        permBatch.set(pRef, {
+          tenant_id: tenantId || null,
           user_id: selectedUser.id,
           permission: p,
-          granted_by: user?.uid,
-          created_at: new Date().toISOString(),
+          granted_by: user?.uid || null,
+          created_at: nowStr,
         });
       }
+      await permBatch.commit();
 
       // 4. Record Audit Log
       await addDoc(collection(db, 'audit_logs'), {
@@ -394,40 +399,52 @@ export default function Permissions() {
 
     setLoading(true);
     try {
-      // 1. Delete existing user_permissions
+      // 1. Delete existing user_permissions and add new ones in an atomic batch
       const permsQ = query(collection(db, 'user_permissions'), where('user_id', '==', selectedUser.id));
       const permsSnap = await getDocs(permsQ);
+      
+      const batch = writeBatch(db);
       for (const pDoc of permsSnap.docs) {
-        await deleteDoc(pDoc.ref);
+        batch.delete(pDoc.ref);
       }
 
-      // 2. Add updated permissions
+      const now = new Date().toISOString();
       for (const p of editPermissions) {
-        await addDoc(collection(db, 'user_permissions'), {
+        const pRef = doc(collection(db, 'user_permissions'));
+        batch.set(pRef, {
+          tenant_id: tenantId || null,
           user_id: selectedUser.id,
           permission: p,
-          granted_by: user?.uid,
-          created_at: new Date().toISOString(),
+          granted_by: user?.uid || null,
+          created_at: now,
         });
       }
 
-      // 3. Audit log
-      await addDoc(collection(db, 'audit_logs'), {
-        tenant_id: tenantId,
-        action: 'PERMISSIONS_UPDATED',
-        target_id: selectedUser.id,
-        target_name: selectedUser.full_name,
-        user: user?.email || 'المدير',
-        details: `تحديث الصلاحيات للمستخدم ${selectedUser.full_name} (${editPermissions.length} صلاحية)`,
-        created_at: new Date().toISOString(),
-      });
+      await batch.commit();
+
+      // 2. Audit log
+      if (tenantId) {
+        try {
+          await addDoc(collection(db, 'audit_logs'), {
+            tenant_id: tenantId,
+            action: 'PERMISSIONS_UPDATED',
+            target_id: selectedUser.id,
+            target_name: selectedUser.full_name,
+            user: user?.email || 'المدير',
+            details: `تحديث الصلاحيات للمستخدم ${selectedUser.full_name} (${editPermissions.length} صلاحية)`,
+            created_at: now,
+          });
+        } catch (auditErr) {
+          console.warn('Audit log write failed non-fatally:', auditErr);
+        }
+      }
 
       toast.success(`تم حفظ ${editPermissions.length} صلاحية للمستخدم بنجاح`);
       setSelectedUser((prev) => (prev ? { ...prev, permissions: editPermissions } : null));
       await fetchUsers();
     } catch (err: any) {
       console.error('Error saving permissions:', err);
-      toast.error('حدث خطأ أثناء حفظ الصلاحيات');
+      toast.error(err?.message ? `حدث خطأ أثناء حفظ الصلاحيات: ${err.message}` : 'حدث خطأ أثناء حفظ الصلاحيات');
     } finally {
       setLoading(false);
     }

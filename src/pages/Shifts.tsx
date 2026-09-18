@@ -74,20 +74,68 @@ export default function Shifts() {
 
   // Fetch POS cashier shifts
   const fetchPosShifts = async () => {
-    if (!branchId) return;
+    if (!branchId && !tenantId) return;
     setLoadingPosShifts(true);
     try {
-      const q = query(
-        collection(db, 'pos_shifts'),
-        where('branch_id', '==', branchId)
-      );
-      const snapshot = await getDocs(q);
-      const data = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
+      // 1. Query modern cashier_shifts collection
+      let q = branchId
+        ? query(collection(db, 'cashier_shifts'), where('branchId', '==', branchId))
+        : query(collection(db, 'cashier_shifts'), where('tenantId', '==', tenantId));
+      let snapshot = await getDocs(q);
+
+      // Fallback: check snake_case branch_id
+      if (snapshot.empty && branchId) {
+        const qSnake = query(collection(db, 'cashier_shifts'), where('branch_id', '==', branchId));
+        const snapSnake = await getDocs(qSnake);
+        if (!snapSnake.empty) snapshot = snapSnake;
+      }
+
+      // Fallback: check tenant_id if still empty
+      if (snapshot.empty && tenantId) {
+        const qTenant = query(collection(db, 'cashier_shifts'), where('tenant_id', '==', tenantId));
+        const snapTenant = await getDocs(qTenant);
+        if (!snapTenant.empty) snapshot = snapTenant;
+      }
+
+      // Fallback: check legacy pos_shifts if cashier_shifts has no rows
+      if (snapshot.empty && branchId) {
+        const qLegacy = query(collection(db, 'pos_shifts'), where('branch_id', '==', branchId));
+        const snapLegacy = await getDocs(qLegacy);
+        if (!snapLegacy.empty) snapshot = snapLegacy;
+      }
+
+      const data = snapshot.docs.map((doc) => {
+        const d = doc.data() as any;
+        const totalSalesVal =
+          d.totalSales ??
+          (Number(d.totalSalesCash) || 0) +
+            (Number(d.totalSalesCard) || 0) +
+            (Number(d.totalSalesOther) || 0) ??
+          d.total_sales ??
+          0;
+
+        return {
+          id: doc.id,
+          ...d,
+          cashier_name: d.cashierNameSnapshot || d.cashier_name || d.cashierId || 'كاشير',
+          cashier_role: d.cashierRole || d.cashier_role || 'كاشير',
+          status: d.status === 'open' || d.status === 'active' ? 'active' : 'closed',
+          start_time: d.openedAt || d.start_time || d.created_at,
+          end_time: d.closedAt || d.end_time || null,
+          starting_cash: d.openingCash ?? d.starting_cash ?? d.opening_cash ?? 0,
+          total_sales: totalSalesVal,
+          cash_sales: d.totalSalesCash ?? d.cash_sales ?? 0,
+          card_sales: d.totalSalesCard ?? d.card_sales ?? 0,
+          wallet_sales: d.totalSalesOther ?? d.wallet_sales ?? 0,
+          total_discounts: d.totalDiscounts ?? d.total_discounts ?? 0,
+          actual_cash: d.closingCashActual ?? d.actual_cash ?? 0,
+          discrepancy: d.cashDifference ?? d.discrepancy ?? 0,
+          orders_count: d.totalSalesCount ?? d.orders_count ?? 0,
+        };
+      });
+
       // Sort client-side descending by start_time
-      data.sort((a: any, b: any) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime());
+      data.sort((a: any, b: any) => new Date(b.start_time || 0).getTime() - new Date(a.start_time || 0).getTime());
       setPosShifts(data);
     } catch (e) {
       console.error("Error fetching pos shifts", e);
@@ -99,13 +147,12 @@ export default function Shifts() {
 
   // Fetch Employee scheduled shifts
   const fetchShifts = async () => {
-    if (!branchId) return;
+    if (!branchId && !tenantId) return;
     setLoading(true);
     try {
-      const q = query(
-        collection(db, 'branch_shifts'),
-        where('branch_id', '==', branchId)
-      );
+      const q = branchId
+        ? query(collection(db, 'branch_shifts'), where('branch_id', '==', branchId))
+        : query(collection(db, 'branch_shifts'), where('tenant_id', '==', tenantId));
       const snapshot = await getDocs(q);
       const data = snapshot.docs.map(doc => ({
         id: doc.id,
@@ -121,11 +168,18 @@ export default function Shifts() {
   };
 
   useEffect(() => {
-    if (branchId) {
+    if (branchId || tenantId) {
       fetchShifts();
       fetchPosShifts();
     }
-  }, [branchId]);
+    const handleShiftSync = () => {
+      fetchPosShifts();
+    };
+    window.addEventListener('alwan_shifts_synced', handleShiftSync);
+    return () => {
+      window.removeEventListener('alwan_shifts_synced', handleShiftSync);
+    };
+  }, [branchId, tenantId]);
 
   // Analytics Metrics
   const activePosShifts = posShifts.filter(s => s.status === 'active').length;
@@ -218,7 +272,10 @@ export default function Shifts() {
   const handleDeletePosShift = async (id: string) => {
     if (!window.confirm('هل أنت متأكد من حذف وردية الكاشير هذه بكل بياناتها؟ هذه العملية لا يمكن التراجع عنها.')) return;
     try {
-      await deleteDoc(doc(db, 'pos_shifts', id));
+      await Promise.allSettled([
+        deleteDoc(doc(db, 'cashier_shifts', id)),
+        deleteDoc(doc(db, 'pos_shifts', id))
+      ]);
       toast({ title: 'تم الحذف', description: 'تم حذف الوردية بنجاح' });
       fetchPosShifts();
     } catch (e) {
@@ -245,22 +302,53 @@ export default function Shifts() {
     setShiftExpenses([]);
 
     try {
-      // 1. Fetch Orders for this shift if shift_id exists
-      const ordersQ = query(
-        collection(db, 'orders'),
-        where('shift_id', '==', shift.id)
-      );
-      const ordersSnap = await getDocs(ordersQ);
-      const fetchedOrders = ordersSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+      // 1. Fetch Sales/Orders for this shift (sales with shiftId, plus fallback orders with shift_id)
+      const [salesSnap1, salesSnap2, ordersSnap] = await Promise.allSettled([
+        getDocs(query(collection(db, 'sales'), where('shiftId', '==', shift.id))),
+        getDocs(query(collection(db, 'sales'), where('shift_id', '==', shift.id))),
+        getDocs(query(collection(db, 'orders'), where('shift_id', '==', shift.id))),
+      ]);
+
+      const seen = new Set();
+      const fetchedOrders: any[] = [];
+      const allDocs: any[] = [];
+      if (salesSnap1.status === 'fulfilled') allDocs.push(...salesSnap1.value.docs);
+      if (salesSnap2.status === 'fulfilled') allDocs.push(...salesSnap2.value.docs);
+      if (ordersSnap.status === 'fulfilled') allDocs.push(...ordersSnap.value.docs);
+
+      allDocs.forEach((d) => {
+        if (!seen.has(d.id)) {
+          seen.add(d.id);
+          const data = d.data() as any;
+          fetchedOrders.push({
+            id: d.id,
+            ...data,
+            total: data.totalAmount ?? data.total ?? data.grandTotal ?? 0,
+            status: data.status || 'completed',
+            order_type: data.orderType || data.order_type || 'takeaway',
+            created_at: data.createdAt || data.created_at || new Date().toISOString()
+          });
+        }
+      });
       setShiftOrders(fetchedOrders);
 
-      // 2. Fetch Expenses for this shift
-      const expensesQ = query(
-        collection(db, 'expenses'),
-        where('shift_id', '==', shift.id)
-      );
-      const expensesSnap = await getDocs(expensesQ);
-      const fetchedExpenses = expensesSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+      // 2. Fetch Expenses for this shift (shiftId or shift_id)
+      const [expSnap1, expSnap2] = await Promise.allSettled([
+        getDocs(query(collection(db, 'expenses'), where('shiftId', '==', shift.id))),
+        getDocs(query(collection(db, 'expenses'), where('shift_id', '==', shift.id))),
+      ]);
+      const expSeen = new Set();
+      const fetchedExpenses: any[] = [];
+      const allExpDocs: any[] = [];
+      if (expSnap1.status === 'fulfilled') allExpDocs.push(...expSnap1.value.docs);
+      if (expSnap2.status === 'fulfilled') allExpDocs.push(...expSnap2.value.docs);
+
+      allExpDocs.forEach((d) => {
+        if (!expSeen.has(d.id)) {
+          expSeen.add(d.id);
+          fetchedExpenses.push({ id: d.id, ...d.data() });
+        }
+      });
       setShiftExpenses(fetchedExpenses);
 
     } catch (error) {
@@ -724,6 +812,13 @@ export default function Shifts() {
                             </div>
                           </div>
 
+                          {Number(shift.total_discounts || 0) > 0 && (
+                            <div className="flex justify-between items-center px-2.5 py-1 bg-rose-500/10 border border-rose-500/20 text-rose-700 dark:text-rose-400 rounded-lg text-xs font-semibold">
+                              <span>الخصومات الممنوحة بالوردية:</span>
+                              <span className="font-bold">-{formatCurrency(shift.total_discounts)}</span>
+                            </div>
+                          )}
+
                           {/* Card Actions Footer */}
                           <div className="flex items-center gap-2 pt-1">
                             <Button
@@ -1001,6 +1096,12 @@ export default function Shifts() {
                           <span className="text-muted-foreground">مبيعات إلكترونية (تطبيقات):</span>
                           <span className="font-medium text-purple-600">{formatCurrency(viewingShift?.wallet_sales || 0)}</span>
                         </div>
+                        {Number(viewingShift?.total_discounts || 0) > 0 && (
+                          <div className="flex justify-between py-1.5 border-b border-border/50 border-dashed text-xs sm:text-sm">
+                            <span className="text-muted-foreground">إجمالي الخصومات الممنوحة:</span>
+                            <span className="font-medium text-rose-600">- {formatCurrency(viewingShift?.total_discounts || 0)}</span>
+                          </div>
+                        )}
                         <div className="flex justify-between py-2 mt-1 text-xs sm:text-sm">
                           <span className="font-bold">إجمالي المبيعات (بدون التوصيل):</span>
                           <span className="font-bold">{formatCurrency(viewingShift?.total_sales != null ? viewingShift.total_sales : ((viewingShift?.cash_sales || 0) + (viewingShift?.card_sales || 0) + (viewingShift?.wallet_sales || 0)))}</span>

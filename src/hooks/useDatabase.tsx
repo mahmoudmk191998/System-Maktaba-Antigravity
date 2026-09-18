@@ -53,19 +53,33 @@ export function useTenantBranch() {
         const profileSnap = await getDoc(profileRef);
         let profile = profileSnap.exists() ? profileSnap.data() : null;
 
-        if (profile?.tenant_id) {
-          setTenantId(profile.tenant_id);
+        const effectiveTenantId = profile?.tenantId || profile?.tenant_id;
+        if (effectiveTenantId) {
+          setTenantId(effectiveTenantId);
+
+          // Guarantee profile document contains role for Firestore security rules
+          if (!profile.role) {
+            try {
+              const rolesQ = query(collection(db, 'user_roles'), where('user_id', '==', user.uid), fsLimit(1));
+              const rolesSnap = await getDocs(rolesQ);
+              const userRole = !rolesSnap.empty ? rolesSnap.docs[0].data().role : 'admin';
+              await updateDoc(profileRef, { role: userRole });
+              profile.role = userRole;
+            } catch {
+              // Non-blocking sync
+            }
+          }
           
-          let resolvedBranchId = profile.branch_id;
+          let resolvedBranchId = profile.branchId || profile.branch_id;
           let branchName = 'الفرع الرئيسي';
           let branchAddress = '';
           let branchPhone = '';
           let branchOpeningTime = '08:00';
           let branchClosingTime = '23:00';
 
-          if (profile.branch_id) {
-            setBranchId(profile.branch_id);
-            const bDoc = await getDoc(doc(db, 'branches', profile.branch_id));
+          if (resolvedBranchId) {
+            setBranchId(resolvedBranchId);
+            const bDoc = await getDoc(doc(db, 'branches', resolvedBranchId));
             if (bDoc.exists()) {
               const bData = bDoc.data();
               branchName = bData.name || 'الفرع الرئيسي';
@@ -76,7 +90,7 @@ export function useTenantBranch() {
             }
           } else {
             // Get first branch
-            const q = query(collection(db, 'branches'), where('tenant_id', '==', profile.tenant_id), fsLimit(1));
+            const q = query(collection(db, 'branches'), where('tenant_id', '==', effectiveTenantId), fsLimit(1));
             const branchSnap = await getDocs(q);
             if (!branchSnap.empty) {
               const bId = branchSnap.docs[0].id;
@@ -91,7 +105,7 @@ export function useTenantBranch() {
             } else {
               // Create default branch
               const newBranch = await addDoc(collection(db, 'branches'), { 
-                tenant_id: profile.tenant_id, 
+                tenant_id: effectiveTenantId, 
                 name: 'الفرع الرئيسي',
                 address: '',
                 phone: '',
@@ -105,11 +119,11 @@ export function useTenantBranch() {
           }
           
           // Load tenant and settings from db
-          const tenantSnap = await getDoc(doc(db, 'tenants', profile.tenant_id));
+          const tenantSnap = await getDoc(doc(db, 'tenants', effectiveTenantId));
           if (tenantSnap.exists()) {
             const tData = tenantSnap.data();
             useAppStore.getState().setCurrentTenant({ 
-              id: profile.tenant_id, 
+              id: effectiveTenantId, 
               name: tData.name || 'MK',
               nameEn: tData.name_en || '',
               taxNumber: tData.tax_number || '',
@@ -138,7 +152,7 @@ export function useTenantBranch() {
           setTenantId(newTenant.id);
           const newBranch = await addDoc(collection(db, 'branches'), { tenant_id: newTenant.id, name: 'الفرع الرئيسي' });
           setBranchId(newBranch.id);
-          await setDoc(profileRef, { tenant_id: newTenant.id, branch_id: newBranch.id }, { merge: true });
+          await setDoc(profileRef, { tenant_id: newTenant.id, branch_id: newBranch.id, role: 'admin' }, { merge: true });
           
           useAppStore.getState().setCurrentTenant({ id: newTenant.id, name: 'MK' });
           useAppStore.getState().setCurrentBranch({ 
@@ -1079,47 +1093,61 @@ export function useDashboardStats(tenantId: string | null, branchId: string | nu
         today.setHours(0, 0, 0, 0);
         const todayISO = today.toISOString();
 
-        // Orders processing
-        const ordersQ = query(collection(db, 'orders'), where('tenant_id', '==', tenantId));
-        const ordersSnap = await getDocs(ordersQ);
-        const allOrders = ordersSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+        // Sales processing from live retail 'sales' collection
+        let salesQ = query(collection(db, 'sales'), where('tenantId', '==', tenantId));
+        let salesSnap = await getDocs(salesQ);
+        let allOrders = salesSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+        if (allOrders.length === 0) {
+          // Fallback to legacy orders if sales collection is empty
+          const ordersSnap = await getDocs(query(collection(db, 'orders'), where('tenant_id', '==', tenantId)));
+          allOrders = ordersSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+        }
 
         const todayTimestamp = today.getTime();
         const yesterday = new Date(today);
         yesterday.setDate(yesterday.getDate() - 1);
         const yesterdayTimestamp = yesterday.getTime();
 
-        const todayOrders = allOrders.filter((o: any) => {
-          if (!o.created_at) return false;
-          return new Date(o.created_at).getTime() >= todayTimestamp;
+        const todayOrders = allOrders.filter((s: any) => {
+          if (branchId && branchId !== 'all' && (s.branchId || s.branch_id) && (s.branchId || s.branch_id) !== branchId) return false;
+          const sDate = s.createdAt || s.created_at;
+          if (!sDate) return false;
+          return new Date(sDate).getTime() >= todayTimestamp;
         });
-        const yesterdayOrders = allOrders.filter((o: any) => {
-          if (!o.created_at) return false;
-          const time = new Date(o.created_at).getTime();
+        const yesterdayOrders = allOrders.filter((s: any) => {
+          if (branchId && branchId !== 'all' && (s.branchId || s.branch_id) && (s.branchId || s.branch_id) !== branchId) return false;
+          const sDate = s.createdAt || s.created_at;
+          if (!sDate) return false;
+          const time = new Date(sDate).getTime();
           return time >= yesterdayTimestamp && time < todayTimestamp;
         });
 
-        const paidOrders = todayOrders.filter((o: any) => o.payment_status === 'paid' || ['completed', 'ready', 'delivered'].includes(o.status));
-        const todaySales = paidOrders.reduce((sum, o: any) => sum + Math.max(0, Number(o.total || 0) - Number(o.delivery_fee || o.deliveryFee || 0)), 0);
-        const completedOrders = todayOrders.filter((o: any) => ['completed', 'ready', 'delivered'].includes(o.status));
-        const pendingOrders = todayOrders.filter((o: any) => o.status === 'pending').length;
+        const paidOrders = todayOrders.filter((s: any) => s.status !== 'cancelled' && s.saleStatus !== 'cancelled');
+        const todaySales = paidOrders.reduce((sum, s: any) => sum + Number(s.total || s.total_amount || 0), 0);
+        const completedOrders = paidOrders;
+        const pendingOrders = todayOrders.filter((s: any) => s.status === 'pending').length;
 
-        const yesterdayPaidOrders = yesterdayOrders.filter((o: any) => o.payment_status === 'paid' || ['completed', 'ready', 'delivered'].includes(o.status));
-        const yesterdaySales = yesterdayPaidOrders.reduce((sum, o: any) => sum + Math.max(0, Number(o.total || 0) - Number(o.delivery_fee || o.deliveryFee || 0)), 0);
-        const yesterdayCompletedOrders = yesterdayOrders.filter((o: any) => ['completed', 'ready', 'delivered'].includes(o.status)).length;
+        const yesterdayPaidOrders = yesterdayOrders.filter((s: any) => s.status !== 'cancelled' && s.saleStatus !== 'cancelled');
+        const yesterdaySales = yesterdayPaidOrders.reduce((sum, s: any) => sum + Number(s.total || s.total_amount || 0), 0);
+        const yesterdayCompletedOrders = yesterdayPaidOrders.length;
 
-        // Calculate Order Distribution for today
+        // Calculate sales distribution for today (cash vs electronic)
+        const cashToday = paidOrders.filter((s: any) => {
+          const pms = s.payments || s.paymentMethods || [];
+          return pms.some((p: any) => String(p.method || '').toLowerCase() === 'cash') || String(s.payment_method || '').toLowerCase() === 'cash';
+        }).length;
+        const electronicToday = paidOrders.length - cashToday;
+
         const orderDistribution = [
-          { name: 'صالة', value: todayOrders.filter((o:any) => o.order_type === 'dine_in').length, fill: '#3b82f6' },
-          { name: 'تيك أواي', value: todayOrders.filter((o:any) => o.order_type === 'takeaway').length, fill: '#10b981' },
-          { name: 'توصيل', value: todayOrders.filter((o:any) => o.order_type === 'delivery').length, fill: '#8b5cf6' }
+          { name: 'نقدي (كاش)', value: cashToday, fill: '#10b981' },
+          { name: 'إلكتروني / بطاقة', value: Math.max(0, electronicToday), fill: '#3b82f6' }
         ].filter(d => d.value > 0);
 
-        const sortedOrders = [...allOrders].sort((a: any, b: any) => (b.created_at || '').localeCompare(a.created_at || ''));
+        const sortedOrders = [...allOrders].sort((a: any, b: any) => (b.createdAt || b.created_at || '').localeCompare(a.createdAt || a.created_at || ''));
         const recentOrders = sortedOrders.slice(0, 5);
 
         // Reservations processing
-        const todayResCount = 0; // Replace with actual reservation logic when implemented
+        const todayResCount = 0;
 
         // Calculate 7-day revenue trend
         const revenueData = [];
@@ -1131,12 +1159,15 @@ export function useDashboardStats(tenantId: string | null, branchId: string | nu
           const dEnd = new Date(dStart);
           dEnd.setDate(dEnd.getDate() + 1);
           
-          const dayOrders = allOrders.filter((o: any) => {
-             if (!o.created_at) return false;
-             const time = new Date(o.created_at).getTime();
-             return (o.payment_status === 'paid' || o.status === 'completed') && time >= dStart.getTime() && time < dEnd.getTime();
+          const daySales = allOrders.filter((s: any) => {
+             if (branchId && branchId !== 'all' && (s.branchId || s.branch_id) && (s.branchId || s.branch_id) !== branchId) return false;
+             const sDate = s.createdAt || s.created_at;
+             if (!sDate) return false;
+             if (s.status === 'cancelled' || s.saleStatus === 'cancelled') return false;
+             const time = new Date(sDate).getTime();
+             return time >= dStart.getTime() && time < dEnd.getTime();
           });
-          const dayRevenue = dayOrders.reduce((sum, o: any) => sum + Math.max(0, Number(o.total || 0) - Number(o.delivery_fee || o.deliveryFee || 0)), 0);
+          const dayRevenue = daySales.reduce((sum, s: any) => sum + Number(s.total || s.total_amount || 0), 0);
           
           revenueData.push({
             date: dStart.toLocaleDateString('ar-EG', { weekday: 'short' }),
@@ -1144,23 +1175,20 @@ export function useDashboardStats(tenantId: string | null, branchId: string | nu
           });
         }
 
-        // TopSellingItems calculation (aggregate order items)
-        const itemsQ = query(collection(db, 'order_items'));
-        const itemsSnap = await getDocs(itemsQ);
+        // TopSellingItems calculation directly from items in sales
         const orderItemsMap = new Map();
-        
-        // Only count items from paid today orders
-        const todayPaidOrderIds = paidOrders.map(o => o.id);
-        
-        itemsSnap.docs.forEach(doc => {
-          const item = doc.data();
-          if (todayPaidOrderIds.includes(item.order_id)) {
-            const current = orderItemsMap.get(item.name) || { count: 0, revenue: 0 };
-            orderItemsMap.set(item.name, {
-              count: current.count + Number(item.quantity || 0),
-              revenue: current.revenue + (Number(item.quantity || 0) * Number(item.unit_price || 0))
+        paidOrders.forEach((sale: any) => {
+          const items = sale.items || [];
+          items.forEach((item: any) => {
+            const name = item.productName || item.name || 'صنف';
+            const qty = Number(item.quantity || 0);
+            const rev = Number(item.lineFinalTotal ?? item.lineTotal ?? (qty * (item.unitSellingPrice ?? item.price ?? 0)));
+            const cur = orderItemsMap.get(name) || { count: 0, revenue: 0 };
+            orderItemsMap.set(name, {
+              count: cur.count + qty,
+              revenue: cur.revenue + rev
             });
-          }
+          });
         });
 
         const topSellingItems = Array.from(orderItemsMap.entries())
@@ -1169,9 +1197,16 @@ export function useDashboardStats(tenantId: string | null, branchId: string | nu
           .slice(0, 5);
 
         // Low stock items
-        const stockQ = query(collection(db, 'branch_stock'), where('branch_id', '==', branchId || ''));
-        const stockSnap = await getDocs(stockQ);
-        const lowStockItemsCount = stockSnap.docs.filter(d => Number(d.data().quantity) < 10).length; // simple threshold
+        let stockQ = query(collection(db, 'branch_stock'), where('tenantId', '==', tenantId));
+        let stockSnap = await getDocs(stockQ);
+        if (stockSnap.empty) {
+          stockSnap = await getDocs(query(collection(db, 'branch_stock'), where('branch_id', '==', branchId || '')));
+        }
+        const lowStockItemsCount = stockSnap.docs.filter(d => {
+          const data = d.data();
+          if (branchId && branchId !== 'all' && (data.branchId || data.branch_id) && (data.branchId || data.branch_id) !== branchId) return false;
+          return Number(data.onHandQuantity ?? data.quantity ?? 0) < 10;
+        }).length;
 
         setStats({
           todaySales,
@@ -2051,10 +2086,14 @@ export function useSettings(tenantId: string | null) {
     if (!tenantId) return false;
     try {
       const collectionsWithTenantId = [
-        'menu_categories', 'menu_items', 'orders', 'tables', 'inventory_items', 'suppliers',
-        'purchase_orders', 'recipes', 'customers', 'employees', 'drivers',
+        'menu_categories', 'menu_items', 'orders', 'tables', 'inventory_items', 'suppliers', 'supplier_products',
+        'purchase_orders', 'goods_receipts', 'purchase_returns', 'supplier_ledger', 'supplier_payments', 'purchase_idempotency',
+        'customer_ledger', 'customer_receivables', 'customer_payments', 'customer_payment_allocations', 'price_lists', 'price_list_items', 'customer_product_prices', 'customer_idempotency',
+        'recipes', 'customers', 'employees', 'drivers',
         'promotions', 'coupons', 'production_batches', 'prep_lists', 'audit_logs', 'integrations', 'units',
-        'expenses', 'maintenance_records', 'call_center_orders', 'accounting_records', 'pos_shifts'
+        'expenses', 'maintenance_records', 'call_center_orders', 'accounting_records', 'pos_shifts',
+        'sales', 'sale_items', 'sale_payments', 'sale_returns', 'sale_return_items', 'sale_refunds', 'sale_exchanges', 'return_idempotency', 'held_sales', 'cashier_shifts', 'cash_register_shifts', 'cash_register_transactions', 'sale_idempotency', 'sequence_counters',
+        'branch_transfers', 'inventory_counts', 'damage_loss_records'
       ];
       
       const collectionsWithBranchId = [

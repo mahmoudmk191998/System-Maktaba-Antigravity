@@ -7,9 +7,10 @@ import { useUserPermissions } from '@/hooks/usePermissions';
 import { useProfile } from '@/hooks/useProfile';
 import { cn } from '@/lib/utils';
 import {
-  LayoutDashboard, ShoppingCart, ChefHat, CalendarDays, UtensilsCrossed,
-  Package, Truck, Factory, Bike, Users, Percent, UserCog, BarChart3,
-  Settings, FileText, Puzzle, BookOpen, ChevronRight, Building2, Menu, Shield, Receipt, ChevronDown, Clock, Gift, Wrench, Calculator, PhoneCall, Trash2, Eye, EyeOff, TrendingUp, Database
+  LayoutDashboard, ShoppingCart,
+  Package, Truck, Users, Percent, UserCog, BarChart3,
+  Settings, FileText, Puzzle, BookOpen, ChevronRight, Building2, Menu, Shield, Receipt, ChevronDown, Clock, Gift, Wrench, Calculator, Trash2, Eye, EyeOff, TrendingUp, Database, RotateCcw,
+  CheckSquare, FileSpreadsheet, Activity, CreditCard
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -27,18 +28,18 @@ const navGroups = [
   {
     title: 'المبيعات والعملاء',
     items: [
-      { path: '/pos', label: 'نقاط البيع', icon: ShoppingCart, perms: ['pos.view'] },
-      { path: '/orders-history', label: 'سجل الطلبات', icon: Receipt, perms: ['pos.view'] },
+      { path: '/pos', label: 'نقاط البيع السريعة (POS)', icon: ShoppingCart, perms: ['pos.view'] },
+      { path: '/orders-history', label: 'سجل فواتير المبيعات', icon: Receipt, perms: ['pos.view', 'sales.view'] },
+      { path: '/returns', label: 'مرتجعات واستبدال المبيعات', icon: RotateCcw, perms: ['returns.view', 'sales.view', 'pos.view'] },
       { path: '/customers', label: 'العملاء', icon: Users, perms: ['customers.view'] },
+      { path: '/receivables', label: 'الآجل والمديونيات', icon: CreditCard, perms: ['customers.view'] },
       { path: '/promotions', label: 'العروض والخصومات', icon: Percent, perms: ['promotions.view'] },
     ]
   },
   {
-    title: 'المطبخ والإنتاج',
+    title: 'المنتجات والكتالوج',
     items: [
-      { path: '/kitchen', label: 'شاشة المطبخ', icon: ChefHat, perms: ['kitchen.view'] },
-      { path: '/production', label: 'الإنتاج والتحضير', icon: Factory, perms: ['production.view'] },
-      { path: '/menu', label: 'القائمة والوصفات', icon: UtensilsCrossed, perms: ['menu.view'] },
+      { path: '/products', label: 'فهرس المنتجات والكتب', icon: BookOpen, perms: ['products.view', 'menu.view'] },
     ]
   },
   {
@@ -47,17 +48,22 @@ const navGroups = [
       { path: '/inventory', label: 'المخزون', icon: Package, perms: ['inventory.view'] },
       { path: '/waste', label: 'الهالك والتوالف', icon: Trash2, perms: ['inventory.waste'] },
       { path: '/purchasing', label: 'المشتريات', icon: Truck, perms: ['purchasing.view'] },
-      { path: '/suppliers', label: 'الموردين', icon: Users, perms: ['suppliers.view'] },
+      { path: '/suppliers', label: 'الموردين والناشرين', icon: Users, perms: ['suppliers.view'] },
     ]
   },
   {
-    title: 'العمليات الداخلية',
+    title: 'الموارد البشرية والورديات',
     items: [
-      { path: '/tables', label: 'الطاولات والحجوزات', icon: CalendarDays, perms: ['tables.view'] },
-      { path: '/callcenter', label: 'مركز الاتصالات', icon: PhoneCall, perms: ['callcenter.view'] },
-      { path: '/delivery', label: 'التوصيل والسائقين', icon: Bike, perms: ['delivery.view'] },
       { path: '/shifts', label: 'إدارة الورديات', icon: Clock, perms: ['hr.manage_shifts'] },
       { path: '/hr', label: 'الموارد البشرية', icon: UserCog, perms: ['hr.view_employees'] },
+    ]
+  },
+  {
+    title: 'الحوكمة وإدارة البيانات',
+    items: [
+      { path: '/approvals', label: 'مركز الموافقات', icon: CheckSquare, perms: ['approvals.view', 'governance.view'] },
+      { path: '/datacenter', label: 'مركز استيراد وتصدير البيانات', icon: FileSpreadsheet, perms: ['datacenter.view', 'settings.manage'] },
+      { path: '/system-health', label: 'فحص سلامة النظام والصيانة', icon: Activity, perms: ['system_health.view', 'settings.manage', 'accounting.view'] },
     ]
   },
   {

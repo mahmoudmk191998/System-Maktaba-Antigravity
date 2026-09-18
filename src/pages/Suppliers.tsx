@@ -1,662 +1,655 @@
-import { useState, useMemo } from 'react';
+import React, { useState, useMemo } from 'react';
 import { MainLayout } from '@/components/layout';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Users, Plus, Edit, Trash2, Search, Briefcase, Mail, Phone, MapPin, Tag, Package, FileText, CheckCircle2, XCircle, TrendingUp, DollarSign, Building2, Eye, Truck } from "lucide-react";
+import { useSuppliers } from '@/hooks/retail/useSuppliers';
+import { useAppStore } from '@/lib/store';
+import { useFormatters } from '@/lib/formatters';
+import { useUserPermissions } from '@/hooks/usePermissions';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Checkbox } from '@/components/ui/checkbox';
-import { useSuppliers, usePurchaseOrders, useTenantBranch } from '@/hooks/useDatabase';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from '@/components/ui/dialog';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import {
+  Users,
+  Plus,
+  Edit,
+  Archive,
+  Search,
+  Building2,
+  Phone,
+  Mail,
+  FileText,
+  DollarSign,
+  BookOpen,
+  Calendar,
+  AlertTriangle,
+  CreditCard,
+  Briefcase,
+  Layers,
+} from 'lucide-react';
+import type { Supplier, SupplierType } from '@/types/retail.types';
+import { SupplierPaymentModal } from '@/components/retail/purchasing/SupplierPaymentModal';
+import { SupplierLedgerDrawer } from '@/components/retail/purchasing/SupplierLedgerDrawer';
+import { toast } from 'sonner';
+
+const SUPPLIER_TYPES: { id: SupplierType; label: string }[] = [
+  { id: 'book_publisher', label: 'دار نشر كتب' },
+  { id: 'book_distributor', label: 'موزع كتب ومراجع' },
+  { id: 'stationery_supplier', label: 'مورد أدوات مكتبية' },
+  { id: 'school_supplies_supplier', label: 'مورد أدوات مدرسية وكشاكيل' },
+  { id: 'office_supplies_supplier', label: 'مورد مستلزمات مكاتب وأوراق' },
+  { id: 'general_supplier', label: 'مورد عام وتجاري' },
+  { id: 'manufacturer', label: 'مصنع / منتج محلي' },
+  { id: 'other', label: 'أخرى' },
+];
 
 export default function Suppliers() {
-  const { tenantId } = useTenantBranch();
-  const { suppliers, loading, add, update, remove } = useSuppliers(tenantId);
-  const { orders } = usePurchaseOrders(tenantId); // Fetch purchase orders to compute stats
+  const { number } = useFormatters();
+  const currentUser = useAppStore((state) => state.currentUser);
+  const { hasPermission, isAdmin } = useUserPermissions();
 
+  const canManage = isAdmin || hasPermission('suppliers.manage') || hasPermission('suppliers.create');
+  const canPay = isAdmin || hasPermission('suppliers.pay') || hasPermission('supplier_payments.create');
+
+  const {
+    suppliers,
+    loading,
+    hasMore,
+    loadMore,
+    refresh,
+    addSupplier,
+    editSupplier,
+    archiveSupplierById,
+    paySupplier,
+  } = useSuppliers();
+
+  // Search & Filters
   const [searchQuery, setSearchQuery] = useState('');
-  const [filterStatus, setFilterStatus] = useState('all');
-  const [selectedSuppliers, setSelectedSuppliers] = useState<string[]>([]);
-  const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
-  const [editingSupplier, setEditingSupplier] = useState<any>(null);
-  const [viewingSupplier, setViewingSupplier] = useState<any>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [filterType, setFilterType] = useState('all');
 
-  // Form states
-  const [formData, setFormData] = useState({
+  // Modals & Drawers
+  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [editingSupplier, setEditingSupplier] = useState<Supplier | null>(null);
+
+  const [payingSupplier, setPayingSupplier] = useState<Supplier | null>(null);
+  const [isPaymentOpen, setIsPaymentOpen] = useState(false);
+
+  const [ledgerSupplier, setLedgerSupplier] = useState<Supplier | null>(null);
+  const [isLedgerOpen, setIsLedgerOpen] = useState(false);
+
+  // Form State
+  const [formData, setFormData] = useState<{
+    name: string;
+    companyName: string;
+    supplierType: SupplierType;
+    phone: string;
+    phone2: string;
+    email: string;
+    address: string;
+    taxNumber: string;
+    commercialRegistration: string;
+    contactPerson: string;
+    paymentTermsDays: number;
+    creditLimit: number;
+    openingBalance: number;
+    notes: string;
+  }>({
     name: '',
-    company: '',
+    companyName: '',
+    supplierType: 'book_publisher',
     phone: '',
+    phone2: '',
     email: '',
-    taxId: '',
     address: '',
-    category: 'مواد غذائية',
-    status: 'active',
-    notes: ''
+    taxNumber: '',
+    commercialRegistration: '',
+    contactPerson: '',
+    paymentTermsDays: 30,
+    creditLimit: 0,
+    openingBalance: 0,
+    notes: '',
   });
 
   const resetForm = () => {
     setFormData({
       name: '',
-      company: '',
+      companyName: '',
+      supplierType: 'book_publisher',
       phone: '',
+      phone2: '',
       email: '',
-      taxId: '',
       address: '',
-      category: 'مواد غذائية',
-      status: 'active',
-      notes: ''
+      taxNumber: '',
+      commercialRegistration: '',
+      contactPerson: '',
+      paymentTermsDays: 30,
+      creditLimit: 0,
+      openingBalance: 0,
+      notes: '',
     });
+    setEditingSupplier(null);
   };
 
-  const handleInputChange = (field: string, value: string) => {
-    setFormData(prev => ({ ...prev, [field]: value }));
+  const handleOpenAdd = () => {
+    resetForm();
+    setIsAddModalOpen(true);
   };
 
-  const filteredSuppliers = useMemo(() => {
-    return suppliers.filter(s => {
-      const matchSearch = (s.name || '').toLowerCase().includes(searchQuery.toLowerCase()) || 
-                          (s.company || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
-                          (s.phone || '').includes(searchQuery);
-      const matchStatus = filterStatus === 'all' || s.status === filterStatus;
-      return matchSearch && matchStatus;
-    });
-  }, [suppliers, searchQuery, filterStatus]);
-
-  // Analytics
-  const activeSuppliersCount = suppliers.filter(s => s.status === 'active').length;
-  const totalPurchaseValue = useMemo(() => {
-    return orders.reduce((sum, order) => sum + (Number(order.total_amount) || 0), 0);
-  }, [orders]);
-
-  const supplierStats = useMemo(() => {
-    const stats: Record<string, { totalAmount: number, orderCount: number }> = {};
-    orders.forEach(order => {
-      if (!stats[order.supplier_id]) {
-        stats[order.supplier_id] = { totalAmount: 0, orderCount: 0 };
-      }
-      stats[order.supplier_id].totalAmount += (Number(order.total_amount) || 0);
-      stats[order.supplier_id].orderCount += 1;
-    });
-    return stats;
-  }, [orders]);
-
-  const handleAdd = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!formData.name) return;
-    setIsSubmitting(true);
-    const success = await add({ 
-      ...formData,
-      created_at: new Date().toISOString()
-    });
-    if (success) {
-      setIsAddDialogOpen(false);
-      resetForm();
-    }
-    setIsSubmitting(false);
-  };
-
-  const openEditDialog = (supplier: any) => {
+  const handleOpenEdit = (supplier: Supplier) => {
     setEditingSupplier(supplier);
     setFormData({
-      name: supplier.name || '',
-      company: supplier.company || '',
-      phone: supplier.phone || '',
+      name: supplier.name,
+      companyName: supplier.companyName || '',
+      supplierType: supplier.supplierType || 'general_supplier',
+      phone: supplier.phone,
+      phone2: supplier.phone2 || '',
       email: supplier.email || '',
-      taxId: supplier.taxId || '',
       address: supplier.address || '',
-      category: supplier.category || 'مواد غذائية',
-      status: supplier.status || 'active',
-      notes: supplier.notes || ''
+      taxNumber: supplier.taxNumber || '',
+      commercialRegistration: supplier.commercialRegistration || '',
+      contactPerson: supplier.contactPerson || '',
+      paymentTermsDays: supplier.paymentTermsDays || 30,
+      creditLimit: supplier.creditLimit || 0,
+      openingBalance: supplier.openingBalance || 0,
+      notes: supplier.notes || '',
     });
+    setIsAddModalOpen(true);
   };
 
-  const handleUpdate = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!editingSupplier || !formData.name) return;
-    setIsSubmitting(true);
-    const success = await update(editingSupplier.id, {
-      ...formData,
-      updated_at: new Date().toISOString()
-    });
-    if (success) {
-      setEditingSupplier(null);
+  const handleSaveSupplier = async () => {
+    if (!formData.name.trim() || !formData.phone.trim()) {
+      toast.error('اسم المورد ورقم الهاتف حقول إلزامية');
+      return;
+    }
+
+    try {
+      if (editingSupplier) {
+        await editSupplier(editingSupplier.id, {
+          ...formData,
+          updatedBy: currentUser?.name || 'مدير النظام',
+        });
+        toast.success(`تم تحديث بيانات المورد ${formData.name}`);
+      } else {
+        const newSup = await addSupplier({
+          ...formData,
+          createdBy: currentUser?.name || 'مدير النظام',
+        });
+        toast.success(`تمت إضافة المورد بنجاح بكود: ${newSup.supplierCode}`);
+      }
+      setIsAddModalOpen(false);
       resetForm();
-    }
-    setIsSubmitting(false);
-  };
-
-  const handleDelete = async (id: string, name: string) => {
-    if (window.confirm(`هل أنت متأكد من حذف المورد "${name}" نهائياً من النظام؟`)) {
-      await remove(id);
-      if (viewingSupplier?.id === id) setViewingSupplier(null);
+    } catch (err: any) {
+      toast.error(err.message || 'فشل حفظ بيانات المورد');
     }
   };
 
-  const handleBulkDeleteSuppliers = async () => {
-    if (!window.confirm(`هل أنت متأكد من حذف ${selectedSuppliers.length} مورد؟`)) return;
-    for (const id of selectedSuppliers) {
-      await remove(id);
+  const handleArchive = async (supplier: Supplier) => {
+    if (confirm(`هل أنت متأكد من رغبتك في أرشفة المورد "${supplier.name}"؟ سيبقى ظاهراً في الفواتير القديمة ولن يمكن عمل أوامر شراء جديدة له.`)) {
+      try {
+        await archiveSupplierById(supplier.id, currentUser?.name || 'مدير النظام');
+        toast.success(`تمت أرشفة المورد ${supplier.name}`);
+      } catch (err: any) {
+        toast.error(err.message || 'فشلت أرشفة المورد');
+      }
     }
-    setSelectedSuppliers([]);
   };
+
+  // Filtered Suppliers
+  const filteredSuppliers = useMemo(() => {
+    return suppliers.filter((sup) => {
+      if (sup.archived) return false;
+      const q = searchQuery.toLowerCase().trim();
+      const matchesQuery =
+        !q ||
+        sup.name.toLowerCase().includes(q) ||
+        sup.supplierCode.toLowerCase().includes(q) ||
+        (sup.companyName && sup.companyName.toLowerCase().includes(q)) ||
+        (sup.phone && sup.phone.includes(q)) ||
+        (sup.contactPerson && sup.contactPerson.toLowerCase().includes(q));
+
+      const matchesType = filterType === 'all' || sup.supplierType === filterType;
+      return matchesQuery && matchesType;
+    });
+  }, [suppliers, searchQuery, filterType]);
+
+  // KPIs
+  const kpis = useMemo(() => {
+    let totalPayables = 0;
+    let payablesCount = 0;
+    let publishersCount = 0;
+
+    suppliers.forEach((s) => {
+      if (!s.archived) {
+        const bal = Number(s.currentBalance || 0);
+        if (bal > 0) {
+          totalPayables += bal;
+          payablesCount++;
+        }
+        if (s.supplierType === 'book_publisher' || s.supplierType === 'book_distributor') {
+          publishersCount++;
+        }
+      }
+    });
+
+    return {
+      totalCount: suppliers.filter((s) => !s.archived).length,
+      totalPayables,
+      payablesCount,
+      publishersCount,
+    };
+  }, [suppliers]);
 
   return (
     <MainLayout
-      title="إدارة الموردين"
-      subtitle="سجل شامل لبيانات الموردين والمقاولين وإدارة التعاملات المالية"
+      title="الموردين ودور النشر (Suppliers & Publishers)"
+      subtitle="سجل الموردين ودور النشر، كشوف الحسابات الجارية، وسندات صرف ودفعات الحساب"
       actions={
-        <Button onClick={() => { resetForm(); setIsAddDialogOpen(true); }} className="gap-2 w-full sm:w-auto min-h-[44px] sm:min-h-0 h-10 rounded-xl font-bold shadow-md">
-          <Plus className="w-4 h-4" />
-          مورد جديد
-        </Button>
+        canManage && (
+          <Button onClick={handleOpenAdd} className="gap-2 font-bold text-xs sm:text-sm shadow-sm">
+            <Plus className="w-4 h-4" />
+            <span>إضافة مورد / دار نشر</span>
+          </Button>
+        )
       }
     >
-      <div className="grid gap-4 sm:gap-6 pb-20">
-        {/* KPI Cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
-          <Card className="bg-primary/5 border-primary/20 shadow-sm">
-            <CardContent className="p-4 sm:p-6">
-              <div className="flex items-center justify-between gap-3">
-                <div className="min-w-0 flex-1">
-                  <p className="text-xs sm:text-sm font-medium text-muted-foreground mb-1 truncate">إجمالي الموردين</p>
-                  <p className="text-2xl sm:text-3xl font-bold truncate">{suppliers.length}</p>
-                </div>
-                <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-primary/10 flex items-center justify-center text-primary flex-shrink-0">
-                  <Building2 className="w-5 h-5 sm:w-6 sm:h-6" />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+      <div className="space-y-6 max-w-7xl mx-auto" dir="rtl">
 
-          <Card className="bg-emerald-500/5 border-emerald-500/20 shadow-sm">
-            <CardContent className="p-4 sm:p-6">
-              <div className="flex items-center justify-between gap-3">
-                <div className="min-w-0 flex-1">
-                  <p className="text-xs sm:text-sm font-medium text-muted-foreground mb-1 truncate">الموردين النشطين</p>
-                  <p className="text-2xl sm:text-3xl font-bold text-emerald-600 truncate">{activeSuppliersCount}</p>
-                </div>
-                <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-emerald-500/10 flex items-center justify-center text-emerald-600 flex-shrink-0">
-                  <CheckCircle2 className="w-5 h-5 sm:w-6 sm:h-6" />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="bg-blue-500/5 border-blue-500/20 shadow-sm">
-            <CardContent className="p-4 sm:p-6">
-              <div className="flex items-center justify-between gap-3">
-                <div className="min-w-0 flex-1">
-                  <p className="text-xs sm:text-sm font-medium text-muted-foreground mb-1 truncate">إجمالي تعاملات الشراء</p>
-                  <p className="text-xl sm:text-2xl font-bold text-blue-600 truncate">{totalPurchaseValue.toLocaleString('ar-EG')} <span className="text-xs font-normal">ج.م</span></p>
-                </div>
-                <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-blue-500/10 flex items-center justify-center text-blue-600 flex-shrink-0">
-                  <DollarSign className="w-5 h-5 sm:w-6 sm:h-6" />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+      {/* KPI Cards */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+        <div className="p-4 rounded-2xl bg-card border border-border shadow-sm flex items-center gap-3">
+          <div className="p-3 rounded-xl bg-primary/10 text-primary">
+            <Building2 className="w-5 h-5" />
+          </div>
+          <div>
+            <span className="text-xs text-muted-foreground block">إجمالي الموردين النشطين</span>
+            <span className="text-xl font-black text-foreground">{number(kpis.totalCount)}</span>
+          </div>
         </div>
 
-        {/* Main Content */}
-        <Card className="shadow-sm border-0 border-t-4 border-t-primary">
-          <CardHeader className="bg-card p-4 sm:p-6 pb-4 border-b">
-            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 sm:gap-4">
-              <div>
-                <CardTitle className="flex items-center gap-2 text-xl sm:text-2xl">
-                  <Users className="w-5 h-5 sm:w-6 sm:h-6 text-primary flex-shrink-0" />
-                  قاعدة بيانات الموردين
-                </CardTitle>
-                <CardDescription className="text-xs sm:text-base mt-1">عرض وتصنيف كافة الموردين المرتبطين بالمطعم والمخازن</CardDescription>
-              </div>
-              <div className="flex flex-col sm:flex-row gap-2.5 w-full md:w-auto">
-                {selectedSuppliers.length > 0 && (
-                  <Button onClick={handleBulkDeleteSuppliers} variant="destructive" className="gap-2 shrink-0 md:mr-auto min-h-[44px] sm:min-h-0 h-10 rounded-xl font-bold">
-                    <Trash2 className="w-4 h-4" />
-                    حذف ({selectedSuppliers.length})
-                  </Button>
-                )}
-                <div className="relative w-full sm:w-80">
-                  <Search className="absolute right-3 top-3 h-4 w-4 text-muted-foreground pointer-events-none" />
-                  <Input
-                    placeholder="ابحث باسم المورد أو الشركة أو الهاتف..."
-                    className="pr-9 h-10 text-base sm:text-sm rounded-xl"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                  />
-                </div>
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent className="p-3 sm:p-6">
-            <Tabs defaultValue="all" className="w-full" onValueChange={setFilterStatus}>
-              <TabsList className="grid grid-cols-3 w-full max-w-xs h-auto p-1 bg-muted/40 border rounded-xl mb-4 sm:mb-6">
-                <TabsTrigger value="all" className="py-2 px-2 text-xs sm:text-sm font-semibold rounded-lg data-[state=active]:shadow-sm">الكل</TabsTrigger>
-                <TabsTrigger value="active" className="py-2 px-2 text-xs sm:text-sm font-semibold rounded-lg text-emerald-600 data-[state=active]:bg-emerald-50 data-[state=active]:shadow-sm">نشط</TabsTrigger>
-                <TabsTrigger value="inactive" className="py-2 px-2 text-xs sm:text-sm font-semibold rounded-lg text-rose-600 data-[state=active]:bg-rose-50 data-[state=active]:shadow-sm">غير نشط</TabsTrigger>
-              </TabsList>
-              
-              {/* Desktop View: Table */}
-              <div className="hidden md:block rounded-xl border border-border/50 overflow-x-auto shadow-sm">
-                <Table>
-                  <TableHeader className="bg-muted/30">
-                    <TableRow>
-                      <TableHead className="w-[40px] px-4">
-                         <Checkbox
-                           checked={filteredSuppliers.length > 0 && selectedSuppliers.length === filteredSuppliers.length}
-                           onCheckedChange={(c) => {
-                             if (c) setSelectedSuppliers(filteredSuppliers.map(su => su.id));
-                             else setSelectedSuppliers([]);
-                           }}
-                         />
-                      </TableHead>
-                      <TableHead className="font-semibold px-4 w-1/4">المورد / الشركة</TableHead>
-                      <TableHead className="font-semibold">التصنيف</TableHead>
-                      <TableHead className="font-semibold">معلومات التواصل</TableHead>
-                      <TableHead className="font-semibold text-center">الحالة</TableHead>
-                      <TableHead className="font-semibold text-center">أوامر الشراء</TableHead>
-                      <TableHead className="text-center font-semibold w-[120px]">الإجراءات</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {loading ? (
-                      <TableRow>
-                        <TableCell colSpan={7} className="h-32 text-center">
-                          <div className="flex justify-center items-center">
-                            <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin" />
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ) : filteredSuppliers.length === 0 ? (
-                      <TableRow>
-                        <TableCell colSpan={7} className="h-32 text-center text-muted-foreground">
-                          لا يوجد موردين مطابقين للبحث
-                        </TableCell>
-                      </TableRow>
-                    ) : (
-                      filteredSuppliers.map((supplier) => (
-                        <TableRow key={supplier.id} className="hover:bg-muted/10 group transition-colors">
-                          <TableCell className="px-4">
-                            <div onClick={e => e.stopPropagation()}>
-                              <Checkbox 
-                                checked={selectedSuppliers.includes(supplier.id)}
-                                onCheckedChange={(c) => {
-                                  if (c) setSelectedSuppliers(prev => [...prev, supplier.id]);
-                                  else setSelectedSuppliers(prev => prev.filter(id => id !== supplier.id));
-                                }}
-                              />
-                            </div>
-                          </TableCell>
-                          <TableCell className="px-4">
-                            <div className="flex items-center gap-3">
-                              <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
-                                <Truck className="w-5 h-5 text-primary" />
-                              </div>
-                              <div>
-                                <p className="font-bold text-base">{supplier.name}</p>
-                                {supplier.company && (
-                                  <p className="text-sm text-muted-foreground flex items-center gap-1 mt-0.5">
-                                    <Briefcase className="w-3 h-3" />
-                                    {supplier.company}
-                                  </p>
-                                )}
-                              </div>
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <Badge variant="outline" className="bg-background">
-                              {supplier.category || 'غير محدد'}
-                            </Badge>
-                          </TableCell>
-                          <TableCell>
-                            <div className="space-y-1">
-                              {supplier.phone ? (
-                                <p className="text-sm flex items-center gap-1.5" dir="ltr">
-                                  <Phone className="w-3" />
-                                  <span className="text-right w-full">{supplier.phone}</span>
-                                </p>
-                              ) : <span className="text-muted-foreground text-xs">-</span>}
-                            </div>
-                          </TableCell>
-                          <TableCell className="text-center">
-                             {supplier.status === 'inactive' ? (
-                               <Badge variant="outline" className="text-rose-600 bg-rose-50 border-rose-200">غير نشط</Badge>
-                             ) : (
-                               <Badge variant="outline" className="text-emerald-600 bg-emerald-50 border-emerald-200">نشط</Badge>
-                             )}
-                          </TableCell>
-                          <TableCell className="text-center">
-                            <div className="flex flex-col items-center">
-                              <span className="font-bold text-lg text-primary">{supplierStats[supplier.id]?.orderCount || 0}</span>
-                              <span className="text-xs text-muted-foreground">طلبات</span>
-                            </div>
-                          </TableCell>
-                          <TableCell className="text-center">
-                            <div className="flex justify-center items-center gap-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
-                              <Button variant="ghost" size="icon" className="h-9 w-9 text-primary hover:bg-primary/10 rounded-full" 
-                                onClick={() => setViewingSupplier(supplier)} title="عرض الملف">
-                                <Eye className="w-4 h-4" />
-                              </Button>
-                              <Button variant="ghost" size="icon" className="h-9 w-9 text-blue-600 hover:bg-blue-500/10 rounded-full" 
-                                onClick={() => openEditDialog(supplier)} title="تعديل">
-                                <Edit className="w-4 h-4" />
-                              </Button>
-                              <Button variant="ghost" size="icon" className="h-9 w-9 text-destructive hover:bg-destructive/10 rounded-full" 
-                                onClick={() => handleDelete(supplier.id, supplier.name)} title="حذف">
-                                <Trash2 className="w-4 h-4" />
-                              </Button>
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                      ))
-                    )}
-                  </TableBody>
-                </Table>
-              </div>
+        <div className="p-4 rounded-2xl bg-card border border-border shadow-sm flex items-center gap-3">
+          <div className="p-3 rounded-xl bg-amber-500/10 text-amber-600">
+            <BookOpen className="w-5 h-5" />
+          </div>
+          <div>
+            <span className="text-xs text-muted-foreground block">دور نشر وموزعي كتب</span>
+            <span className="text-xl font-black text-amber-600">{number(kpis.publishersCount)}</span>
+          </div>
+        </div>
 
-              {/* Mobile View: Responsive Supplier Cards */}
-              <div className="md:hidden space-y-3">
-                {loading ? (
-                  <div className="p-8 text-center bg-card border rounded-xl flex flex-col items-center justify-center gap-3">
-                    <div className="w-7 h-7 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-                    <p className="text-xs text-muted-foreground">جاري تحميل الموردين...</p>
-                  </div>
-                ) : filteredSuppliers.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center p-6 text-center bg-card rounded-xl border border-dashed border-border text-muted-foreground">
-                    <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center mb-3">
-                      <Users className="w-6 h-6 opacity-30" />
-                    </div>
-                    <p className="text-sm font-bold text-foreground mb-1">لا يوجد موردين مطابقين</p>
-                    <p className="text-xs">اضغط "مورد جديد" لتسجيل مورد جديد</p>
-                  </div>
-                ) : (
-                  filteredSuppliers.map((supplier) => (
-                    <div
-                      key={supplier.id}
-                      className="bg-card rounded-xl border border-border/70 p-3.5 shadow-sm space-y-3 hover:border-primary/40 transition-colors"
-                    >
-                      {/* Header: Avatar, Name, Company, Status */}
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                          <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center text-primary shrink-0">
-                            <Truck className="w-5 h-5" />
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <p className="font-bold text-sm text-foreground truncate">{supplier.name}</p>
-                            {supplier.company && (
-                              <p className="text-[11px] text-muted-foreground truncate flex items-center gap-1">
-                                <Briefcase className="w-3 h-3 flex-shrink-0" />
-                                {supplier.company}
-                              </p>
-                            )}
-                          </div>
-                        </div>
-                        <div className="flex-shrink-0">
-                          {supplier.status === 'inactive' ? (
-                            <Badge variant="outline" className="text-rose-600 bg-rose-50 border-rose-200 text-xs">غير نشط</Badge>
-                          ) : (
-                            <Badge variant="outline" className="text-emerald-600 bg-emerald-50 border-emerald-200 text-xs">نشط</Badge>
-                          )}
-                        </div>
-                      </div>
+        <div className="p-4 rounded-2xl bg-card border border-border shadow-sm flex items-center gap-3">
+          <div className="p-3 rounded-xl bg-destructive/10 text-destructive">
+            <DollarSign className="w-5 h-5" />
+          </div>
+          <div>
+            <span className="text-xs text-muted-foreground block">إجمالي المديونية المستحقة</span>
+            <span className="text-xl font-black text-destructive">{number(kpis.totalPayables)} ج.م</span>
+          </div>
+        </div>
 
-                      {/* Details: Category, Phone, Orders */}
-                      <div className="bg-muted/40 rounded-lg p-2.5 space-y-1.5 text-xs">
-                        <div className="flex justify-between items-center">
-                          <span className="text-muted-foreground">التصنيف:</span>
-                          <Badge variant="outline" className="bg-background text-[11px]">{supplier.category || 'غير محدد'}</Badge>
-                        </div>
-                        {supplier.phone && (
-                          <div className="flex justify-between items-center">
-                            <span className="text-muted-foreground flex items-center gap-1">
-                              <Phone className="w-3 h-3" /> الهاتف:
-                            </span>
-                            <span className="font-semibold text-foreground font-mono" dir="ltr">{supplier.phone}</span>
-                          </div>
-                        )}
-                        <div className="flex justify-between items-center pt-1 border-t border-border/40">
-                          <span className="text-muted-foreground">عدد أوامر الشراء:</span>
-                          <span className="font-bold text-primary">{supplierStats[supplier.id]?.orderCount || 0} طلبات</span>
-                        </div>
-                        <div className="flex justify-between items-center">
-                          <span className="text-muted-foreground">إجمالي التعامل:</span>
-                          <span className="font-black text-foreground">{(supplierStats[supplier.id]?.totalAmount || 0).toLocaleString('ar-EG')} ج.م</span>
-                        </div>
-                      </div>
-
-                      {/* Actions Footer */}
-                      <div className="flex items-center gap-2 pt-1">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="flex-1 min-h-[44px] h-11 text-xs font-bold gap-1 text-primary border-primary/30 hover:bg-primary/10 rounded-xl"
-                          onClick={() => setViewingSupplier(supplier)}
-                        >
-                          <Eye className="w-4 h-4" />
-                          عرض الملف
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="min-h-[44px] h-11 px-3 text-xs font-bold gap-1 text-blue-600 border-blue-200 hover:bg-blue-50 rounded-xl"
-                          onClick={() => openEditDialog(supplier)}
-                          title="تعديل"
-                        >
-                          <Edit className="w-4 h-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="min-h-[44px] min-w-[44px] h-11 w-11 text-destructive hover:bg-destructive/10 rounded-xl flex-shrink-0"
-                          onClick={() => handleDelete(supplier.id, supplier.name)}
-                          title="حذف"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </Button>
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
-            </Tabs>
-          </CardContent>
-        </Card>
+        <div className="p-4 rounded-2xl bg-card border border-border shadow-sm flex items-center gap-3">
+          <div className="p-3 rounded-xl bg-blue-500/10 text-blue-600">
+            <CreditCard className="w-5 h-5" />
+          </div>
+          <div>
+            <span className="text-xs text-muted-foreground block">موردين لديهم مستحقات</span>
+            <span className="text-xl font-black text-blue-600">{number(kpis.payablesCount)}</span>
+          </div>
+        </div>
       </div>
 
-      {/* Add / Edit Supplier Dialog */}
-      <Dialog open={isAddDialogOpen || !!editingSupplier} onOpenChange={(open) => {
-        if (!open) {
-          setIsAddDialogOpen(false);
-          setEditingSupplier(null);
-        }
-      }}>
-        <DialogContent className="max-w-[95vw] sm:max-w-2xl max-h-[90dvh] overflow-y-auto rounded-2xl p-4 sm:p-6">
-          <form onSubmit={editingSupplier ? handleUpdate : handleAdd}>
-            <DialogHeader className="border-b pb-3 mb-4">
-              <DialogTitle className="text-xl sm:text-2xl flex items-center gap-2">
-                {editingSupplier ? <Edit className="w-5 h-5 sm:w-6 sm:h-6 text-primary flex-shrink-0" /> : <Plus className="w-5 h-5 sm:w-6 sm:h-6 text-primary flex-shrink-0" />}
-                {editingSupplier ? 'تعديل بيانات المورد' : 'إضافة مورد جديد'}
-              </DialogTitle>
-              <DialogDescription className="text-xs sm:text-sm">
-                أدخل كافة تفاصيل المورد والشركة لسهولة التواصل وتسجيل الفواتير.
-              </DialogDescription>
-            </DialogHeader>
-            
-            <div className="space-y-4 sm:space-y-6 py-1">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-                <div className="space-y-1.5">
-                  <Label className="text-xs sm:text-sm font-semibold">اسم المورد (أو المسؤول) <span className="text-red-500">*</span></Label>
-                  <Input required placeholder="مثال: محمد أحمد" value={formData.name} onChange={e => handleInputChange('name', e.target.value)} disabled={isSubmitting} className="h-11 text-base sm:text-sm rounded-xl" />
-                </div>
-                <div className="space-y-1.5">
-                  <Label className="text-xs sm:text-sm font-semibold">اسم الشركة / المؤسسة</Label>
-                  <Input placeholder="مثال: شركة المراعي" value={formData.company} onChange={e => handleInputChange('company', e.target.value)} disabled={isSubmitting} className="h-11 text-base sm:text-sm rounded-xl" />
-                </div>
-                <div className="space-y-1.5">
-                  <Label className="text-xs sm:text-sm font-semibold">تصنيف المورد</Label>
-                  <Select value={formData.category} onValueChange={(v) => handleInputChange('category', v)}>
-                    <SelectTrigger className="h-11 text-base sm:text-sm rounded-xl">
-                       <SelectValue placeholder="اختر التصنيف..." />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="مواد غذائية">مواد غذائية ومشروبات</SelectItem>
-                      <SelectItem value="لحوم ودواجن">لحوم ودواجن</SelectItem>
-                      <SelectItem value="تغليف وتعبئة">تغليف وتعبئة (مستهلكات)</SelectItem>
-                      <SelectItem value="معدات وصيانة">معدات وصيانة</SelectItem>
-                      <SelectItem value="أخرى">أخرى</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1.5">
-                  <Label className="text-xs sm:text-sm font-semibold">حالة المورد</Label>
-                  <Select value={formData.status} onValueChange={(v) => handleInputChange('status', v)}>
-                    <SelectTrigger className="h-11 text-base sm:text-sm rounded-xl">
-                       <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="active">نشط (يتعامل معه)</SelectItem>
-                      <SelectItem value="inactive">غير نشط (متوقف)</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
+      {/* Search and Filters */}
+      <div className="p-3 sm:p-4 rounded-2xl bg-card border border-border shadow-sm flex flex-col md:flex-row gap-3 items-center justify-between">
+        <div className="relative w-full md:w-96">
+          <Search className="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="ابحث بالاسم، كود المورد، دار النشر، الهاتف، السجل..."
+            className="pr-9 text-xs h-9"
+          />
+        </div>
 
-              <div className="p-3.5 sm:p-4 bg-muted/30 rounded-xl border space-y-3">
-                 <h4 className="font-semibold text-xs sm:text-sm flex items-center gap-2 mb-1"><Phone className="w-4 h-4 text-primary"/> بيانات التواصل والضريبة</h4>
-                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-                  <div className="space-y-1.5">
-                    <Label className="text-xs sm:text-sm font-semibold">رقم الهاتف</Label>
-                    <Input placeholder="01xxxxxxxxx" value={formData.phone} onChange={e => handleInputChange('phone', e.target.value)} disabled={isSubmitting} dir="ltr" className="text-right h-11 text-base sm:text-sm rounded-xl" />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label className="text-xs sm:text-sm font-semibold">البريد الإلكتروني</Label>
-                    <Input type="email" placeholder="email@company.com" value={formData.email} onChange={e => handleInputChange('email', e.target.value)} disabled={isSubmitting} dir="ltr" className="text-right h-11 text-base sm:text-sm rounded-xl" />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label className="text-xs sm:text-sm font-semibold">الرقم الضريبي (للفواتير)</Label>
-                    <Input placeholder="123-456-789" value={formData.taxId} onChange={e => handleInputChange('taxId', e.target.value)} disabled={isSubmitting} dir="ltr" className="text-right h-11 text-base sm:text-sm rounded-xl" />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label className="text-xs sm:text-sm font-semibold">العنوان الفعلي</Label>
-                    <Input placeholder="أدخل العنوان بالتفصيل" value={formData.address} onChange={e => handleInputChange('address', e.target.value)} disabled={isSubmitting} className="h-11 text-base sm:text-sm rounded-xl" />
-                  </div>
-                </div>
-              </div>
+        <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
+          <Select value={filterType} onValueChange={setFilterType}>
+            <SelectTrigger className="h-9 text-xs w-48">
+              <SelectValue placeholder="نوع المورد" />
+            </SelectTrigger>
+            <SelectContent dir="rtl">
+              <SelectItem value="all">كل التصنيفات والأنواع</SelectItem>
+              {SUPPLIER_TYPES.map((t) => (
+                <SelectItem key={t.id} value={t.id}>
+                  {t.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
 
-              <div className="space-y-1.5">
-                <Label className="text-xs sm:text-sm font-semibold">ملاحظات إضافية</Label>
-                <Input placeholder="أي معلومات تهمك مثل: موعد التوصيل، طرق الدفع المفضلة..." value={formData.notes} onChange={e => handleInputChange('notes', e.target.value)} disabled={isSubmitting} className="h-11 text-base sm:text-sm rounded-xl" />
-              </div>
+      {/* Suppliers Table */}
+      <div className="border border-border rounded-2xl overflow-hidden bg-card shadow-sm">
+        {filteredSuppliers.length === 0 ? (
+          <div className="py-16 text-center text-muted-foreground space-y-3">
+            <div className="p-4 rounded-full bg-muted/60 w-16 h-16 mx-auto flex items-center justify-center">
+              <Users className="w-8 h-8 text-muted-foreground/60" />
             </div>
-            
-            <DialogFooter className="mt-4 sm:mt-6 border-t pt-4 flex flex-col-reverse sm:flex-row gap-2 sm:gap-0">
-              <Button type="button" variant="outline" className="min-h-[44px] rounded-xl font-bold" onClick={() => {setIsAddDialogOpen(false); setEditingSupplier(null);}} disabled={isSubmitting}>إلغاء</Button>
-              <Button type="submit" disabled={isSubmitting} className="min-h-[44px] rounded-xl font-bold shadow-sm">{isSubmitting ? 'جاري الحفظ...' : (editingSupplier ? 'حفظ التحديثات' : 'إضافة المورد')}</Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
+            <div className="text-sm font-bold text-foreground">لا يوجد موردين مطابقين للبحث</div>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-right text-xs">
+              <thead className="bg-muted/50 border-b border-border text-muted-foreground font-bold select-none">
+                <tr>
+                  <th className="p-3.5">الكود</th>
+                  <th className="p-3.5">اسم المورد / دار النشر</th>
+                  <th className="p-3.5">النوع</th>
+                  <th className="p-3.5">الهاتف وجهة الاتصال</th>
+                  <th className="p-3.5">شروط السداد</th>
+                  <th className="p-3.5 text-left">الرصيد المستحق</th>
+                  <th className="p-3.5 text-center">الإجراءات</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {filteredSuppliers.map((sup) => {
+                  const balance = Number(sup.currentBalance || 0);
+                  const typeLabel = SUPPLIER_TYPES.find((t) => t.id === sup.supplierType)?.label || sup.supplierType;
 
-      {/* Supplier Full Profile / View Dialog */}
-      <Dialog open={!!viewingSupplier} onOpenChange={(open) => !open && setViewingSupplier(null)}>
-        <DialogContent className="max-w-[95vw] sm:max-w-3xl rounded-2xl max-h-[90dvh] overflow-y-auto p-0 flex flex-col">
-          {viewingSupplier && (
-            <div className="flex flex-col h-full">
-              <div className="bg-primary/5 p-4 sm:p-6 border-b flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
-                 <div className="flex items-center gap-3 sm:gap-4 min-w-0 flex-1">
-                    <div className="w-12 h-12 sm:w-16 sm:h-16 rounded-2xl bg-primary/10 flex items-center justify-center shrink-0 border border-primary/20">
-                      <Building2 className="w-6 h-6 sm:w-8 sm:h-8 text-primary" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <h2 className="text-xl sm:text-2xl font-bold truncate">{viewingSupplier.name}</h2>
-                      {viewingSupplier.company && <p className="text-sm sm:text-base text-muted-foreground truncate">{viewingSupplier.company}</p>}
-                    </div>
-                 </div>
-                 {viewingSupplier.status === 'inactive' ? (
-                    <Badge variant="outline" className="text-rose-600 bg-rose-50 border-rose-200 px-3 py-1 text-xs">توقف التعامل</Badge>
-                 ) : (
-                    <Badge variant="outline" className="text-emerald-600 bg-emerald-50 border-emerald-200 px-3 py-1 text-xs">يتعامل معه (نشط)</Badge>
-                 )}
-              </div>
-              
-              <div className="p-4 sm:p-6 grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-8 flex-1">
-                <div className="space-y-4 sm:space-y-6">
-                  <div>
-                    <h3 className="font-semibold text-base sm:text-lg flex items-center gap-2 mb-2 sm:mb-3 border-b pb-2"><FileText className="w-4 h-4 sm:w-5 sm:h-5 text-primary"/> التوصيف المالي</h3>
-                    <div className="space-y-3 bg-muted/20 p-3.5 sm:p-4 rounded-xl border">
-                      <div className="flex justify-between items-center text-sm">
-                        <span className="text-muted-foreground">عدد أوامر الشراء</span>
-                        <span className="font-bold text-lg">{supplierStats[viewingSupplier.id]?.orderCount || 0}</span>
-                      </div>
-                      <div className="flex justify-between items-center pt-2.5 border-t">
-                        <span className="text-muted-foreground text-sm">حجم التعامل الإجمالي</span>
-                        <span className="font-bold text-lg sm:text-xl text-primary font-mono select-all">
-                          {(supplierStats[viewingSupplier.id]?.totalAmount || 0).toLocaleString('ar-EG', {minimumFractionDigits: 2})} <span className="text-xs">ج.م</span>
+                  return (
+                    <tr key={sup.id} className="hover:bg-muted/40 transition-colors">
+                      <td className="p-3.5 font-bold font-mono text-primary flex items-center gap-1.5">
+                        <Building2 className="w-3.5 h-3.5 text-muted-foreground" />
+                        <span>{sup.supplierCode}</span>
+                      </td>
+                      <td className="p-3.5">
+                        <div className="font-bold text-sm text-foreground">{sup.name}</div>
+                        {sup.companyName && (
+                          <div className="text-[10px] text-muted-foreground">{sup.companyName}</div>
+                        )}
+                      </td>
+                      <td className="p-3.5">
+                        <Badge variant="outline" className="text-[10px]">
+                          {typeLabel}
+                        </Badge>
+                      </td>
+                      <td className="p-3.5 text-muted-foreground">
+                        <div className="font-mono text-foreground">{sup.phone}</div>
+                        {sup.contactPerson && (
+                          <div className="text-[10px]">{sup.contactPerson}</div>
+                        )}
+                      </td>
+                      <td className="p-3.5 text-muted-foreground">
+                        {sup.paymentTermsDays || 30} يوماً
+                      </td>
+                      <td className="p-3.5 text-left font-bold text-sm">
+                        <span className={balance > 0 ? 'text-destructive font-black' : balance === 0 ? 'text-muted-foreground' : 'text-emerald-600'}>
+                          {number(balance)} ج.م
                         </span>
-                      </div>
-                    </div>
-                  </div>
-                  
-                  {viewingSupplier.notes && (
-                    <div>
-                      <h3 className="font-semibold text-sm flex items-center gap-2 mb-2 text-primary"><Tag className="w-4 h-4"/> ملاحظات الإدارة</h3>
-                      <div className="bg-orange-50 dark:bg-orange-950/20 text-orange-800 dark:text-orange-200 p-3 rounded-xl text-xs sm:text-sm border border-orange-200 dark:border-orange-900">
-                        {viewingSupplier.notes}
-                      </div>
-                    </div>
-                  )}
-                </div>
+                      </td>
+                      <td className="p-3.5 text-center">
+                        <div className="flex items-center justify-center gap-1.5">
+                          {/* Statement / Ledger */}
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-7 px-2.5 text-xs gap-1 text-primary"
+                            onClick={() => {
+                              setLedgerSupplier(sup);
+                              setIsLedgerOpen(true);
+                            }}
+                            title="عرض كشف الحساب"
+                          >
+                            <FileText className="w-3.5 h-3.5" />
+                            كشف حساب
+                          </Button>
 
-                <div className="space-y-3 sm:space-y-4">
-                   <h3 className="font-semibold text-base sm:text-lg flex items-center gap-2 mb-2 sm:mb-3 border-b pb-2"><Phone className="w-4 h-4 sm:w-5 sm:h-5 text-primary"/> جهات الاتصال</h3>
-                   
-                   <div className="space-y-3 sm:space-y-4 pl-3 sm:pl-4 border-r-2 border-primary/20">
-                     <div className="flex gap-2.5 sm:gap-3">
-                       <Phone className="w-4 h-4 sm:w-5 sm:h-5 text-muted-foreground shrink-0 mt-0.5" />
-                       <div>
-                         <p className="text-xs text-muted-foreground">الهاتف المحمول</p>
-                         <p className="font-medium text-sm font-mono" dir="ltr">{viewingSupplier.phone || 'غير مسجل'}</p>
-                       </div>
-                     </div>
-                     <div className="flex gap-2.5 sm:gap-3">
-                       <Mail className="w-4 h-4 sm:w-5 sm:h-5 text-muted-foreground shrink-0 mt-0.5" />
-                       <div>
-                         <p className="text-xs text-muted-foreground">البريد الإلكتروني</p>
-                         <p className="font-medium text-sm" dir="ltr">{viewingSupplier.email || 'غير مسجل'}</p>
-                       </div>
-                     </div>
-                     <div className="flex gap-2.5 sm:gap-3">
-                       <MapPin className="w-4 h-4 sm:w-5 sm:h-5 text-muted-foreground shrink-0 mt-0.5" />
-                       <div>
-                         <p className="text-xs text-muted-foreground">مقر الشركة / العنوان</p>
-                         <p className="font-medium text-sm">{viewingSupplier.address || 'غير مسجل'}</p>
-                       </div>
-                     </div>
-                     <div className="flex gap-2.5 sm:gap-3">
-                       <FileText className="w-4 h-4 sm:w-5 sm:h-5 text-muted-foreground shrink-0 mt-0.5" />
-                       <div>
-                         <p className="text-xs text-muted-foreground">الرقم الضريبي</p>
-                         <p className="font-medium text-sm tracking-wider" dir="ltr">{viewingSupplier.taxId || 'غير مسجل'}</p>
-                       </div>
-                     </div>
-                   </div>
-                </div>
+                          {/* Payment */}
+                          {canPay && (
+                            <Button
+                              size="sm"
+                              className="h-7 px-2.5 text-xs gap-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold"
+                              onClick={() => {
+                                setPayingSupplier(sup);
+                                setIsPaymentOpen(true);
+                              }}
+                              title="سداد دفعة للمورد"
+                            >
+                              <DollarSign className="w-3.5 h-3.5" />
+                              سداد دفعة
+                            </Button>
+                          )}
+
+                          {/* Edit */}
+                          {canManage && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-7 w-7 p-0"
+                              onClick={() => handleOpenEdit(sup)}
+                              title="تعديل"
+                            >
+                              <Edit className="w-3.5 h-3.5 text-muted-foreground" />
+                            </Button>
+                          )}
+
+                          {/* Archive */}
+                          {canManage && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-7 w-7 p-0 text-destructive"
+                              onClick={() => handleArchive(sup)}
+                              title="أرشفة"
+                            >
+                              <Archive className="w-3.5 h-3.5" />
+                            </Button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Add / Edit Supplier Modal */}
+      <Dialog open={isAddModalOpen} onOpenChange={setIsAddModalOpen}>
+        <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto" dir="rtl">
+          <DialogHeader className="border-b border-border pb-3">
+            <DialogTitle className="text-lg font-bold">
+              {editingSupplier ? `تعديل بيانات المورد: ${editingSupplier.name}` : 'إضافة مورد / دار نشر جديدة'}
+            </DialogTitle>
+            <DialogDescription className="text-xs text-muted-foreground">
+              تسجيل بيانات التواصل والشروط التجارية وحسابات التوريد
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2 text-xs">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <Label className="text-xs font-bold block">اسم المورد / دار النشر *</Label>
+                <Input
+                  value={formData.name}
+                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                  placeholder="مثال: دار الشروق للنشر..."
+                  className="h-9 text-xs"
+                />
               </div>
-              
-              <div className="bg-muted/30 p-3.5 sm:p-4 border-t flex flex-col-reverse sm:flex-row justify-end gap-2.5 sm:gap-3">
-                 <Button variant="outline" className="min-h-[44px] rounded-xl font-bold" onClick={() => setViewingSupplier(null)}>إغلاق الملف</Button>
-                 <Button className="min-h-[44px] rounded-xl font-bold gap-2" onClick={() => { setViewingSupplier(null); openEditDialog(viewingSupplier); }}>
-                    <Edit className="w-4 h-4" /> تعديل البيانات
-                 </Button>
+
+              <div className="space-y-1">
+                <Label className="text-xs font-bold block">اسم الشركة التجاري</Label>
+                <Input
+                  value={formData.companyName}
+                  onChange={(e) => setFormData({ ...formData, companyName: e.target.value })}
+                  placeholder="الاسم المسجل..."
+                  className="h-9 text-xs"
+                />
               </div>
             </div>
-          )}
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <Label className="text-xs font-bold block">نوع المورد</Label>
+                <Select
+                  value={formData.supplierType}
+                  onValueChange={(val: any) => setFormData({ ...formData, supplierType: val })}
+                >
+                  <SelectTrigger className="h-9 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent dir="rtl">
+                    {SUPPLIER_TYPES.map((t) => (
+                      <SelectItem key={t.id} value={t.id}>
+                        {t.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-1">
+                <Label className="text-xs font-bold block">رقم الهاتف الأساسي *</Label>
+                <Input
+                  value={formData.phone}
+                  onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+                  placeholder="010..."
+                  className="h-9 text-xs font-mono"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <Label className="text-[11px] text-muted-foreground block">هاتف إضافي / واتساب</Label>
+                <Input
+                  value={formData.phone2}
+                  onChange={(e) => setFormData({ ...formData, phone2: e.target.value })}
+                  placeholder="012..."
+                  className="h-9 text-xs font-mono"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <Label className="text-[11px] text-muted-foreground block">البريد الإلكتروني</Label>
+                <Input
+                  type="email"
+                  value={formData.email}
+                  onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                  placeholder="sales@publisher.com"
+                  className="h-9 text-xs"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-3 gap-3">
+              <div className="space-y-1">
+                <Label className="text-[11px] font-semibold block">المسؤول / مندوب التوريد</Label>
+                <Input
+                  value={formData.contactPerson}
+                  onChange={(e) => setFormData({ ...formData, contactPerson: e.target.value })}
+                  placeholder="اسم الشخص المسؤول..."
+                  className="h-9 text-xs"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <Label className="text-[11px] font-semibold block">فترة السداد (أيام)</Label>
+                <Input
+                  type="number"
+                  min={0}
+                  value={formData.paymentTermsDays}
+                  onChange={(e) => setFormData({ ...formData, paymentTermsDays: Number(e.target.value) || 0 })}
+                  className="h-9 text-xs"
+                />
+              </div>
+
+              {!editingSupplier && (
+                <div className="space-y-1">
+                  <Label className="text-[11px] font-semibold block">رصيد افتتاحي (ج.م)</Label>
+                  <Input
+                    type="number"
+                    value={formData.openingBalance}
+                    onChange={(e) => setFormData({ ...formData, openingBalance: Number(e.target.value) || 0 })}
+                    className="h-9 text-xs"
+                  />
+                </div>
+              )}
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <Label className="text-[11px] text-muted-foreground block">الرقم الضريبي</Label>
+                <Input
+                  value={formData.taxNumber}
+                  onChange={(e) => setFormData({ ...formData, taxNumber: e.target.value })}
+                  className="h-8 text-xs font-mono"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <Label className="text-[11px] text-muted-foreground block">السجل التجاري</Label>
+                <Input
+                  value={formData.commercialRegistration}
+                  onChange={(e) => setFormData({ ...formData, commercialRegistration: e.target.value })}
+                  className="h-8 text-xs font-mono"
+                />
+              </div>
+            </div>
+
+            <div className="space-y-1">
+              <Label className="text-[11px] text-muted-foreground block">العنوان / المخزن الرئيسي</Label>
+              <Input
+                value={formData.address}
+                onChange={(e) => setFormData({ ...formData, address: e.target.value })}
+                placeholder="المدينة، الحي، الشارع..."
+                className="h-8 text-xs"
+              />
+            </div>
+          </div>
+
+          <DialogFooter className="border-t border-border pt-3 flex items-center justify-between">
+            <Button variant="outline" size="sm" onClick={() => setIsAddModalOpen(false)}>
+              إلغاء
+            </Button>
+            <Button size="sm" onClick={handleSaveSupplier} className="font-bold px-6">
+              {editingSupplier ? 'تحديث البيانات' : 'حفظ المورد'}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Payment Modal */}
+      <SupplierPaymentModal
+        open={isPaymentOpen}
+        onOpenChange={setIsPaymentOpen}
+        supplier={payingSupplier}
+        onPay={paySupplier}
+        onSuccess={() => refresh()}
+      />
+
+      {/* Ledger Statement Drawer */}
+      <SupplierLedgerDrawer
+        open={isLedgerOpen}
+        onOpenChange={setIsLedgerOpen}
+        supplier={ledgerSupplier}
+      />
+      </div>
     </MainLayout>
   );
 }

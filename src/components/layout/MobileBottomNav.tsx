@@ -6,7 +6,7 @@ import {
   Factory, UtensilsCrossed, Trash2, Truck, CalendarDays,
   PhoneCall, Bike, Clock, UserCog, BarChart3, Calculator,
   Settings, Shield, Wrench, Puzzle, FileText, BookOpen,
-  TrendingUp, Database
+  TrendingUp, Database, RotateCcw, CreditCard
 } from 'lucide-react';
 import { useUserPermissions } from '@/hooks/usePermissions';
 import { useTheme } from '@/hooks/useTheme';
@@ -28,8 +28,10 @@ export interface NavModule {
 export const allAppModules: NavModule[] = [
   // المبيعات والعملاء
   { path: '/pos', label: 'نقاط البيع', icon: ShoppingCart, perms: ['pos.view'], category: 'المبيعات والعملاء' },
-  { path: '/orders-history', label: 'سجل الطلبات', icon: Receipt, perms: ['pos.view'], category: 'المبيعات والعملاء' },
+  { path: '/orders-history', label: 'سجل فواتير المبيعات', icon: Receipt, perms: ['pos.view', 'sales.view'], category: 'المبيعات والعملاء' },
+  { path: '/returns', label: 'مرتجعات واستبدال المبيعات', icon: RotateCcw, perms: ['returns.view', 'sales.view', 'pos.view'], category: 'المبيعات والعملاء' },
   { path: '/customers', label: 'العملاء', icon: Users, perms: ['customers.view'], category: 'المبيعات والعملاء' },
+  { path: '/receivables', label: 'الآجل والمديونيات', icon: CreditCard, perms: ['customers.view'], category: 'المبيعات والعملاء' },
   { path: '/promotions', label: 'العروض والخصم', icon: Percent, perms: ['promotions.view'], category: 'المبيعات والعملاء' },
 
   // المطبخ والإنتاج
@@ -37,10 +39,11 @@ export const allAppModules: NavModule[] = [
   { path: '/production', label: 'الإنتاج والتحضير', icon: Factory, perms: ['production.view'], category: 'المطبخ والإنتاج' },
   { path: '/menu', label: 'قائمة الطعام', icon: UtensilsCrossed, perms: ['menu.view'], category: 'المطبخ والإنتاج' },
 
-  // المخزون والمشتريات
+  // المنتجات والمخزون
+  { path: '/products', label: 'المنتجات والكتب', icon: BookOpen, perms: ['products.view', 'menu.view'], category: 'المنتجات والمخزون' },
   { path: '/inventory', label: 'المخزون', icon: Package, perms: ['inventory.view'], category: 'المخزون والتوريد' },
   { path: '/purchasing', label: 'المشتريات', icon: Truck, perms: ['purchasing.view'], category: 'المخزون والتوريد' },
-  { path: '/suppliers', label: 'الموردين', icon: Users, perms: ['suppliers.view'], category: 'المخزون والتوريد' },
+  { path: '/suppliers', label: 'الموردين والناشرين', icon: Users, perms: ['suppliers.view'], category: 'المخزون والتوريد' },
   { path: '/waste', label: 'الهالك والتوالف', icon: Trash2, perms: ['inventory.waste'], category: 'المخزون والتوريد' },
 
   // العمليات والتشغيل
@@ -79,8 +82,8 @@ export function MobileBottomNav() {
 
   // Active status helpers for primary 4 items
   const isHomeActive = pathname === '/';
-  const isPosActive = pathname.startsWith('/pos') || pathname.startsWith('/orders-history');
-  const isInventoryActive = pathname.startsWith('/inventory') || pathname.startsWith('/purchasing') || pathname.startsWith('/suppliers') || pathname.startsWith('/waste');
+  const isPosActive = pathname.startsWith('/pos') || pathname.startsWith('/orders-history') || pathname.startsWith('/returns') || pathname.startsWith('/sales') || pathname.startsWith('/receivables');
+  const isInventoryActive = pathname.startsWith('/inventory') || pathname.startsWith('/purchasing') || pathname.startsWith('/suppliers') || pathname.startsWith('/waste') || pathname.startsWith('/products');
   const isHrActive = pathname.startsWith('/hr') || pathname.startsWith('/shifts');
   const isMoreActive = !isHomeActive && !isPosActive && !isInventoryActive && !isHrActive;
 

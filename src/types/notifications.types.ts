@@ -2,16 +2,22 @@ export type NotificationType = 'info' | 'success' | 'warning' | 'critical';
 
 export type NotificationCategory =
   | 'orders'
+  | 'sales'
   | 'inventory'
   | 'purchases'
   | 'suppliers'
+  | 'customers'
+  | 'transfers'
   | 'waste'
+  | 'expenses'
+  | 'hr'
   | 'attendance'
   | 'payroll'
   | 'advances'
-  | 'expenses'
+  | 'leaves'
   | 'security'
-  | 'settings';
+  | 'settings'
+  | 'system';
 
 export type NotificationPriority = 'low' | 'normal' | 'high' | 'critical';
 
@@ -26,7 +32,7 @@ export interface AppNotification {
   message: string;
   branchId?: string | 'all';
   tenantId?: string;
-  relatedEntityType?: 'product' | 'order' | 'payroll' | 'expense' | 'supplier' | 'employee' | 'user' | 'setting' | 'purchase';
+  relatedEntityType?: 'product' | 'sale' | 'purchase' | 'order' | 'payroll' | 'expense' | 'supplier' | 'customer' | 'transfer' | 'employee' | 'user' | 'setting';
   relatedEntityId?: string;
   requiredPermission?: string;
   targetUserId?: string;

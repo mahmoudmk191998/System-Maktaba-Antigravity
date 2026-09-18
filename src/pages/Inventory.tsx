@@ -1,811 +1,993 @@
-import { useState } from 'react';
+/**
+ * Retail Inventory & Stock Movements Subsystem
+ * Bookstore & Stationery Retail Hub
+ */
+
+import React, { useState, useMemo } from 'react';
 import { MainLayout } from '@/components/layout';
-import { useTenantBranch, useInventoryItems, useBranchStock, useStockMovements, useUnits } from '@/hooks/useDatabase';
-import { useUserPermissions } from '@/hooks/usePermissions';
-import { useFormatters } from '@/lib/formatters';
-import { cn } from '@/lib/utils';
-import { Package, AlertTriangle, TrendingDown, Search, Plus, Edit, Trash2, BarChart3, ArrowDownToLine, ArrowUpToLine, FileDown, Printer, Filter, CheckCircle2, History, TrendingUp, MoreHorizontal, ArrowDownRight, XCircle, PieChart as PieChartIcon } from 'lucide-react';
+import { useInventory } from '@/hooks/retail/useInventory';
+import { useStockMovements } from '@/hooks/retail/useStockMovements';
+import { useTransfers } from '@/hooks/retail/useTransfers';
+import { useInventoryCounts } from '@/hooks/retail/useInventoryCounts';
+import { useDamageLoss } from '@/hooks/retail/useDamageLoss';
+import { useProducts } from '@/hooks/retail/useProducts';
+import { useCategories } from '@/hooks/retail/useCategories';
+import {
+  Package,
+  AlertTriangle,
+  TrendingDown,
+  Search,
+  Plus,
+  Truck,
+  Layers,
+  Scale,
+  Barcode,
+  History,
+  AlertOctagon,
+  CheckCircle2,
+  Clock,
+  ArrowUpRight,
+  ArrowDownLeft,
+  Filter,
+  RefreshCw,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { StockAdjustmentDialog } from '@/components/retail/StockAdjustmentDialog';
+import { OpeningBalanceDialog } from '@/components/retail/OpeningBalanceDialog';
+import { TransferManageDialog } from '@/components/retail/TransferManageDialog';
+import { InventoryCountModal } from '@/components/retail/InventoryCountModal';
+import { DamageLossModal } from '@/components/retail/DamageLossModal';
+import { StockMovementsDrawer } from '@/components/retail/StockMovementsDrawer';
+import type { StockBalance, StockMovement, BranchTransfer } from '@/types/retail.types';
 import { toast } from 'sonner';
-import { motion, AnimatePresence } from 'framer-motion';
-import { PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip as RechartsTooltip, Legend } from 'recharts';
-import { Progress } from '@/components/ui/progress';
-import { Checkbox } from '@/components/ui/checkbox';
-
-const COLORS = ['#0ea5e9', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#f97316'];
-
-const ReconciliationRow = ({ item, addMovement, refreshStock, formatNumber, canCount }: any) => {
-  const [actual, setActual] = useState(item.quantity);
-  const diff = actual - item.quantity;
-  const handleSettle = async () => {
-    if (!canCount) return;
-    if (diff === 0) return;
-    const type = diff > 0 ? 'adjustment_in' : 'adjustment_out';
-    const success = await addMovement({ item_id: item.id, movement_type: type, quantity: diff, notes: 'تسوية الجرد الفعلي' });
-    if (success) {
-      toast.success('تم تسوية رصيد الصنف');
-      refreshStock();
-    }
-  };
-  return (
-    <TableRow className="group hover:bg-muted/30 transition-colors duration-200">
-      <TableCell>
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold shadow-sm shrink-0">
-            {item.name.charAt(0).toUpperCase()}
-          </div>
-          <div>
-            <p className="font-bold text-base">{item.name}</p>
-            <p className="text-xs text-muted-foreground hidden md:block">{item.sku || 'بدون كود'}</p>
-          </div>
-        </div>
-      </TableCell>
-      <TableCell className="font-bold text-lg">{formatNumber(item.quantity)}</TableCell>
-      <TableCell>
-        <Input type="number" min="0" step="0.01" className="w-32 text-center h-10 font-bold bg-muted/30 focus-visible:ring-1 focus-visible:bg-transparent transition-all" value={actual} onChange={e => setActual(Number(e.target.value))} disabled={!canCount} />
-      </TableCell>
-      <TableCell dir="ltr" className={cn('font-black text-lg', diff > 0 ? 'text-emerald-600 dark:text-emerald-400' : diff < 0 ? 'text-red-600 dark:text-red-400' : 'text-muted-foreground')}>
-        {diff > 0 ? '+' : ''}{formatNumber(diff)}
-      </TableCell>
-      <TableCell>
-        <Button size="sm" variant={diff === 0 ? 'outline' : 'default'} disabled={diff === 0 || !canCount} onClick={handleSettle} className={cn("h-10 w-full md:w-auto font-bold transition-all", diff !== 0 && "bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm")}>تسوية الفارق</Button>
-      </TableCell>
-    </TableRow>
-  );
-};
 
 export default function Inventory() {
-  const { tenantId, branchId } = useTenantBranch();
-  const { hasPermission, isAdmin } = useUserPermissions();
-  const { items, add: addItem, update: updateItem, remove: removeItem, loading } = useInventoryItems(tenantId);
-  const { stock, initStock, refresh: refreshStock } = useBranchStock(branchId);
-  const { movements, addMovement, updateMovement, deleteMovement, refresh: refreshMovements } = useStockMovements(branchId);
-  const { units } = useUnits(tenantId);
-  const { currency, number } = useFormatters();
+  const {
+    balances,
+    locations,
+    selectedLocationId,
+    setSelectedLocationId,
+    loading: loadingBalances,
+    metrics,
+    refresh: refreshBalances,
+    addOpeningBalance,
+    adjustStock,
+  } = useInventory();
 
-  const canAdd = isAdmin || hasPermission('inventory.add');
-  const canEdit = isAdmin || hasPermission('inventory.edit');
-  const canDelete = isAdmin || hasPermission('inventory.delete');
-  const canAdjust = isAdmin || hasPermission('inventory.adjust');
-  const canCount = isAdmin || hasPermission('inventory.count');
+  const { products } = useProducts({ pageSize: 500 });
+  const { categories } = useCategories();
 
-  const [searchQuery, setSearchQuery] = useState('');
-  const [categoryFilter, setCategoryFilter] = useState('all');
-  const [statusFilter, setStatusFilter] = useState('all');
+  const { movements, loading: loadingMovements, refresh: refreshMovements } = useStockMovements(selectedLocationId);
+  const {
+    transfers,
+    loading: loadingTransfers,
+    refresh: refreshTransfers,
+    createTransfer,
+    approveTransfer,
+    dispatchTransfer,
+    receiveTransfer,
+    cancelTransfer,
+  } = useTransfers(selectedLocationId);
 
-  const [selectedItems, setSelectedItems] = useState<string[]>([]);
-  const [selectedMovements, setSelectedMovements] = useState<string[]>([]);
+  const {
+    sessions,
+    activeSession,
+    setActiveSession,
+    refresh: refreshCounts,
+    startSession,
+    scanBarcode,
+    updateItemQty,
+    postSession,
+  } = useInventoryCounts(selectedLocationId);
 
-  const [showAddDialog, setShowAddDialog] = useState(false);
-  const [showEditDialog, setShowEditDialog] = useState<any>(null);
-  const [showMovementDialog, setShowMovementDialog] = useState(false);
-  const [editingMovement, setEditingMovement] = useState<any>(null);
-  const [quickStock, setQuickStock] = useState<{ id: string, type: 'in' | 'out', name: string } | null>(null);
-  const [quickQty, setQuickQty] = useState('');
+  const {
+    records: damageRecords,
+    loading: loadingDamage,
+    refresh: refreshDamage,
+    recordDamage,
+    recordRecovery,
+  } = useDamageLoss(selectedLocationId);
 
-  const [form, setForm] = useState({ name: '', name_en: '', sku: '', category: '', unit_id: '', cost_per_unit: 0, min_stock_level: 0, max_stock_level: 100, initial_quantity: 0 });
-  const [movForm, setMovForm] = useState({ item_id: '', movement_type: 'purchase', quantity: 0, reason: '', notes: '' });
+  // Active Tab & Filters
+  const [activeTab, setActiveTab] = useState<'balances' | 'movements' | 'transfers' | 'counts' | 'damage'>('balances');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [filterLowStock, setFilterLowStock] = useState(false);
+  const [filterOutOfStock, setFilterOutOfStock] = useState(false);
+  const [selectedCategory, setSelectedCategory] = useState('');
 
-  // Merge items with stock
-  const itemsWithStock = items.map((item: any) => {
-    const s = stock.find((st: any) => st.item_id === item.id);
-    return { ...item, quantity: s ? Number(s.quantity) : 0 };
-  });
+  // Dialog states
+  const [adjustmentTarget, setAdjustmentTarget] = useState<StockBalance | null>(null);
+  const [isAdjustmentOpen, setIsAdjustmentOpen] = useState(false);
+  const [isOpeningBalanceOpen, setIsOpeningBalanceOpen] = useState(false);
+  const [isTransferOpen, setIsTransferOpen] = useState(false);
+  const [isDamageOpen, setIsDamageOpen] = useState(false);
+  const [isCountModalOpen, setIsCountModalOpen] = useState(false);
+  const [isMovementsDrawerOpen, setIsMovementsDrawerOpen] = useState(false);
 
-  const categories = Array.from(new Set(itemsWithStock.map((i: any) => i.category).filter(Boolean)));
+  const selectedLocObj = locations.find((l) => l.id === selectedLocationId);
 
-  const filteredItems = itemsWithStock.filter((item: any) => {
-    const matchesSearch = item.name.includes(searchQuery) || item.sku?.includes(searchQuery);
-    const matchesCategory = categoryFilter === 'all' || item.category === categoryFilter;
-    const qty = item.quantity;
-    const minStr = Number(item.min_stock_level || 0);
-    const matchesStatus = statusFilter === 'all' || 
-                          (statusFilter === 'out' && qty === 0) ||
-                          (statusFilter === 'low' && qty > 0 && qty < minStr) ||
-                          (statusFilter === 'normal' && qty >= minStr);
-    return matchesSearch && matchesCategory && matchesStatus;
-  });
+  // Synthesized Balances: Union of recorded branch_stock + catalog products with zero initial stock
+  const allStockRows = useMemo(() => {
+    const rows: StockBalance[] = [...balances];
+    const existingProductIds = new Set(balances.map((b) => b.productId));
 
-  const lowStockCount = itemsWithStock.filter((i: any) => i.quantity < Number(i.min_stock_level || 0) && i.quantity > 0).length;
-  const outOfStockCount = itemsWithStock.filter((i: any) => i.quantity === 0).length;
-  const totalValue = itemsWithStock.reduce((sum: number, i: any) => sum + (i.quantity * Number(i.cost_per_unit || 0)), 0);
-
-  const getStockStatus = (quantity: number, minStock: number, maxStock: number) => {
-    if (quantity === 0) return { label: 'نفذ', color: 'bg-red-100 text-red-700 dark:bg-red-950/50 dark:text-red-400', value: 'out' };
-    if (quantity < minStock) return { label: 'منخفض', color: 'bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-400', value: 'low' };
-    return { label: 'طبيعي', color: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-400', value: 'normal' };
-  };
-
-  // --- Analytics Data Preparation ---
-  const inventoryByCategory = categories.map((cat: any) => ({
-    name: cat || 'عام',
-    value: itemsWithStock.filter((i: any) => i.category === cat).reduce((sum: number, i: any) => sum + (i.quantity * Number(i.cost_per_unit || 0)), 0)
-  })).filter(c => c.value > 0).sort((a, b) => b.value - a.value);
-
-  const lowestStockItems = itemsWithStock
-    .filter((i: any) => Number(i.min_stock_level) > 0)
-    .map((i: any) => ({
-      name: i.name,
-      quantity: i.quantity,
-      min: Number(i.min_stock_level),
-      ratio: i.quantity / Number(i.min_stock_level)
-    }))
-    .sort((a: any, b: any) => a.ratio - b.ratio)
-    .slice(0, 5);
-  // ----------------------------------
-
-  const handleBulkDeleteItems = async () => {
-    if (!window.confirm(`هل أنت متأكد من حذف ${selectedItems.length} صنف؟`)) return;
-    for (const id of selectedItems) {
-      await removeItem(id);
-    }
-    setSelectedItems([]);
-  };
-
-  const handleBulkDeleteMovements = async () => {
-    if (!window.confirm(`هل أنت متأكد من حذف ${selectedMovements.length} حركة؟ سيتم عكس تأثيرها على المخزون.`)) return;
-    for (const id of selectedMovements) {
-      const mov = movements.find((m: any) => m.id === id);
-      if (mov) await deleteMovement(id, mov.item_id, mov.quantity);
-    }
-    setSelectedMovements([]);
-    refreshStock();
-  };
-
-  const handleAddItem = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!form.name) { toast.error('يرجى إدخال اسم الصنف'); return; }
-    const newItemId = await addItem({ ...form, cost_per_unit: Number(form.cost_per_unit), min_stock_level: Number(form.min_stock_level), max_stock_level: Number(form.max_stock_level), unit_id: form.unit_id || null });
-    if (newItemId) {
-      if (Number(form.initial_quantity) > 0) {
-        await initStock(newItemId, Number(form.initial_quantity));
+    for (const prod of products) {
+      if (!existingProductIds.has(prod.id)) {
+        rows.push({
+          id: `synth_${selectedLocationId || 'loc'}_${prod.id}`,
+          tenantId: prod.tenantId || '',
+          branchId: selectedLocationId || '',
+          locationId: selectedLocationId || '',
+          productId: prod.id,
+          variantId: null,
+          quantity: 0,
+          onHandQuantity: 0,
+          reservedQuantity: 0,
+          availableQuantity: 0,
+          unitCost: prod.averageCost || prod.purchasePrice || 0,
+          averageCost: prod.averageCost || prod.purchasePrice || 0,
+          reorderPoint: prod.reorderPoint || 5,
+          minStockLevel: prod.minimumStock || 0,
+          updatedAt: prod.createdAt || new Date().toISOString(),
+        } as StockBalance);
       }
-      setShowAddDialog(false);
-      setForm({ name: '', name_en: '', sku: '', category: '', unit_id: '', cost_per_unit: 0, min_stock_level: 0, max_stock_level: 100, initial_quantity: 0 });
     }
+    return rows;
+  }, [balances, products, selectedLocationId]);
+
+  // Filtered Balances
+  const filteredBalances = useMemo(() => {
+    return allStockRows.filter((b) => {
+      const prod = products.find((p) => p.id === b.productId);
+      const name = prod?.name || '';
+      const sku = prod?.sku || '';
+      const barcode = prod?.barcode || '';
+      const term = searchTerm.toLowerCase();
+
+      const matchSearch =
+        name.toLowerCase().includes(term) ||
+        sku.toLowerCase().includes(term) ||
+        barcode.toLowerCase().includes(term);
+
+      if (!matchSearch) return false;
+
+      if (selectedCategory && prod?.categoryId !== selectedCategory) {
+        return false;
+      }
+
+      const onHand = b.onHandQuantity ?? b.quantity ?? 0;
+      const reorder = b.reorderPoint || 5;
+
+      if (filterLowStock && (onHand <= 0 || onHand > reorder)) {
+        return false;
+      }
+      if (filterOutOfStock && onHand > 0) {
+        return false;
+      }
+
+      return true;
+    });
+  }, [allStockRows, products, searchTerm, selectedCategory, filterLowStock, filterOutOfStock]);
+
+  const handleOpenAdjustment = (balance: StockBalance) => {
+    setAdjustmentTarget(balance);
+    setIsAdjustmentOpen(true);
   };
 
-  const handleUpdateItem = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!showEditDialog) return;
-    await updateItem(showEditDialog.id, { name: showEditDialog.name, name_en: showEditDialog.name_en, sku: showEditDialog.sku, category: showEditDialog.category, unit_id: showEditDialog.unit_id || null, cost_per_unit: Number(showEditDialog.cost_per_unit), min_stock_level: Number(showEditDialog.min_stock_level), max_stock_level: Number(showEditDialog.max_stock_level) });
-    setShowEditDialog(null);
-  };
-
-  const handleAddMovement = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!movForm.item_id || !movForm.quantity) { toast.error('يرجى ملء الحقول المطلوبة'); return; }
-    if (movForm.movement_type === 'waste' && !movForm.reason) { toast.error('يرجى اختيار سبب الهالك'); return; }
-    const qty = ['consumption', 'waste', 'adjustment_out'].includes(movForm.movement_type) ? -Math.abs(movForm.quantity) : Math.abs(movForm.quantity);
-    const success = await addMovement({ item_id: movForm.item_id, movement_type: movForm.movement_type as any, quantity: qty, reason: movForm.movement_type === 'waste' ? movForm.reason : undefined, notes: movForm.notes });
-    if (success) { setShowMovementDialog(false); setMovForm({ item_id: '', movement_type: 'purchase', quantity: 0, reason: '', notes: '' }); refreshStock(); }
-  };
-
-  const handleUpdateMovement = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!editingMovement || !editingMovement.item_id || !editingMovement.quantity) { toast.error('يرجى ملء الحقول المطلوبة'); return; }
-    if (editingMovement.movement_type === 'waste' && !editingMovement.reason) { toast.error('يرجى اختيار سبب الهالك'); return; }
-    
-    const qty = ['consumption', 'waste', 'adjustment_out'].includes(editingMovement.movement_type) ? -Math.abs(editingMovement.quantity) : Math.abs(editingMovement.quantity);
-    const success = await updateMovement(
-      editingMovement.id, 
-      editingMovement._original, 
-      { ...editingMovement, quantity: qty, reason: editingMovement.movement_type === 'waste' ? editingMovement.reason : undefined }
-    );
-    if (success) { setEditingMovement(null); refreshStock(); }
-  };
-
-  const handleQuickStock = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!quickStock || !quickQty || Number(quickQty) <= 0) return;
-    const qty = quickStock.type === 'in' ? Number(quickQty) : -Number(quickQty);
-    const mType = quickStock.type === 'in' ? 'purchase' : 'consumption';
-    const success = await addMovement({ item_id: quickStock.id, movement_type: mType, quantity: qty, notes: 'تسجيل سريع' });
-    if (success) {
-      setQuickStock(null);
-      setQuickQty('');
-      refreshStock();
+  const handleStartCount = async () => {
+    if (!selectedLocationId) {
+      toast.error('يرجى اختيار الفرع أو المخزن أولاً');
+      return;
     }
-  };
-
-  const handleExportCSV = () => {
-    const headers = ['الصنف', 'SKU', 'الفئة', 'الكمية', 'التكلفة للوحدة', 'القيمة الإجمالية'];
-    const csvData = filteredItems.map((i: any) => [i.name, i.sku || '', i.category || '', i.quantity, i.cost_per_unit || 0, i.quantity * (i.cost_per_unit || 0)]);
-    const csvContent = [headers, ...csvData].map(e => e.join(',')).join('\n');
-    const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = `inventory_${new Date().toISOString().split('T')[0]}.csv`;
-    link.click();
+    const res = await startSession(selectedLocationId, 'جلسة جرد فعلي دورية');
+    if (res.success && res.session) {
+      toast.success('تم بدء جلسة الجرد بنجاح');
+      setIsCountModalOpen(true);
+    } else {
+      toast.error(res.error || 'فشل في بدء الجلسة');
+    }
   };
 
   return (
-    <MainLayout title="المخزون" subtitle="إدارة المخزون والمواد الخام وتتبع الحركات المدخلة والمخرجة"
-      actions={<div className="flex items-center gap-2">
-        <Button variant="outline" onClick={handleExportCSV} className="gap-2 hidden md:flex"><FileDown className="w-4 h-4" /> تصدير CSV</Button>
-        <Button variant="outline" onClick={() => window.print()} className="gap-2 hidden md:flex"><Printer className="w-4 h-4" /> طباعة</Button>
-        {canAdd && <Button className="gap-2 shadow-lg" onClick={() => setShowAddDialog(true)}><Plus className="w-4 h-4" />إضافة صنف</Button>}
-      </div>}>
-
-      <motion.div 
-        variants={{ hidden: { opacity: 0 }, show: { opacity: 1, transition: { staggerChildren: 0.1 } } }} 
-        initial="hidden" animate="show" 
-        className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6 print:hidden"
-      >
-        <motion.div variants={{ hidden: { opacity: 0, y: 20 }, show: { opacity: 1, y: 0 } }}>
-          <Card className="bg-gradient-to-br from-blue-50 to-white dark:from-blue-950/20 dark:to-background border-blue-100 dark:border-blue-900/50 shadow-sm transition-all hover:shadow-md hover:-translate-y-1 duration-300">
-            <CardContent className="p-6 flex items-center gap-4">
-              <div className="p-4 bg-blue-100 dark:bg-blue-900/40 rounded-2xl text-blue-600 dark:text-blue-400 shadow-inner">
-                <Package className="w-7 h-7" />
+    <MainLayout>
+      <div className="space-y-6 pb-12" dir="rtl">
+        {/* Header */}
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-card p-5 rounded-2xl border shadow-sm">
+          <div>
+            <div className="flex items-center gap-2">
+              <div className="p-2.5 rounded-xl bg-primary/10 text-primary">
+                <Package className="w-6 h-6" />
               </div>
               <div>
-                <p className="text-sm font-semibold text-muted-foreground mb-1">إجمالي الأصناف</p>
-                <h3 className="text-3xl font-black text-foreground">{number(items.length)}</h3>
+                <h1 className="text-2xl font-black text-foreground">إدارة المخزون والمناقلات والجرد</h1>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  دفتر الحركات الذري، أرصدة الفروع والمخزن الرئيسي، التكلفة المرجحة (WAC)، والهالك
+                </p>
               </div>
-            </CardContent>
-          </Card>
-        </motion.div>
+            </div>
+          </div>
 
-        <motion.div variants={{ hidden: { opacity: 0, y: 20 }, show: { opacity: 1, y: 0 } }}>
-          <Card className="bg-gradient-to-br from-amber-50 to-white dark:from-amber-950/20 dark:to-background border-amber-100 dark:border-amber-900/50 shadow-sm transition-all hover:shadow-md hover:-translate-y-1 duration-300">
-            <CardContent className="p-6 flex items-center gap-4">
-              <div className="p-4 bg-amber-100 dark:bg-amber-900/40 rounded-2xl text-amber-600 dark:text-amber-400 shadow-inner">
-                <AlertTriangle className="w-7 h-7" />
-              </div>
-              <div>
-                <p className="text-sm font-semibold text-muted-foreground mb-1">أصناف منخفضة</p>
-                <h3 className="text-3xl font-black text-foreground">{number(lowStockCount)}</h3>
-              </div>
-            </CardContent>
-          </Card>
-        </motion.div>
+          {/* Location Selector & Global Actions */}
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-2 bg-muted/60 p-1.5 rounded-xl border">
+              <span className="text-xs font-bold text-muted-foreground px-1">الموقع:</span>
+              <select
+                value={selectedLocationId}
+                onChange={(e) => setSelectedLocationId(e.target.value)}
+                className="bg-background text-foreground text-xs font-bold rounded-lg px-2.5 py-1.5 border border-border focus:ring-1 focus:ring-primary"
+              >
+                {locations.map((loc) => (
+                  <option key={loc.id} value={loc.id}>
+                    {loc.name} {loc.isCentralWarehouse ? '(مركزي)' : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
 
-        <motion.div variants={{ hidden: { opacity: 0, y: 20 }, show: { opacity: 1, y: 0 } }}>
-          <Card className="bg-gradient-to-br from-red-50 to-white dark:from-red-950/20 dark:to-background border-red-100 dark:border-red-900/50 shadow-sm transition-all hover:shadow-md hover:-translate-y-1 duration-300">
-            <CardContent className="p-6 flex items-center gap-4">
-              <div className="p-4 bg-red-100 dark:bg-red-900/40 rounded-2xl text-red-600 dark:text-red-400 shadow-inner">
-                <XCircle className="w-7 h-7" />
-              </div>
-              <div>
-                <p className="text-sm font-semibold text-muted-foreground mb-1">أصناف نفذت</p>
-                <h3 className="text-3xl font-black text-foreground">{number(outOfStockCount)}</h3>
-              </div>
-            </CardContent>
-          </Card>
-        </motion.div>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setIsOpeningBalanceOpen(true)}
+              className="gap-1.5 text-xs font-bold"
+            >
+              <Layers className="w-3.5 h-3.5" />
+              رصيد افتتاحي
+            </Button>
 
-        <motion.div variants={{ hidden: { opacity: 0, y: 20 }, show: { opacity: 1, y: 0 } }}>
-          <Card className="bg-gradient-to-br from-emerald-50 to-white dark:from-emerald-950/20 dark:to-background border-emerald-100 dark:border-emerald-900/50 shadow-sm transition-all hover:shadow-md hover:-translate-y-1 duration-300">
-            <CardContent className="p-6 flex items-center gap-4">
-              <div className="p-4 bg-emerald-100 dark:bg-emerald-900/40 rounded-2xl text-emerald-600 dark:text-emerald-400 shadow-inner">
-                <TrendingUp className="w-7 h-7" />
-              </div>
-              <div>
-                <p className="text-sm font-semibold text-muted-foreground mb-1">قيمة المخزون</p>
-                <h3 className="text-3xl font-black text-foreground">{currency(totalValue)}</h3>
-              </div>
-            </CardContent>
-          </Card>
-        </motion.div>
-      </motion.div>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setIsTransferOpen(true)}
+              className="gap-1.5 text-xs font-bold"
+            >
+              <Truck className="w-3.5 h-3.5" />
+              مناقلة جديدة
+            </Button>
 
-      {/* Analytics Section */}
-      <motion.div 
-        initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }}
-        className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6 print:hidden"
-      >
-        <Card className="shadow-sm border-border/50">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-lg flex items-center gap-2 text-muted-foreground">
-              <PieChartIcon className="w-5 h-5" /> قيمة المخزون حسب الفئة
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {inventoryByCategory.length > 0 ? (
-              <div className="h-[250px] w-full">
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie data={inventoryByCategory} cx="50%" cy="50%" innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value">
-                      {inventoryByCategory.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                      ))}
-                    </Pie>
-                    <RechartsTooltip formatter={(value: number) => currency(value)} contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} />
-                    <Legend verticalAlign="bottom" height={36} />
-                  </PieChart>
-                </ResponsiveContainer>
-              </div>
-            ) : (
-              <div className="h-[250px] flex items-center justify-center text-muted-foreground">لا توجد بيانات كافية</div>
-            )}
-          </CardContent>
-        </Card>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setIsDamageOpen(true)}
+              className="gap-1.5 text-xs font-bold text-rose-600 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/20"
+            >
+              <AlertOctagon className="w-3.5 h-3.5" />
+              تسجيل هالك
+            </Button>
 
-        <Card className="shadow-sm border-border/50">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-lg flex items-center gap-2 text-muted-foreground">
-              <BarChart3 className="w-5 h-5" /> الأصناف الأقل رصيداً
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {lowestStockItems.length > 0 ? (
-              <div className="h-[250px] w-full">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={lowestStockItems} layout="vertical" margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
-                    <XAxis type="number" />
-                    <YAxis dataKey="name" type="category" width={80} tick={{ fontSize: 12 }} />
-                    <RechartsTooltip formatter={(value: number) => number(value)} cursor={{ fill: 'rgba(0,0,0,0.05)' }} contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} />
-                    <Bar dataKey="quantity" name="الكمية الحالية" radius={[0, 4, 4, 0]}>
-                      {lowestStockItems.map((entry: any, index: number) => (
-                        <Cell key={`cell-${index}`} fill={entry.ratio < 0.5 ? '#ef4444' : entry.ratio < 1 ? '#f59e0b' : '#10b981'} />
-                      ))}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            ) : (
-              <div className="h-[250px] flex items-center justify-center text-muted-foreground">الرصيد ممتاز لجميع الأصناف</div>
-            )}
-          </CardContent>
-        </Card>
-      </motion.div>
-
-      <Tabs defaultValue="items" className="space-y-6">
-        <div className="flex items-center justify-between border-b pb-0 print:hidden">
-          <TabsList className="bg-transparent h-auto p-0 gap-6">
-            <TabsTrigger value="items" className="px-2 py-3 data-[state=active]:bg-transparent data-[state=active]:shadow-none data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none font-bold text-base transition-all duration-300">قائمة المخزون</TabsTrigger>
-            <TabsTrigger value="movements" className="px-2 py-3 data-[state=active]:bg-transparent data-[state=active]:shadow-none data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none font-bold text-base transition-all duration-300">سجل الحركات</TabsTrigger>
-            {canCount && <TabsTrigger value="reconciliation" className="px-2 py-3 data-[state=active]:bg-transparent data-[state=active]:shadow-none data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none font-bold text-base transition-all duration-300">جرد المخزون</TabsTrigger>}
-            <TabsTrigger value="recommendations" className="px-2 py-3 data-[state=active]:bg-transparent data-[state=active]:shadow-none data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none font-bold text-base transition-all duration-300">نواقص المخزون</TabsTrigger>
-          </TabsList>
+            <Button
+              size="sm"
+              onClick={handleStartCount}
+              className="gap-1.5 text-xs font-bold bg-emerald-600 hover:bg-emerald-700"
+            >
+              <Barcode className="w-3.5 h-3.5" />
+              بدء جرد فعلي
+            </Button>
+          </div>
         </div>
 
-        <TabsContent value="items" className="space-y-4">
-          <Card className="border-0 shadow-sm ring-1 ring-border/50">
-            <CardHeader className="px-6 py-5 border-b bg-card">
-              <div className="flex flex-col lg:flex-row gap-4 justify-between items-start lg:items-center">
-                <CardTitle className="text-xl font-bold flex items-center gap-2"><Package className="w-6 h-6 text-primary" /> الأصناف المخزنة</CardTitle>
-                <div className="flex flex-col sm:flex-row items-center gap-3 w-full lg:w-auto">
-                  {selectedItems.length > 0 && (
-                    <Button onClick={handleBulkDeleteItems} variant="destructive" className="gap-2 shrink-0 md:mr-auto">
-                      <Trash2 className="w-4 h-4" />
-                      حذف ({selectedItems.length})
-                    </Button>
-                  )}
-                  <div className="relative flex-1 sm:w-[300px]">
-                    <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                    <Input placeholder="بحث بالاسم أو الكود (SKU)..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="pr-10 bg-muted/30 focus-visible:ring-1 focus-visible:bg-transparent transition-all" />
-                  </div>
-                  <Select value={categoryFilter} onValueChange={setCategoryFilter}>
-                    <SelectTrigger className="w-full sm:w-[160px] bg-muted/30 focus:ring-1"><SelectValue placeholder="الفئة" /></SelectTrigger>
-                    <SelectContent><SelectItem value="all">جميع الفئات</SelectItem>{categories.map((c: any) => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
-                  </Select>
-                  <Select value={statusFilter} onValueChange={setStatusFilter}>
-                    <SelectTrigger className="w-full sm:w-[160px] bg-muted/30 focus:ring-1"><SelectValue placeholder="الحالة" /></SelectTrigger>
-                    <SelectContent><SelectItem value="all">كل الحالات</SelectItem><SelectItem value="normal">طبيعي</SelectItem><SelectItem value="low">منخفض</SelectItem><SelectItem value="out">نفذ</SelectItem></SelectContent>
-                  </Select>
-                </div>
-              </div>
+        {/* KPI Summary Cards */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <Card className="shadow-sm border-border/60">
+            <CardHeader className="pb-1 pt-3.5 px-4">
+              <CardTitle className="text-xs font-medium text-muted-foreground">أصناف بالمخزن</CardTitle>
             </CardHeader>
-            <div className="overflow-x-auto">
-              {filteredItems.length === 0 ? (
-                <div className="text-center py-16 text-muted-foreground"><Package className="w-16 h-16 mx-auto mb-4 opacity-20" /><p className="text-lg">لا توجد أصناف تطابق بحثك</p></div>
-              ) : (
-                <Table>
-                  <TableHeader><TableRow className="bg-muted/10 hover:bg-muted/10">
-                    <TableHead className="w-[40px] pl-0 pr-4">
-                      <Checkbox
-                        checked={filteredItems.length > 0 && selectedItems.length === filteredItems.length}
-                        onCheckedChange={(c) => {
-                          if (c) setSelectedItems(filteredItems.map(i => i.id));
-                          else setSelectedItems([]);
-                        }}
-                      />
-                    </TableHead>
-                    <TableHead>الصنف</TableHead><TableHead className="hidden md:table-cell">الفئة</TableHead><TableHead>الكمية الحالية</TableHead><TableHead className="hidden md:table-cell">تكلفة الوحدة</TableHead><TableHead>القيمة</TableHead><TableHead>الحالة</TableHead><TableHead className="text-left print:hidden w-[80px]">إجراء</TableHead></TableRow></TableHeader>
-                  <TableBody>
-                    {filteredItems.map((item: any) => {
-                      const status = getStockStatus(item.quantity, Number(item.min_stock_level || 0), Number(item.max_stock_level || 100));
-                      const unit = units.find((u: any) => u.id === item.unit_id)?.abbreviation || '';
-                      const StatusIcon = status.label === 'طبيعي' ? CheckCircle2 : status.label === 'منخفض' ? AlertTriangle : XCircle;
-
-                      return (
-                        <TableRow key={item.id} className="group hover:bg-muted/30 transition-colors duration-200">
-                          <TableCell className="pl-0 pr-4">
-                            <div onClick={e => e.stopPropagation()}>
-                              <Checkbox 
-                                checked={selectedItems.includes(item.id)}
-                                onCheckedChange={(c) => {
-                                  if (c) setSelectedItems(prev => [...prev, item.id]);
-                                  else setSelectedItems(prev => prev.filter(id => id !== item.id));
-                                }}
-                              />
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <div className="flex items-center gap-3">
-                              <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold shadow-sm shrink-0">
-                                {item.name.charAt(0).toUpperCase()}
-                              </div>
-                              <div>
-                                <p className="font-bold text-base">{item.name}</p>
-                                <p className="text-xs text-muted-foreground hidden md:block">{item.sku || 'بدون كود'}</p>
-                              </div>
-                            </div>
-                          </TableCell>
-                          <TableCell className="hidden md:table-cell"><Badge variant="outline" className="font-medium bg-muted/50 border-muted-foreground/20">{item.category || 'عام'}</Badge></TableCell>
-                          <TableCell>
-                            <div className="flex flex-col gap-1.5 w-[120px]">
-                              <div className="flex items-baseline justify-between">
-                                <span className="text-xl font-black">{number(item.quantity)}</span> 
-                                <span className="text-muted-foreground text-sm font-medium whitespace-nowrap">{unit}</span>
-                              </div>
-                              <Progress 
-                                value={Math.min((item.quantity / Math.max(Number(item.max_stock_level) || 100, 1)) * 100, 100)} 
-                                className={cn("h-1.5", status.value === 'low' ? 'bg-amber-100' : status.value === 'out' ? 'bg-red-100' : 'bg-emerald-100')}
-                                indicatorClassName={cn(status.value === 'low' ? 'bg-amber-500' : status.value === 'out' ? 'bg-red-500' : 'bg-emerald-500')}
-                              />
-                            </div>
-                          </TableCell>
-                          <TableCell className="hidden md:table-cell text-muted-foreground font-medium">{currency(Number(item.cost_per_unit || 0))}</TableCell>
-                          <TableCell className="font-bold text-foreground">{currency(item.quantity * Number(item.cost_per_unit || 0))}</TableCell>
-                          <TableCell>
-                            <Badge variant="outline" className={cn('gap-1 font-bold border-0 px-2.5 py-1', status.color)}>
-                              <StatusIcon className="w-3.5 h-3.5" />
-                              {status.label}
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="text-left py-2 pr-0 print:hidden text-left">
-                            <DropdownMenu>
-                              <DropdownMenuTrigger asChild>
-                                <Button variant="ghost" className="h-9 w-9 p-0 opacity-50 data-[state=open]:opacity-100 group-hover:opacity-100 transition-opacity float-left">
-                                  <span className="sr-only">فتح القائمة</span>
-                                  <MoreHorizontal className="h-5 w-5" />
-                                </Button>
-                              </DropdownMenuTrigger>
-                              <DropdownMenuContent align="end" className="w-[200px] shadow-lg">
-                                <DropdownMenuLabel className="font-bold">الإجراءات</DropdownMenuLabel>
-                                <DropdownMenuSeparator />
-                                {canAdjust && (
-                                  <>
-                                    <DropdownMenuItem onClick={() => { setQuickStock({ id: item.id, type: 'in', name: item.name }); setQuickQty(''); }} className="gap-2 focus:bg-emerald-50 focus:text-emerald-600 dark:focus:bg-emerald-950 dark:focus:text-emerald-400 cursor-pointer transition-colors">
-                                      <ArrowDownToLine className="w-4 h-4" /> إضافة رصيد سريع
-                                    </DropdownMenuItem>
-                                    <DropdownMenuItem onClick={() => { setQuickStock({ id: item.id, type: 'out', name: item.name }); setQuickQty(''); }} className="gap-2 focus:bg-red-50 focus:text-red-600 dark:focus:bg-red-950 dark:focus:text-red-400 cursor-pointer transition-colors">
-                                      <ArrowUpToLine className="w-4 h-4" /> صرف رصيد سريع
-                                    </DropdownMenuItem>
-                                    <DropdownMenuItem onClick={() => { setMovForm(f => ({ ...f, item_id: item.id })); setShowMovementDialog(true); }} className="gap-2 cursor-pointer transition-colors">
-                                      <ArrowDownRight className="w-4 h-4 text-blue-500" /> إضافة حركة مخزون
-                                    </DropdownMenuItem>
-                                    <DropdownMenuSeparator />
-                                  </>
-                                )}
-                                {canEdit && (
-                                  <DropdownMenuItem onClick={() => setShowEditDialog(item)} className="gap-2 cursor-pointer transition-colors">
-                                    <Edit className="w-4 h-4" /> تعديل بيانات الصنف
-                                  </DropdownMenuItem>
-                                )}
-                                {canDelete && (
-                                  <DropdownMenuItem onClick={async () => { if (confirm('هل أنت متأكد من حذف هذا الصنف؟')) { await removeItem(item.id); } }} className="gap-2 focus:bg-destructive focus:text-destructive-foreground cursor-pointer text-destructive transition-colors">
-                                    <Trash2 className="w-4 h-4" /> حذف الصنف
-                                  </DropdownMenuItem>
-                                )}
-                              </DropdownMenuContent>
-                            </DropdownMenu>
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
-                  </TableBody>
-                </Table>
-              )}
-            </div>
+            <CardContent className="px-4 pb-3.5">
+              <div className="text-2xl font-black text-foreground">{metrics.totalItems}</div>
+              <p className="text-[11px] text-muted-foreground mt-0.5">
+                إجمالي القطع: <span className="font-bold">{metrics.totalOnHand.toLocaleString()}</span>
+              </p>
+            </CardContent>
           </Card>
-        </TabsContent>
 
-        <TabsContent value="movements" className="space-y-4">
-          <Card className="border-0 shadow-sm ring-1 ring-border/50">
-            <CardHeader className="px-6 py-5 border-b bg-card">
-              <div className="flex gap-4 justify-between items-start md:items-center flex-col md:flex-row">
-                <CardTitle className="text-xl font-bold flex items-center gap-2"><History className="w-6 h-6 text-primary" /> سجل حركات المخزون</CardTitle>
-                <div className="flex gap-2 w-full md:w-auto">
-                  {selectedMovements.length > 0 && (
-                     <Button onClick={handleBulkDeleteMovements} variant="destructive" className="gap-2 shrink-0 md:mr-auto">
-                       <Trash2 className="w-4 h-4" />
-                       حذف ({selectedMovements.length})
-                     </Button>
-                  )}
-                  <Button className="gap-2 shadow-sm w-full md:w-auto" onClick={() => setShowMovementDialog(true)}><Plus className="w-4 h-4" />حركة يدوية</Button>
-                </div>
-              </div>
+          <Card className="shadow-sm border-border/60">
+            <CardHeader className="pb-1 pt-3.5 px-4">
+              <CardTitle className="text-xs font-medium text-muted-foreground">تقييم المخزون بالتكلفة</CardTitle>
             </CardHeader>
-            <div className="overflow-x-auto">
-              {movements.length === 0 ? (
-                <div className="text-center py-16 text-muted-foreground"><History className="w-16 h-16 mx-auto mb-4 opacity-20" /><p className="text-lg">لا توجد حركات مخزون مسجلة</p></div>
-              ) : (
-                <Table>
-                  <TableHeader><TableRow className="bg-muted/10 hover:bg-muted/10">
-                    <TableHead className="w-[40px] pl-0 pr-4">
-                      <Checkbox
-                        checked={movements.length > 0 && selectedMovements.length === movements.length}
-                        onCheckedChange={(c) => {
-                          if (c) setSelectedMovements(movements.map((m: any) => m.id));
-                          else setSelectedMovements([]);
-                        }}
-                      />
-                    </TableHead>
-                    <TableHead>الصنف</TableHead><TableHead>النوع</TableHead><TableHead>الكمية</TableHead><TableHead className="hidden md:table-cell">التاريخ</TableHead><TableHead className="hidden md:table-cell">ملاحظات</TableHead><TableHead className="text-left print:hidden w-[100px]">إجراء</TableHead></TableRow></TableHeader>
-                  <TableBody>
-                    {movements.map((mov: any) => {
-                      const itemName = items.find((i: any) => i.id === mov.item_id)?.name || '-';
-                      const isPositive = Number(mov.quantity) > 0;
-                      return (
-                        <TableRow key={mov.id} className="group hover:bg-muted/30 transition-colors duration-200">
-                          <TableCell className="pl-0 pr-4">
-                            <div onClick={e => e.stopPropagation()}>
-                              <Checkbox 
-                                checked={selectedMovements.includes(mov.id)}
-                                onCheckedChange={(c) => {
-                                  if (c) setSelectedMovements(prev => [...prev, mov.id]);
-                                  else setSelectedMovements(prev => prev.filter(id => id !== mov.id));
-                                }}
-                              />
-                            </div>
-                          </TableCell>
-                          <TableCell className="font-bold text-base">{itemName}</TableCell>
-                          <TableCell>
-                            <Badge variant="outline" className={cn("px-2.5 py-1 font-bold border-0", isPositive ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-400" : "bg-red-100 text-red-700 dark:bg-red-950/50 dark:text-red-400")}>
-                              {mov.movement_type === 'purchase' ? 'شراء' : mov.movement_type === 'consumption' ? 'استهلاك' : mov.movement_type === 'waste' ? 'هالك' : mov.movement_type === 'adjustment_in' ? 'تسوية بزيادة' : mov.movement_type === 'adjustment_out' ? 'تسوية بنقصان' : mov.movement_type}
-                            </Badge>
-                          </TableCell>
-                          <TableCell><span className={cn('font-black text-lg', isPositive ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400')} dir="ltr">{isPositive ? '+' : ''}{number(Number(mov.quantity))}</span></TableCell>
-                          <TableCell className="text-muted-foreground font-medium hidden md:table-cell">{new Date(mov.created_at).toLocaleString('ar-EG', { dateStyle: 'medium', timeStyle: 'short' })}</TableCell>
-                          <TableCell className="hidden md:table-cell text-muted-foreground"><span className="truncate block max-w-[200px]">{mov.notes || '-'}</span></TableCell>
-                          <TableCell className="text-left py-2 pr-0 print:hidden text-left">
-                            <DropdownMenu>
-                              <DropdownMenuTrigger asChild>
-                                <Button variant="ghost" className="h-9 w-9 p-0 opacity-50 data-[state=open]:opacity-100 group-hover:opacity-100 transition-opacity float-left">
-                                  <span className="sr-only">فتح القائمة</span>
-                                  <MoreHorizontal className="h-5 w-5" />
-                                </Button>
-                              </DropdownMenuTrigger>
-                              <DropdownMenuContent align="end" className="w-[160px] shadow-lg">
-                                <DropdownMenuLabel className="font-bold">خيارات الحركة</DropdownMenuLabel>
-                                <DropdownMenuSeparator />
-                                {canEdit && (
-                                  <DropdownMenuItem onClick={() => setEditingMovement({ ...mov, quantity: Math.abs(mov.quantity), _original: mov })} className="gap-2 cursor-pointer transition-colors">
-                                    <Edit className="w-4 h-4" /> تعديل الحركة
-                                  </DropdownMenuItem>
-                                )}
-                                {canDelete && (
-                                  <DropdownMenuItem onClick={async () => { if (confirm('هل أنت متأكد من حذف هذه الحركة؟ سيتم عكس تأثيرها على المخزون.')) { await deleteMovement(mov.id, mov.item_id, mov.quantity); refreshStock(); } }} className="gap-2 focus:bg-destructive focus:text-destructive-foreground cursor-pointer text-destructive transition-colors">
-                                    <Trash2 className="w-4 h-4" /> التراجع وحذف الحركة
-                                  </DropdownMenuItem>
-                                )}
-                              </DropdownMenuContent>
-                            </DropdownMenu>
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
-                  </TableBody>
-                </Table>
-              )}
-            </div>
+            <CardContent className="px-4 pb-3.5">
+              <div className="text-2xl font-black text-primary font-mono">
+                {metrics.totalValue.toLocaleString()} ج.م
+              </div>
+              <p className="text-[11px] text-muted-foreground mt-0.5">محسوب بمتوسط التكلفة المرجح (WAC)</p>
+            </CardContent>
           </Card>
-        </TabsContent>
 
-        {canCount && (
-          <TabsContent value="reconciliation" className="space-y-4">
-            <Card className="border-0 shadow-sm ring-1 ring-border/50">
-              <CardHeader className="px-6 py-5 border-b bg-card">
-                <div className="flex justify-between items-center">
-                  <CardTitle className="text-xl font-bold flex items-center gap-2"><CheckCircle2 className="w-6 h-6 text-primary" /> جرد وتحديث المخزون الفعلي</CardTitle>
-                </div>
-              </CardHeader>
-              <CardContent className="p-0">
-                <div className="overflow-x-auto">
-                  {itemsWithStock.length === 0 ? (
-                    <div className="text-center py-16 text-muted-foreground"><CheckCircle2 className="w-16 h-16 mx-auto mb-4 opacity-20" /><p className="text-lg">لا توجد أصناف لجردها</p></div>
-                  ) : (
-                    <Table>
-                      <TableHeader><TableRow className="bg-muted/10 hover:bg-muted/10"><TableHead>الصنف</TableHead><TableHead>الرصيد الدفتري</TableHead><TableHead>الرصيد الفعلي</TableHead><TableHead>الفارق</TableHead><TableHead className="w-[120px]">إجراء</TableHead></TableRow></TableHeader>
-                      <TableBody>
-                        {itemsWithStock.map((item: any) => (
-                          <ReconciliationRow key={item.id} item={item} addMovement={addMovement} refreshStock={refreshStock} formatNumber={number} canCount={canCount} />
-                        ))}
-                      </TableBody>
-                    </Table>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-          </TabsContent>
-        )}
+          <Card
+            className={`shadow-sm border-border/60 cursor-pointer transition-colors ${
+              filterLowStock ? 'ring-2 ring-amber-500 bg-amber-50/20' : ''
+            }`}
+            onClick={() => {
+              setFilterLowStock(!filterLowStock);
+              setFilterOutOfStock(false);
+            }}
+          >
+            <CardHeader className="pb-1 pt-3.5 px-4">
+              <CardTitle className="text-xs font-medium text-amber-600 flex items-center gap-1">
+                <AlertTriangle className="w-3.5 h-3.5" />
+                أصناف قاربت النفاد
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="px-4 pb-3.5">
+              <div className="text-2xl font-black text-amber-600">{metrics.lowStockCount}</div>
+              <p className="text-[11px] text-muted-foreground mt-0.5">أقل من نقطة إعادة الطلب</p>
+            </CardContent>
+          </Card>
 
-        <TabsContent value="recommendations" className="space-y-4">
-          <Card className="border-0 shadow-sm ring-1 ring-border/50">
-            <CardHeader className="px-6 py-5 border-b bg-amber-50/50 dark:bg-amber-950/20">
-              <div className="flex flex-col lg:flex-row gap-4 justify-between items-start lg:items-center">
-                <div>
-                  <CardTitle className="text-xl font-bold flex items-center gap-2 text-amber-700 dark:text-amber-500">
-                    <AlertTriangle className="w-6 h-6" /> نواقص المخزون وتوصيات الطلب
-                  </CardTitle>
-                  <CardDescription className="mt-1">
-                    أصناف وصلت للحد الأدنى أو نفذت وتحتاج إلى إعادة طلب من الموردين
-                  </CardDescription>
-                </div>
-                <Button className="bg-amber-600 hover:bg-amber-700 text-white gap-2 shadow-sm">
-                  <Printer className="w-4 h-4" /> طباعة تقرير النواقص
+          <Card
+            className={`shadow-sm border-border/60 cursor-pointer transition-colors ${
+              filterOutOfStock ? 'ring-2 ring-rose-500 bg-rose-50/20' : ''
+            }`}
+            onClick={() => {
+              setFilterOutOfStock(!filterOutOfStock);
+              setFilterLowStock(false);
+            }}
+          >
+            <CardHeader className="pb-1 pt-3.5 px-4">
+              <CardTitle className="text-xs font-medium text-rose-600 flex items-center gap-1">
+                <TrendingDown className="w-3.5 h-3.5" />
+                أصناف نفدت تماماً
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="px-4 pb-3.5">
+              <div className="text-2xl font-black text-rose-600">{metrics.outOfStockCount}</div>
+              <p className="text-[11px] text-muted-foreground mt-0.5">الرصيد المتاح = 0</p>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Navigation Tabs */}
+        <Tabs value={activeTab} onValueChange={(v: any) => setActiveTab(v)} className="space-y-4">
+          <div className="flex items-center justify-between border-b pb-2">
+            <TabsList className="bg-muted/60 p-1">
+              <TabsTrigger value="balances" className="gap-1.5 text-xs font-bold">
+                <Package className="w-3.5 h-3.5" />
+                الأرصدة الحالية ({filteredBalances.length})
+              </TabsTrigger>
+              <TabsTrigger value="movements" className="gap-1.5 text-xs font-bold">
+                <History className="w-3.5 h-3.5" />
+                دفتر الحركات (Ledger)
+              </TabsTrigger>
+              <TabsTrigger value="transfers" className="gap-1.5 text-xs font-bold">
+                <Truck className="w-3.5 h-3.5" />
+                المناقلات والشحن ({transfers.length})
+              </TabsTrigger>
+              <TabsTrigger value="counts" className="gap-1.5 text-xs font-bold">
+                <Barcode className="w-3.5 h-3.5" />
+                جلسات الجرد ({sessions.length})
+              </TabsTrigger>
+              <TabsTrigger value="damage" className="gap-1.5 text-xs font-bold">
+                <AlertOctagon className="w-3.5 h-3.5" />
+                التوالف والهالك ({damageRecords.length})
+              </TabsTrigger>
+            </TabsList>
+
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                refreshBalances();
+                refreshMovements();
+                refreshTransfers();
+                refreshCounts();
+                refreshDamage();
+                toast.success('تم تحديث البيانات');
+              }}
+              className="gap-1 text-xs"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              تحديث
+            </Button>
+          </div>
+
+          {/* TAB 1: Stock Balances */}
+          <TabsContent value="balances" className="space-y-4 mt-0">
+            {/* Search & Category Filter Bar */}
+            <div className="flex flex-col sm:flex-row gap-2">
+              <div className="relative flex-1">
+                <Search className="absolute right-3 top-2.5 w-4 h-4 text-muted-foreground" />
+                <Input
+                  placeholder="ابحث بالاسم، رمز الصنف (SKU)، أو الباركود..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="pr-9 text-xs"
+                />
+              </div>
+
+              <select
+                value={selectedCategory}
+                onChange={(e) => setSelectedCategory(e.target.value)}
+                className="h-10 rounded-md border border-input bg-background px-3 py-2 text-xs"
+              >
+                <option value="">جميع التصنيفات</option>
+                {categories.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+
+              {(filterLowStock || filterOutOfStock) && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => {
+                    setFilterLowStock(false);
+                    setFilterOutOfStock(false);
+                  }}
+                  className="text-xs text-rose-600"
+                >
+                  إلغاء الفلترة
                 </Button>
-              </div>
-            </CardHeader>
-            <div className="overflow-x-auto">
-              {itemsWithStock.filter((i: any) => i.quantity <= Number(i.min_stock_level || 0)).length === 0 ? (
-                <div className="text-center py-16 text-muted-foreground">
-                  <CheckCircle2 className="w-16 h-16 mx-auto mb-4 opacity-20 text-emerald-500" />
-                  <p className="text-lg">جميع الأصناف متوفرة بمستويات آمنة</p>
-                </div>
-              ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow className="bg-muted/10">
-                      <TableHead>الصنف</TableHead>
-                      <TableHead>الكمية الحالية</TableHead>
-                      <TableHead>الحد الأدنى</TableHead>
-                      <TableHead>الكمية المقترحة للطلب</TableHead>
-                      <TableHead>التكلفة التقديرية</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {itemsWithStock
-                      .filter((i: any) => i.quantity <= Number(i.min_stock_level || 0))
-                      .map((item: any) => {
-                        const unit = units.find((u: any) => u.id === item.unit_id)?.abbreviation || '';
-                        const suggestedOrder = Math.max(0, Number(item.max_stock_level || 0) - item.quantity);
-                        const estCost = suggestedOrder * Number(item.cost_per_unit || 0);
-                        
+              )}
+            </div>
+
+            {/* Balances View: Responsive Table for Desktop & Cards for Mobile */}
+            <div className="border rounded-xl bg-card overflow-hidden shadow-sm">
+              {/* Desktop Table View */}
+              <div className="hidden md:block overflow-x-auto">
+                <table className="w-full text-xs text-right">
+                  <thead className="bg-muted/60 text-muted-foreground">
+                    <tr>
+                      <th className="p-3">الصنف والكتاب</th>
+                      <th className="p-3">الرمز والباركود</th>
+                      <th className="p-3 text-center">الرصيد الفعلي</th>
+                      <th className="p-3 text-center">المحجوز</th>
+                      <th className="p-3 text-center">المتاح للبيع</th>
+                      <th className="p-3 text-center">متوسط التكلفة (WAC)</th>
+                      <th className="p-3 text-center">قيمة المخزون</th>
+                      <th className="p-3 text-center">الحالة</th>
+                      <th className="p-3 text-center">إجراءات</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {loadingBalances ? (
+                      <tr>
+                        <td colSpan={9} className="p-8 text-center text-muted-foreground">
+                          جاري تحميل أرصدة المخزون...
+                        </td>
+                      </tr>
+                    ) : filteredBalances.length === 0 ? (
+                      <tr>
+                        <td colSpan={9} className="p-8 text-center text-muted-foreground">
+                          لا توجد أرصدة تطابق شروط البحث في هذا الموقع
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredBalances.map((b) => {
+                        const prod = products.find((p) => p.id === b.productId);
+                        const onHand = b.onHandQuantity ?? b.quantity ?? 0;
+                        const reserved = b.reservedQuantity ?? 0;
+                        const available = b.availableQuantity ?? onHand - reserved;
+                        const cost = b.averageCost ?? b.unitCost ?? 0;
+                        const totalVal = Math.round(onHand * cost * 100) / 100;
+                        const reorder = b.reorderPoint || 5;
+
                         return (
-                          <TableRow key={`rec-${item.id}`} className="hover:bg-amber-50/30 dark:hover:bg-amber-900/10">
-                            <TableCell className="font-bold">
-                              {item.name}
-                              <div className="text-xs text-muted-foreground mt-0.5">{item.category || 'عام'}</div>
-                            </TableCell>
-                            <TableCell>
-                              <span className={cn("font-bold", item.quantity === 0 ? "text-red-500" : "text-amber-500")}>
-                                {number(item.quantity)} {unit}
-                              </span>
-                            </TableCell>
-                            <TableCell className="text-muted-foreground">{number(Number(item.min_stock_level))} {unit}</TableCell>
-                            <TableCell>
-                              <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/50 dark:text-emerald-400 dark:border-emerald-800">
-                                +{number(suggestedOrder)} {unit}
-                              </Badge>
-                            </TableCell>
-                            <TableCell className="font-bold">{currency(estCost)}</TableCell>
-                          </TableRow>
+                          <tr key={b.id} className="hover:bg-muted/20">
+                            <td className="p-3">
+                              <p className="font-bold text-foreground">{prod?.name || b.productId}</p>
+                              <p className="text-[11px] text-muted-foreground">{prod?.nameEn}</p>
+                            </td>
+                            <td className="p-3 font-mono">
+                              <p className="font-bold">{prod?.sku || '-'}</p>
+                              <p className="text-[11px] text-muted-foreground">{prod?.barcode || '-'}</p>
+                            </td>
+                            <td className="p-3 text-center font-bold text-foreground">{onHand}</td>
+                            <td className="p-3 text-center font-bold text-amber-600">{reserved}</td>
+                            <td className="p-3 text-center font-black text-sm text-primary">{available}</td>
+                            <td className="p-3 text-center font-mono">{cost.toFixed(2)} ج.م</td>
+                            <td className="p-3 text-center font-mono font-bold">{totalVal.toLocaleString()} ج.م</td>
+                            <td className="p-3 text-center">
+                              {available <= 0 ? (
+                                <Badge variant="destructive" className="text-[10px]">
+                                  نفد المخزون
+                                </Badge>
+                              ) : available <= reorder ? (
+                                <Badge className="text-[10px] bg-amber-500 hover:bg-amber-600">
+                                  قارب النفاد
+                                </Badge>
+                              ) : (
+                                <Badge variant="secondary" className="text-[10px]">
+                                  متوفر
+                                </Badge>
+                              )}
+                            </td>
+                            <td className="p-3 text-center">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => handleOpenAdjustment(b)}
+                                className="h-7 px-2.5 text-xs font-bold gap-1"
+                              >
+                                <Scale className="w-3 h-3" />
+                                تسوية
+                              </Button>
+                            </td>
+                          </tr>
                         );
-                      })}
-                  </TableBody>
-                </Table>
-              )}
-            </div>
-          </Card>
-        </TabsContent>
-      </Tabs>
-
-      {/* Add/Edit Item Dialog from Previous Implementation modified slightly */}
-      <Dialog open={showAddDialog} onOpenChange={setShowAddDialog}>
-        <DialogContent className="max-w-[95vw] md:max-w-lg max-h-[90dvh] overflow-y-auto"><DialogHeader><DialogTitle>إضافة صنف جديد</DialogTitle></DialogHeader>
-          <form onSubmit={handleAddItem} className="grid gap-4 py-4">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4"><div className="space-y-2"><Label>اسم الصنف *</Label><Input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} required /></div><div className="space-y-2"><Label>SKU</Label><Input value={form.sku} onChange={e => setForm(f => ({ ...f, sku: e.target.value }))} /></div></div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="space-y-2"><Label>الفئة</Label><Input value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))} placeholder="لحوم, خضار..." /></div>
-              <div className="space-y-2"><Label>الوحدة</Label><Select value={form.unit_id || undefined} onValueChange={v => setForm(f => ({ ...f, unit_id: v }))}><SelectTrigger><SelectValue placeholder={units.length === 0 ? "يرجى إضافة وحدات أولاً" : "اختر"} /></SelectTrigger><SelectContent>{units.map((u: any) => <SelectItem key={u.id} value={u.id}>{u.name}</SelectItem>)}</SelectContent></Select></div>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="space-y-2"><Label>الكمية الأولية</Label><Input type="number" min="0" step="any" value={form.initial_quantity} onChange={e => setForm(f => ({ ...f, initial_quantity: e.target.value as any }))} /></div>
-              <div className="space-y-2"><Label>التكلفة للوحدة</Label><Input type="number" min="0" step="any" value={form.cost_per_unit} onChange={e => setForm(f => ({ ...f, cost_per_unit: e.target.value as any }))} /></div>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4"><div className="space-y-2"><Label>الحد الأدنى</Label><Input type="number" min="0" step="any" value={form.min_stock_level} onChange={e => setForm(f => ({ ...f, min_stock_level: e.target.value as any }))} /></div><div className="space-y-2"><Label>الحد الأقصى</Label><Input type="number" min="0" step="any" value={form.max_stock_level} onChange={e => setForm(f => ({ ...f, max_stock_level: e.target.value as any }))} /></div></div>
-            <div className="flex justify-end gap-2"><Button type="button" variant="outline" onClick={() => setShowAddDialog(false)}>إلغاء</Button><Button type="submit">حفظ</Button></div>
-          </form>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={!!showEditDialog} onOpenChange={() => setShowEditDialog(null)}>
-        <DialogContent className="max-w-[95vw] md:max-w-lg max-h-[90dvh] overflow-y-auto"><DialogHeader><DialogTitle>تعديل الصنف</DialogTitle></DialogHeader>
-          {showEditDialog && (
-            <form onSubmit={handleUpdateItem} className="grid gap-4 py-4">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4"><div className="space-y-2"><Label>اسم الصنف</Label><Input value={showEditDialog.name} onChange={e => setShowEditDialog((s: any) => ({ ...s, name: e.target.value }))} /></div><div className="space-y-2"><Label>SKU</Label><Input value={showEditDialog.sku || ''} onChange={e => setShowEditDialog((s: any) => ({ ...s, sku: e.target.value }))} /></div></div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="space-y-2"><Label>الفئة</Label><Input value={showEditDialog.category || ''} onChange={e => setShowEditDialog((s: any) => ({ ...s, category: e.target.value }))} /></div>
-                <div className="space-y-2"><Label>الوحدة</Label><Select value={showEditDialog.unit_id || undefined} onValueChange={v => setShowEditDialog((s: any) => ({ ...s, unit_id: v }))}><SelectTrigger><SelectValue placeholder={units.length === 0 ? "يرجى إضافة وحدات أولاً" : "اختر"} /></SelectTrigger><SelectContent>{units.map((u: any) => <SelectItem key={u.id} value={u.id}>{u.name}</SelectItem>)}</SelectContent></Select></div>
+                      })
+                    )}
+                  </tbody>
+                </table>
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <div className="space-y-2"><Label>التكلفة</Label><Input type="number" min="0" step="any" value={showEditDialog.cost_per_unit} onChange={e => setShowEditDialog((s: any) => ({ ...s, cost_per_unit: e.target.value }))} /></div>
-                <div className="space-y-2"><Label>الحد الأدنى</Label><Input type="number" min="0" step="any" value={showEditDialog.min_stock_level} onChange={e => setShowEditDialog((s: any) => ({ ...s, min_stock_level: e.target.value }))} /></div>
-                <div className="space-y-2"><Label>الحد الأقصى</Label><Input type="number" min="0" step="any" value={showEditDialog.max_stock_level} onChange={e => setShowEditDialog((s: any) => ({ ...s, max_stock_level: e.target.value }))} /></div>
-              </div>
-              <div className="flex justify-end gap-2"><Button type="button" variant="outline" onClick={() => setShowEditDialog(null)}>إلغاء</Button><Button type="submit">حفظ</Button></div>
-            </form>
-          )}
-        </DialogContent>
-      </Dialog>
 
-      <Dialog open={showMovementDialog} onOpenChange={setShowMovementDialog}>
-        <DialogContent className="max-w-[95vw] md:max-w-lg max-h-[90dvh] overflow-y-auto"><DialogHeader><DialogTitle>إضافة حركة مخزون</DialogTitle></DialogHeader>
-          <form onSubmit={handleAddMovement} className="grid gap-4 py-4">
-            <div className="space-y-2"><Label>الصنف *</Label><Select value={movForm.item_id} onValueChange={v => setMovForm(f => ({ ...f, item_id: v }))}><SelectTrigger><SelectValue placeholder="اختر الصنف" /></SelectTrigger><SelectContent>{items.map((i: any) => <SelectItem key={i.id} value={i.id}>{i.name}</SelectItem>)}</SelectContent></Select></div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="space-y-2"><Label>نوع الحركة</Label><Select value={movForm.movement_type} onValueChange={v => setMovForm(f => ({ ...f, movement_type: v, reason: v === 'waste' ? 'spoilage' : '' }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="purchase">شراء (إضافة)</SelectItem><SelectItem value="consumption">استهلاك (خصم)</SelectItem><SelectItem value="waste">هالك (خصم)</SelectItem><SelectItem value="adjustment_in">تسوية إضافة</SelectItem><SelectItem value="adjustment_out">تسوية خصم</SelectItem></SelectContent></Select></div>
-              <div className="space-y-2"><Label>الكمية *</Label><Input type="number" min={0} step="any" value={movForm.quantity} onChange={e => setMovForm(f => ({ ...f, quantity: e.target.value as any }))} required /></div>
+              {/* Mobile Cards View */}
+              <div className="md:hidden divide-y">
+                {loadingBalances ? (
+                  <div className="p-6 text-center text-muted-foreground">جاري تحميل الأرصدة...</div>
+                ) : filteredBalances.length === 0 ? (
+                  <div className="p-6 text-center text-muted-foreground">لا توجد أصناف مطابقة</div>
+                ) : (
+                  filteredBalances.map((b) => {
+                    const prod = products.find((p) => p.id === b.productId);
+                    const onHand = b.onHandQuantity ?? b.quantity ?? 0;
+                    const available = b.availableQuantity ?? onHand;
+                    const cost = b.averageCost ?? b.unitCost ?? 0;
+
+                    return (
+                      <div key={b.id} className="p-3.5 space-y-2">
+                        <div className="flex items-start justify-between">
+                          <div>
+                            <p className="font-bold text-sm text-foreground">{prod?.name || b.productId}</p>
+                            <p className="text-xs font-mono text-muted-foreground">{prod?.sku}</p>
+                          </div>
+                          <Badge variant={available <= 0 ? 'destructive' : 'secondary'} className="text-[10px]">
+                            {available <= 0 ? 'نفد' : 'متوفر'}
+                          </Badge>
+                        </div>
+
+                        <div className="grid grid-cols-3 gap-2 bg-muted/30 p-2 rounded-lg text-center text-xs">
+                          <div>
+                            <span className="text-muted-foreground text-[10px] block">المتاح للبيع</span>
+                            <span className="font-black text-primary text-base">{available}</span>
+                          </div>
+                          <div>
+                            <span className="text-muted-foreground text-[10px] block">متوسط التكلفة</span>
+                            <span className="font-mono font-bold text-foreground text-xs">{cost.toFixed(2)} ج.م</span>
+                          </div>
+                          <div>
+                            <span className="text-muted-foreground text-[10px] block">القيمة الإجمالية</span>
+                            <span className="font-mono font-bold text-xs">
+                              {(onHand * cost).toLocaleString()} ج.م
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="flex justify-end pt-1">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handleOpenAdjustment(b)}
+                            className="h-8 text-xs font-bold gap-1 w-full"
+                          >
+                            <Scale className="w-3.5 h-3.5" />
+                            إجراء تسوية مخزنية
+                          </Button>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
             </div>
-            {movForm.movement_type === 'waste' && (
-              <div className="space-y-2">
-                <Label>السبب *</Label>
-                <Select value={movForm.reason || 'spoilage'} onValueChange={v => setMovForm(f => ({ ...f, reason: v }))}>
-                  <SelectTrigger><SelectValue placeholder="اختر السبب" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="spoilage">تلف / انتهاء صلاحية</SelectItem>
-                    <SelectItem value="mistake">خطأ تشغيلي أو سقوط</SelectItem>
-                    <SelectItem value="other">أسباب أخرى</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
-            <div className="space-y-2"><Label>ملاحظات</Label><Input value={movForm.notes} onChange={e => setMovForm(f => ({ ...f, notes: e.target.value }))} /></div>
-            <div className="flex justify-end gap-2"><Button type="button" variant="outline" onClick={() => setShowMovementDialog(false)}>إلغاء</Button><Button type="submit">حفظ</Button></div>
-          </form>
-        </DialogContent>
-      </Dialog>
+          </TabsContent>
 
-      <Dialog open={!!editingMovement} onOpenChange={(open) => !open && setEditingMovement(null)}>
-        <DialogContent className="max-w-[95vw] md:max-w-lg max-h-[90dvh] overflow-y-auto"><DialogHeader><DialogTitle>تعديل حركة مخزون</DialogTitle></DialogHeader>
-          {editingMovement && (
-            <form onSubmit={handleUpdateMovement} className="grid gap-4 py-4">
-              <div className="space-y-2 text-muted-foreground bg-muted/30 p-2 rounded-md"><Label>الصنف: </Label> {items.find((i: any) => i.id === editingMovement.item_id)?.name || 'غير معروف'}</div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="space-y-2"><Label>نوع الحركة</Label><Select value={editingMovement.movement_type} onValueChange={v => setEditingMovement((f: any) => ({ ...f, movement_type: v, reason: v === 'waste' ? 'spoilage' : '' }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="purchase">شراء (إضافة)</SelectItem><SelectItem value="consumption">استهلاك (خصم)</SelectItem><SelectItem value="waste">هالك (خصم)</SelectItem><SelectItem value="adjustment_in">تسوية إضافة</SelectItem><SelectItem value="adjustment_out">تسوية خصم</SelectItem></SelectContent></Select></div>
-                <div className="space-y-2"><Label>الكمية *</Label><Input type="number" min={0} step="any" value={editingMovement.quantity} onChange={e => setEditingMovement((f: any) => ({ ...f, quantity: e.target.value }))} required /></div>
-              </div>
-              {editingMovement.movement_type === 'waste' && (
-                <div className="space-y-2">
-                  <Label>السبب *</Label>
-                  <Select value={editingMovement.reason || 'spoilage'} onValueChange={v => setEditingMovement((f: any) => ({ ...f, reason: v }))}>
-                    <SelectTrigger><SelectValue placeholder="اختر السبب" /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="spoilage">تلف / انتهاء صلاحية</SelectItem>
-                      <SelectItem value="mistake">خطأ تشغيلي أو سقوط</SelectItem>
-                      <SelectItem value="other">أسباب أخرى</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              )}
-              <div className="space-y-2"><Label>ملاحظات</Label><Input value={editingMovement.notes || ''} onChange={e => setEditingMovement((f: any) => ({ ...f, notes: e.target.value }))} /></div>
-              <div className="flex justify-end gap-2"><Button type="button" variant="outline" onClick={() => setEditingMovement(null)}>إلغاء</Button><Button type="submit">تحديث الحركة</Button></div>
-            </form>
-          )}
-        </DialogContent>
-      </Dialog>
+          {/* TAB 2: Movements Ledger */}
+          <TabsContent value="movements" className="space-y-4 mt-0">
+            <div className="border rounded-xl bg-card overflow-x-auto shadow-sm">
+              <table className="w-full text-xs text-right">
+                <thead className="bg-muted/60 text-muted-foreground">
+                  <tr>
+                    <th className="p-3">الوقت والتاريخ</th>
+                    <th className="p-3">نوع الحركة</th>
+                    <th className="p-3 text-center">الكمية</th>
+                    <th className="p-3 text-center">الرصيد السابق</th>
+                    <th className="p-3 text-center">الرصيد بعد الحركة</th>
+                    <th className="p-3 text-center">التكلفة</th>
+                    <th className="p-3">البيان والتفاصيل</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {loadingMovements ? (
+                    <tr>
+                      <td colSpan={7} className="p-8 text-center text-muted-foreground">
+                        جاري تحميل الحركات...
+                      </td>
+                    </tr>
+                  ) : movements.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="p-8 text-center text-muted-foreground">
+                        لا توجد حركات مسجلة في هذا الموقع
+                      </td>
+                    </tr>
+                  ) : (
+                    movements.map((m) => {
+                      const isOut = m.quantity < 0 || m.direction === 'out';
+                      return (
+                        <tr key={m.id} className="hover:bg-muted/20">
+                          <td className="p-3 font-mono text-muted-foreground whitespace-nowrap">
+                            {new Date(m.createdAt).toLocaleString('ar-EG', {
+                              month: 'numeric',
+                              day: 'numeric',
+                              hour: '2-digit',
+                              minute: '2-digit',
+                            })}
+                          </td>
+                          <td className="p-3">
+                            <Badge
+                              variant="outline"
+                              className={
+                                isOut
+                                  ? 'border-rose-300 text-rose-700 bg-rose-50/50'
+                                  : 'border-emerald-300 text-emerald-700 bg-emerald-50/50'
+                              }
+                            >
+                              {m.movementType}
+                            </Badge>
+                          </td>
+                          <td className="p-3 text-center font-bold">
+                            <span className={isOut ? 'text-rose-600' : 'text-emerald-600'}>
+                              {m.quantity > 0 ? `+${m.quantity}` : m.quantity}
+                            </span>
+                          </td>
+                          <td className="p-3 text-center text-muted-foreground">{m.beforeQuantity}</td>
+                          <td className="p-3 text-center font-bold text-foreground">{m.afterQuantity}</td>
+                          <td className="p-3 text-center font-mono">{(m.unitCost || 0).toFixed(2)} ج.م</td>
+                          <td className="p-3 text-muted-foreground max-w-xs truncate" title={m.reason || m.notes}>
+                            {m.reason || m.notes || '-'}
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </TabsContent>
 
-      <Dialog open={!!quickStock} onOpenChange={(open) => !open && setQuickStock(null)}>
-        <DialogContent className="max-w-[95vw] md:max-w-md max-h-[90dvh] overflow-y-auto"><DialogHeader><DialogTitle>{quickStock?.type === 'in' ? 'إضافة رصيد' : 'صرف رصيد'} - {quickStock?.name}</DialogTitle></DialogHeader>
-          <form onSubmit={handleQuickStock} className="grid gap-4 py-4">
-            <div className="space-y-2"><Label>الكمية</Label><Input type="number" min="0.01" step="0.01" autoFocus value={quickQty} onChange={e => setQuickQty(e.target.value)} required /></div>
-            <div className="flex justify-end gap-2"><Button type="button" variant="outline" onClick={() => setQuickStock(null)}>إلغاء</Button><Button type="submit" variant={quickStock?.type === 'in' ? 'default' : 'destructive'}>{quickStock?.type === 'in' ? 'إضافة المخزون' : 'صرف المخزون'}</Button></div>
-          </form>
-        </DialogContent>
-      </Dialog>
+          {/* TAB 3: Transfers */}
+          <TabsContent value="transfers" className="space-y-4 mt-0">
+            <div className="border rounded-xl bg-card overflow-hidden shadow-sm">
+              <table className="w-full text-xs text-right">
+                <thead className="bg-muted/60 text-muted-foreground">
+                  <tr>
+                    <th className="p-3">رقم المناقلة</th>
+                    <th className="p-3">من موقع</th>
+                    <th className="p-3">إلى موقع</th>
+                    <th className="p-3 text-center">عدد الأصناف</th>
+                    <th className="p-3 text-center">الحالة</th>
+                    <th className="p-3">التاريخ</th>
+                    <th className="p-3 text-center">إجراءات</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {loadingTransfers ? (
+                    <tr>
+                      <td colSpan={7} className="p-8 text-center text-muted-foreground">
+                        جاري تحميل المناقلات...
+                      </td>
+                    </tr>
+                  ) : transfers.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="p-8 text-center text-muted-foreground">
+                        لا توجد مناقلات مسجلة
+                      </td>
+                    </tr>
+                  ) : (
+                    transfers.map((t) => {
+                      const fromName =
+                        locations.find((l) => l.id === (t.fromLocationId || t.fromBranchId))?.name || 'موقع مصدر';
+                      const toName =
+                        locations.find((l) => l.id === (t.toLocationId || t.toBranchId))?.name || 'موقع مستلم';
+
+                      return (
+                        <tr key={t.id} className="hover:bg-muted/20">
+                          <td className="p-3 font-mono font-bold text-foreground">{t.transferNumber}</td>
+                          <td className="p-3 font-medium">{fromName}</td>
+                          <td className="p-3 font-medium">{toName}</td>
+                          <td className="p-3 text-center font-bold">{t.items.length} صنف</td>
+                          <td className="p-3 text-center">
+                            <Badge
+                              variant={
+                                t.status === 'received'
+                                  ? 'default'
+                                  : t.status === 'in_transit'
+                                  ? 'secondary'
+                                  : 'outline'
+                              }
+                              className={
+                                t.status === 'in_transit'
+                                  ? 'bg-amber-500 text-white hover:bg-amber-600'
+                                  : ''
+                              }
+                            >
+                              {t.status === 'draft'
+                                ? 'مسودة'
+                                : t.status === 'requested'
+                                ? 'قيد الاعتماد'
+                                : t.status === 'approved'
+                                ? 'معتمدة للشحن'
+                                : t.status === 'in_transit'
+                                ? 'في الطريق (In-Transit)'
+                                : t.status === 'received'
+                                ? 'تم الاستلام'
+                                : 'ملغاة'}
+                            </Badge>
+                          </td>
+                          <td className="p-3 text-muted-foreground font-mono">
+                            {new Date(t.createdAt).toLocaleDateString('ar-EG')}
+                          </td>
+                          <td className="p-3 text-center">
+                            <div className="flex items-center justify-center gap-1.5">
+                              {t.status === 'requested' && (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-7 text-xs font-bold"
+                                  onClick={async () => {
+                                    const res = await approveTransfer(t.id);
+                                    if (res.success) toast.success('تم اعتماد المناقلة للشحن');
+                                    else toast.error(res.error);
+                                  }}
+                                >
+                                  اعتماد
+                                </Button>
+                              )}
+
+                              {(t.status === 'approved' || t.status === 'draft') && (
+                                <Button
+                                  size="sm"
+                                  className="h-7 text-xs font-bold bg-indigo-600 hover:bg-indigo-700"
+                                  onClick={async () => {
+                                    const res = await dispatchTransfer(t.id);
+                                    if (res.success) toast.success('تم شحن المناقلة وخصم الرصيد بنجاح');
+                                    else toast.error(res.error);
+                                  }}
+                                >
+                                  تنفيذ الشحن
+                                </Button>
+                              )}
+
+                              {t.status === 'in_transit' && (
+                                <Button
+                                  size="sm"
+                                  className="h-7 text-xs font-bold bg-emerald-600 hover:bg-emerald-700"
+                                  onClick={async () => {
+                                    const res = await receiveTransfer(t.id);
+                                    if (res.success) toast.success('تم استلام المناقلة وإضافة الرصيد للموقع');
+                                    else toast.error(res.error);
+                                  }}
+                                >
+                                  تأكيد الاستلام
+                                </Button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </TabsContent>
+
+          {/* TAB 4: Inventory Count Sessions */}
+          <TabsContent value="counts" className="space-y-4 mt-0">
+            <div className="border rounded-xl bg-card overflow-hidden shadow-sm">
+              <table className="w-full text-xs text-right">
+                <thead className="bg-muted/60 text-muted-foreground">
+                  <tr>
+                    <th className="p-3">رقم الجلسة</th>
+                    <th className="p-3">الموقع</th>
+                    <th className="p-3 text-center">عدد الأصناف</th>
+                    <th className="p-3 text-center">إجمالي الفارق المالي</th>
+                    <th className="p-3 text-center">الحالة</th>
+                    <th className="p-3">تاريخ البدء</th>
+                    <th className="p-3 text-center">إجراء</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {sessions.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="p-8 text-center text-muted-foreground">
+                        لا توجد جلسات جرد سابقة في هذا الموقع
+                      </td>
+                    </tr>
+                  ) : (
+                    sessions.map((s) => (
+                      <tr key={s.id} className="hover:bg-muted/20">
+                        <td className="p-3 font-mono font-bold text-foreground">{s.sessionNumber}</td>
+                        <td className="p-3">
+                          {locations.find((l) => l.id === (s.locationId || s.branchId))?.name || 'الموقع الحالي'}
+                        </td>
+                        <td className="p-3 text-center font-bold">{s.items.length} صنف</td>
+                        <td className="p-3 text-center font-mono font-bold">
+                          <span
+                            className={
+                              s.totalDifferenceValue < 0
+                                ? 'text-rose-600'
+                                : s.totalDifferenceValue > 0
+                                ? 'text-emerald-600'
+                                : 'text-muted-foreground'
+                            }
+                          >
+                            {s.totalDifferenceValue.toLocaleString()} ج.م
+                          </span>
+                        </td>
+                        <td className="p-3 text-center">
+                          <Badge variant={s.status === 'posted' ? 'default' : 'secondary'}>
+                            {s.status === 'posted' ? 'مرحّل' : 'قيد الجرد'}
+                          </Badge>
+                        </td>
+                        <td className="p-3 text-muted-foreground font-mono">
+                          {new Date(s.createdAt).toLocaleDateString('ar-EG')}
+                        </td>
+                        <td className="p-3 text-center">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-7 text-xs font-bold"
+                            onClick={() => {
+                              setActiveSession(s);
+                              setIsCountModalOpen(true);
+                            }}
+                          >
+                            {s.status === 'posted' ? 'استعراض' : 'متابعة الجرد'}
+                          </Button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </TabsContent>
+
+          {/* TAB 5: Damage & Loss */}
+          <TabsContent value="damage" className="space-y-4 mt-0">
+            <div className="border rounded-xl bg-card overflow-hidden shadow-sm">
+              <table className="w-full text-xs text-right">
+                <thead className="bg-muted/60 text-muted-foreground">
+                  <tr>
+                    <th className="p-3">الصنف المتضرر</th>
+                    <th className="p-3 text-center">النوع</th>
+                    <th className="p-3 text-center">الكمية</th>
+                    <th className="p-3 text-center">تكلفة التلف</th>
+                    <th className="p-3">السبب والواقعة</th>
+                    <th className="p-3">التاريخ</th>
+                    <th className="p-3 text-center">إجراء استرداد</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {loadingDamage ? (
+                    <tr>
+                      <td colSpan={7} className="p-8 text-center text-muted-foreground">
+                        جاري تحميل سجلات الهالك...
+                      </td>
+                    </tr>
+                  ) : damageRecords.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="p-8 text-center text-muted-foreground">
+                        لا توجد سجلات هالك أو فقد مسجلة
+                      </td>
+                    </tr>
+                  ) : (
+                    damageRecords.map((d) => (
+                      <tr key={d.id} className="hover:bg-muted/20">
+                        <td className="p-3 font-semibold text-foreground">
+                          {d.notes?.split(']')[0]?.replace('[', '') || d.productId}
+                        </td>
+                        <td className="p-3 text-center">
+                          <Badge variant="outline" className="text-rose-600 border-rose-300">
+                            {d.type === 'damaged'
+                              ? 'تالف'
+                              : d.type === 'lost'
+                              ? 'مفقود'
+                              : d.type === 'broken'
+                              ? 'مكسور'
+                              : 'منتهي الصلاحية'}
+                          </Badge>
+                        </td>
+                        <td className="p-3 text-center font-bold text-rose-600">{d.quantity}</td>
+                        <td className="p-3 text-center font-mono font-bold">
+                          {d.totalCostValue.toLocaleString()} ج.م
+                        </td>
+                        <td className="p-3 text-muted-foreground max-w-xs truncate" title={d.reason}>
+                          {d.reason}
+                        </td>
+                        <td className="p-3 text-muted-foreground font-mono">
+                          {new Date(d.createdAt).toLocaleDateString('ar-EG')}
+                        </td>
+                        <td className="p-3 text-center">
+                          {d.type === 'lost' && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-7 text-xs font-bold text-emerald-600 hover:text-emerald-700"
+                              onClick={async () => {
+                                const qtyStr = window.prompt(`أدخل الكمية التي تم استردادها (الحد الأقصى: ${d.quantity}):`, String(d.quantity));
+                                if (!qtyStr) return;
+                                const qty = parseFloat(qtyStr);
+                                if (isNaN(qty) || qty <= 0 || qty > d.quantity) {
+                                  toast.error('كمية غير صالحة');
+                                  return;
+                                }
+                                const res = await recordRecovery(
+                                  d.branchId,
+                                  d.productId,
+                                  d.variantId,
+                                  qty,
+                                  d.unitCost,
+                                  d.id,
+                                  'تم العثور على البضاعة المفقودة'
+                                );
+                                if (res.success) {
+                                  toast.success('تم استرداد البضاعة وإعادتها للمخزون');
+                                } else {
+                                  toast.error(res.error);
+                                }
+                              }}
+                            >
+                              استرداد بعد الفقد
+                            </Button>
+                          )}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </TabsContent>
+        </Tabs>
+
+        {/* DIALOGS */}
+        <StockAdjustmentDialog
+          open={isAdjustmentOpen}
+          onOpenChange={setIsAdjustmentOpen}
+          balanceItem={adjustmentTarget}
+          productName={products.find((p) => p.id === adjustmentTarget?.productId)?.name}
+          onAdjust={adjustStock}
+        />
+
+        <OpeningBalanceDialog
+          open={isOpeningBalanceOpen}
+          onOpenChange={setIsOpeningBalanceOpen}
+          products={products}
+          selectedLocationName={selectedLocObj?.name}
+          onSubmitBalance={addOpeningBalance}
+        />
+
+        <TransferManageDialog
+          open={isTransferOpen}
+          onOpenChange={setIsTransferOpen}
+          locations={locations}
+          currentLocationId={selectedLocationId}
+          products={products}
+          onCreateTransfer={createTransfer}
+        />
+
+        <InventoryCountModal
+          open={isCountModalOpen}
+          onOpenChange={setIsCountModalOpen}
+          session={activeSession}
+          onScanBarcode={scanBarcode}
+          onUpdateQty={updateItemQty}
+          onPostSession={postSession}
+        />
+
+        <DamageLossModal
+          open={isDamageOpen}
+          onOpenChange={setIsDamageOpen}
+          products={products}
+          currentLocationId={selectedLocationId}
+          onRecordDamage={recordDamage}
+        />
+      </div>
     </MainLayout>
   );
 }

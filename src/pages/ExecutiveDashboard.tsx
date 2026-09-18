@@ -315,6 +315,16 @@ export default function ExecutiveDashboard() {
             <RefreshCw className="w-3.5 h-3.5" />
             تحديث
           </Button>
+
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => window.location.href = '/reports'}
+            className="gap-1.5 h-9 bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100"
+          >
+            <BarChart3 className="w-3.5 h-3.5" />
+            مركز ذكاء الأعمال المتقدم (BI)
+          </Button>
         </div>
       }
     >

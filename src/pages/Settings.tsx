@@ -164,6 +164,9 @@ export default function Settings() {
       }
 
       updateSettings(nextSettings);
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('alwan_settings_updated', { detail: nextSettings }));
+      }
 
       // 4. Record in audit_logs
       if (currentTenant?.id) {
@@ -640,47 +643,90 @@ export default function Settings() {
                 <CreditCard className="w-5 h-5" />
                 الضرائب والرسوم
               </CardTitle>
-              <CardDescription>النسب المسجلة لضريبة القيمة المضافة ورسوم الخدمة للمؤسسة</CardDescription>
+              <CardDescription>التحكم في تفعيل ونسب ضريبة القيمة المضافة ورسوم الخدمة للمؤسسة</CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
+              {/* Main Toggles */}
               <div className="grid gap-6 md:grid-cols-2">
-                <div className="space-y-2">
-                  <Label>ضريبة القيمة المضافة (%)</Label>
-                  <Input
-                    type="number"
-                    value={settings.taxRate}
-                    onChange={(e) => updateSettings({ taxRate: Number(e.target.value) })}
-                  />
-                  <p className="text-xs text-muted-foreground">النسبة القانونية الشائعة في مصر: 14%</p>
+                <div className="p-4 border rounded-xl space-y-3 bg-muted/20">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <Label className="font-bold">تفعيل ضريبة القيمة المضافة (VAT)</Label>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        {settings.taxEnabled ? 'الضريبة مفعّلة وسيتم تطبيقها على المبيعات' : 'الضريبة معطلة تماماً ولن يتم فرض أي ضريبة على المبيعات'}
+                      </p>
+                    </div>
+                    <Switch 
+                      checked={Boolean(settings.taxEnabled)}
+                      onCheckedChange={(checked) => updateSettings({ taxEnabled: checked })}
+                    />
+                  </div>
+                  {settings.taxEnabled && (
+                    <div className="pt-2 border-t space-y-2">
+                      <Label className="text-xs">نسبة ضريبة القيمة المضافة (%)</Label>
+                      <Input
+                        type="number"
+                        min="0"
+                        max="100"
+                        value={settings.taxRate}
+                        onChange={(e) => updateSettings({ taxRate: Number(e.target.value) })}
+                      />
+                      <p className="text-[11px] text-muted-foreground">النسبة القانونية الشائعة في مصر: 14%</p>
+                    </div>
+                  )}
                 </div>
-                <div className="space-y-2">
-                  <Label>رسوم الخدمة (%)</Label>
-                  <Input
-                    type="number"
-                    value={settings.serviceChargeRate}
-                    onChange={(e) => updateSettings({ serviceChargeRate: Number(e.target.value) })}
-                  />
-                  <p className="text-xs text-muted-foreground">النسبة الشائعة لطلبات الصالة: 12%</p>
+
+                <div className="p-4 border rounded-xl space-y-3 bg-muted/20">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <Label className="font-bold">تفعيل رسوم الخدمة (Service Charge)</Label>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        {settings.serviceChargeEnabled ? 'رسوم الخدمة مفعّلة' : 'رسوم الخدمة معطلة ولن يتم فرض أي رسوم خدمة'}
+                      </p>
+                    </div>
+                    <Switch 
+                      checked={Boolean(settings.serviceChargeEnabled)}
+                      onCheckedChange={(checked) => updateSettings({ serviceChargeEnabled: checked })}
+                    />
+                  </div>
+                  {settings.serviceChargeEnabled && (
+                    <div className="pt-2 border-t space-y-2">
+                      <Label className="text-xs">نسبة رسوم الخدمة (%)</Label>
+                      <Input
+                        type="number"
+                        min="0"
+                        max="100"
+                        value={settings.serviceChargeRate}
+                        onChange={(e) => updateSettings({ serviceChargeRate: Number(e.target.value) })}
+                      />
+                      <p className="text-[11px] text-muted-foreground">النسبة الشائعة: 12%</p>
+                    </div>
+                  )}
                 </div>
               </div>
+
               <Separator />
+
               <div className="flex items-center justify-between">
                 <div>
-                  <Label>الأسعار شاملة ضريبة القيمة المضافة</Label>
-                  <p className="text-sm text-muted-foreground">أسعار قائمة الطعام المعروضة شاملة للضريبة</p>
+                  <Label>الأسعار المعروضة شاملة ضريبة القيمة المضافة</Label>
+                  <p className="text-sm text-muted-foreground">إذا تم التفعيل، يُعتبر سعر بيع الصنف شاملاً للضريبة دون زيادة السعر على العميل</p>
                 </div>
                 <Switch 
                   checked={settings.taxIncluded}
+                  disabled={!settings.taxEnabled}
                   onCheckedChange={(checked) => updateSettings({ taxIncluded: checked })}
                 />
               </div>
+
               <div className="flex items-center justify-between">
                 <div>
-                  <Label>الأسعار شاملة رسوم الخدمة</Label>
-                  <p className="text-sm text-muted-foreground">أسعار قائمة الطعام المعروضة شاملة لرسوم الخدمة</p>
+                  <Label>الأسعار المعروضة شاملة رسوم الخدمة</Label>
+                  <p className="text-sm text-muted-foreground">إذا تم التفعيل، تُعتبر رسوم الخدمة مستقطعة من السعر المعروض</p>
                 </div>
                 <Switch 
                   checked={settings.serviceChargeIncluded}
+                  disabled={!settings.serviceChargeEnabled}
                   onCheckedChange={(checked) => updateSettings({ serviceChargeIncluded: checked })}
                 />
               </div>

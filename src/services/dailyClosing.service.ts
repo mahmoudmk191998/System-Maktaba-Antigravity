@@ -32,34 +32,55 @@ export async function calculateDailyClosingPreview(
   const startOfDay = new Date(year, month - 1, day, 0, 0, 0, 0);
   const endOfDay = new Date(year, month - 1, day, 23, 59, 59, 999);
 
-  // 1. Fetch Day's Orders
-  const ordersQuery = query(
-    collection(db, 'orders'),
-    where('tenant_id', '==', tenantId),
-    where('branch_id', '==', branchId)
-  );
-  const ordersSnap = await getDocs(ordersQuery);
-  const dayOrders = ordersSnap.docs
+  // 1. Fetch Day's Sales
+  let salesSnap = await getDocs(query(
+    collection(db, 'sales'),
+    where('tenantId', '==', tenantId)
+  ));
+  if (salesSnap.empty) {
+    const fallbackSnap = await getDocs(query(collection(db, 'orders'), where('tenant_id', '==', tenantId)));
+    if (!fallbackSnap.empty) salesSnap = fallbackSnap;
+  }
+
+  const daySales = salesSnap.docs
     .map((d) => ({ id: d.id, ...(d.data() as any) }))
-    .filter((o) => {
-      if (o.status === 'cancelled') return false;
-      if (!o.created_at) return false;
-      const oDate = new Date(o.created_at);
-      return oDate >= startOfDay && oDate <= endOfDay;
+    .filter((s) => {
+      if (branchId && branchId !== 'all' && (s.branchId || s.branch_id) && (s.branchId || s.branch_id) !== branchId) return false;
+      if (s.status === 'cancelled' || s.saleStatus === 'cancelled') return false;
+      const sDateStr = s.createdAt || s.created_at;
+      if (!sDateStr) return false;
+      const sDate = new Date(sDateStr);
+      return sDate >= startOfDay && sDate <= endOfDay;
     });
 
   let salesTotal = 0;
   let cashSales = 0;
   let electronicSales = 0;
+  let totalDiscounts = 0;
 
-  dayOrders.forEach((o) => {
-    const amount = Number(o.total_amount || o.final_amount || o.total || 0);
+  daySales.forEach((s) => {
+    const amount = Number(s.total || s.total_amount || s.final_amount || 0);
+    const disc = Number(s.discountTotal ?? s.discount ?? s.discount_amount ?? 0);
     salesTotal += amount;
-    const method = String(o.payment_method || '').toLowerCase();
-    if (method === 'cash' || method === 'نقدي' || method === 'كاش') {
-      cashSales += amount;
+    totalDiscounts += disc;
+    const payments = s.payments || s.paymentMethods || [];
+    if (payments.length > 0) {
+      payments.forEach((p: any) => {
+        const pMethod = String(p.method || '').toLowerCase();
+        const pAmt = Number(p.amount || 0);
+        if (pMethod === 'cash' || pMethod === 'نقدي' || pMethod === 'كاش') {
+          cashSales += pAmt;
+        } else {
+          electronicSales += pAmt;
+        }
+      });
     } else {
-      electronicSales += amount;
+      const method = String(s.payment_method || '').toLowerCase();
+      if (method === 'cash' || method === 'نقدي' || method === 'كاش') {
+        cashSales += amount;
+      } else {
+        electronicSales += amount;
+      }
     }
   });
 
@@ -95,51 +116,53 @@ export async function calculateDailyClosingPreview(
     .reduce((sum, e) => sum + Number(e.amount || 0), 0);
 
   // 3. Fetch Purchases
-  const purchasesQuery = query(
+  let purchasesSnap = await getDocs(query(
     collection(db, 'purchase_orders'),
-    where('tenant_id', '==', tenantId),
-    where('branch_id', '==', branchId)
-  );
-  const purchasesSnap = await getDocs(purchasesQuery);
+    where('tenantId', '==', tenantId)
+  ));
+  if (purchasesSnap.empty) {
+    purchasesSnap = await getDocs(query(collection(db, 'purchase_orders'), where('tenant_id', '==', tenantId)));
+  }
   const dayPurchases = purchasesSnap.docs
     .map((d) => ({ id: d.id, ...(d.data() as any) }))
     .filter((p) => {
+      if (branchId && branchId !== 'all' && (p.branchId || p.branch_id) && (p.branchId || p.branch_id) !== branchId) return false;
       if (p.status === 'cancelled') return false;
-      if (!p.created_at) return false;
-      const pDate = new Date(p.created_at);
+      const pDateStr = p.createdAt || p.created_at;
+      if (!pDateStr) return false;
+      const pDate = new Date(pDateStr);
       return pDate >= startOfDay && pDate <= endOfDay;
     });
 
-  const purchasesTotal = dayPurchases.reduce((sum, p) => sum + Number(p.total_amount || 0), 0);
+  const purchasesTotal = dayPurchases.reduce((sum, p) => sum + Number(p.totalAmount || p.total_amount || p.total || 0), 0);
   const purchasesCash = dayPurchases
-    .filter((p) => String(p.payment_type || '').toLowerCase() === 'cash')
-    .reduce((sum, p) => sum + Number(p.paid_amount || 0), 0);
+    .filter((p) => String(p.paymentType || p.payment_type || '').toLowerCase() === 'cash')
+    .reduce((sum, p) => sum + Number(p.paidAmount || p.paid_amount || 0), 0);
 
   // 4. Fetch Waste Cost
-  const inventoryItemsSnap = await getDocs(query(collection(db, 'inventory_items'), where('tenant_id', '==', tenantId)));
-  const costMap = new Map<string, number>();
-  inventoryItemsSnap.docs.forEach((d) => {
-    costMap.set(d.id, Number((d.data() as any).cost_per_unit || 0));
-  });
-
-  const movementsQuery = query(
+  let movementsSnap = await getDocs(query(
     collection(db, 'stock_movements'),
-    where('tenant_id', '==', tenantId),
-    where('branch_id', '==', branchId)
-  );
-  const movementsSnap = await getDocs(movementsQuery);
+    where('tenantId', '==', tenantId)
+  ));
+  if (movementsSnap.empty) {
+    movementsSnap = await getDocs(query(collection(db, 'stock_movements'), where('tenant_id', '==', tenantId)));
+  }
   const dayWaste = movementsSnap.docs
     .map((d) => ({ id: d.id, ...(d.data() as any) }))
     .filter((m) => {
-      if (m.movement_type !== 'waste') return false;
-      if (!m.created_at) return false;
-      const mDate = new Date(m.created_at);
+      if (branchId && branchId !== 'all' && (m.branchId || m.branch_id) && (m.branchId || m.branch_id) !== branchId) return false;
+      const isWaste = m.movementType === 'waste' || m.movement_type === 'waste';
+      if (!isWaste) return false;
+      const mDateStr = m.createdAt || m.created_at;
+      if (!mDateStr) return false;
+      const mDate = new Date(mDateStr);
       return mDate >= startOfDay && mDate <= endOfDay;
     });
 
   const wasteCost = dayWaste.reduce((sum, m) => {
-    const uCost = costMap.get(m.item_id) || 0;
-    return sum + Math.abs(Number(m.quantity || 0)) * uCost;
+    const unitCost = Number(m.unitCostSnapshot || m.unit_cost || m.averageCost || 0);
+    const qty = Math.abs(Number(m.quantity || m.baseQuantity || 0));
+    return sum + (qty * unitCost);
   }, 0);
 
   // 5. Opening Cash
@@ -178,6 +201,7 @@ export async function calculateDailyClosingPreview(
     cashSales,
     electronicSales,
     ordersCount: dayOrders.length,
+    totalDiscounts,
     operatingExpenses,
     cashOutflows,
     salaryPaymentsCash,
@@ -244,6 +268,7 @@ export async function createDailyClosing(
       cashSalesSnapshot: preview.cashSales,
       electronicSalesSnapshot: preview.electronicSales,
       ordersCountSnapshot: preview.ordersCount,
+      discountsSnapshot: preview.totalDiscounts || 0,
       operatingExpensesSnapshot: preview.operatingExpenses,
       cashOutflowsSnapshot: preview.cashOutflows,
       salaryPaymentsSnapshot: preview.salaryPaymentsCash,

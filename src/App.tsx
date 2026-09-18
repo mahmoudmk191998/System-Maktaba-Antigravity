@@ -18,15 +18,12 @@ import { ErrorBoundary } from "@/components/common/ErrorBoundary";
 const Auth = lazy(() => import("./pages/Auth"));
 const Dashboard = lazy(() => import("./pages/Dashboard"));
 const POS = lazy(() => import("./pages/POS"));
-const KitchenDisplay = lazy(() => import("./pages/KitchenDisplay"));
 const OrdersHistory = lazy(() => import("./pages/OrdersHistory"));
-const TablesReservations = lazy(() => import("./pages/TablesReservations"));
-const MenuManagement = lazy(() => import("./pages/MenuManagement"));
+const Products = lazy(() => import("./pages/Products"));
 const Inventory = lazy(() => import("./pages/Inventory"));
 const Purchasing = lazy(() => import("./pages/Purchasing"));
-const Production = lazy(() => import("./pages/Production"));
-const Delivery = lazy(() => import("./pages/Delivery"));
 const Customers = lazy(() => import("./pages/Customers"));
+const Receivables = lazy(() => import("./pages/Receivables"));
 const Promotions = lazy(() => import("./pages/Promotions"));
 const HR = lazy(() => import("./pages/HR"));
 const Reports = lazy(() => import("./pages/Reports"));
@@ -43,11 +40,14 @@ const WasteManagement = lazy(() => import("./pages/WasteManagement"));
 const Shifts = lazy(() => import("./pages/Shifts"));
 const Maintenance = lazy(() => import("./pages/Maintenance"));
 const Accounting = lazy(() => import("./pages/Accounting"));
-const CallCenter = lazy(() => import("./pages/CallCenter"));
 const AttendancePublic = lazy(() => import("./pages/AttendancePublic"));
 const NotificationsHistory = lazy(() => import("./pages/NotificationsHistory"));
 const ExecutiveDashboard = lazy(() => import("./pages/ExecutiveDashboard"));
 const Backup = lazy(() => import("./pages/Backup"));
+const SalesReturns = lazy(() => import("./pages/SalesReturns"));
+const Approvals = lazy(() => import("./pages/Approvals"));
+const DataCenter = lazy(() => import("./pages/DataCenter"));
+const SystemHealth = lazy(() => import("./pages/SystemHealth"));
 
 const queryClient = new QueryClient();
 
@@ -131,15 +131,20 @@ function AppRoutes() {
         <Route path="/attendance" element={<AttendancePublic />} />
         <Route path="/" element={<ProtectedRoute requiredPerms={['dashboard.view']}><Dashboard /></ProtectedRoute>} />
         <Route path="/pos" element={<ProtectedRoute requiredPerms={['pos.view']}><POS /></ProtectedRoute>} />
-        <Route path="/orders-history" element={<ProtectedRoute requiredPerms={['pos.view']}><OrdersHistory /></ProtectedRoute>} />
-        <Route path="/kitchen" element={<ProtectedRoute requiredPerms={['kitchen.view']}><KitchenDisplay /></ProtectedRoute>} />
-        <Route path="/tables" element={<ProtectedRoute requiredPerms={['tables.view']}><TablesReservations /></ProtectedRoute>} />
-        <Route path="/menu" element={<ProtectedRoute requiredPerms={['menu.view']}><MenuManagement /></ProtectedRoute>} />
+        <Route path="/orders-history" element={<ProtectedRoute requiredPerms={['pos.view', 'sales.view']}><OrdersHistory /></ProtectedRoute>} />
+        <Route path="/orders" element={<Navigate to="/orders-history" replace />} />
+        <Route path="/returns" element={<ProtectedRoute requiredPerms={['returns.view', 'sales.view', 'pos.view']}><SalesReturns /></ProtectedRoute>} />
+        <Route path="/sales" element={<ProtectedRoute requiredPerms={['pos.view', 'sales.view']}><OrdersHistory /></ProtectedRoute>} />
+        <Route path="/kitchen" element={<Navigate to="/" replace />} />
+        <Route path="/tables" element={<Navigate to="/inventory" replace />} />
+        <Route path="/products" element={<ProtectedRoute requiredPerms={['products.view', 'menu.view']}><Products /></ProtectedRoute>} />
+        <Route path="/menu" element={<Navigate to="/products" replace />} />
         <Route path="/inventory" element={<ProtectedRoute requiredPerms={['inventory.view']}><Inventory /></ProtectedRoute>} />
         <Route path="/purchasing" element={<ProtectedRoute requiredPerms={['purchasing.view']}><Purchasing /></ProtectedRoute>} />
-        <Route path="/production" element={<ProtectedRoute requiredPerms={['production.view']}><Production /></ProtectedRoute>} />
-        <Route path="/delivery" element={<ProtectedRoute requiredPerms={['delivery.view']}><Delivery /></ProtectedRoute>} />
+        <Route path="/production" element={<Navigate to="/inventory" replace />} />
+        <Route path="/delivery" element={<Navigate to="/pos" replace />} />
         <Route path="/customers" element={<ProtectedRoute requiredPerms={['customers.view']}><Customers /></ProtectedRoute>} />
+        <Route path="/receivables" element={<ProtectedRoute requiredPerms={['customers.view']}><Receivables /></ProtectedRoute>} />
         <Route path="/promotions" element={<ProtectedRoute requiredPerms={['promotions.view']}><Promotions /></ProtectedRoute>} />
         <Route path="/hr" element={<ProtectedRoute requiredPerms={['hr.view_employees']}><HR /></ProtectedRoute>} />
         <Route path="/reports" element={<ProtectedRoute requiredPerms={['reports.view']}><Reports /></ProtectedRoute>} />
@@ -158,7 +163,10 @@ function AppRoutes() {
         <Route path="/accounting" element={<ProtectedRoute requiredPerms={['accounting.view']}><Accounting /></ProtectedRoute>} />
         <Route path="/executive" element={<ProtectedRoute requiredPerms={['financial_dashboard.view', 'reports.view', 'accounting.view']}><ExecutiveDashboard /></ProtectedRoute>} />
         <Route path="/backup" element={<ProtectedRoute requiredPerms={['backup.view', 'settings.manage']}><Backup /></ProtectedRoute>} />
-        <Route path="/callcenter" element={<ProtectedRoute requiredPerms={['callcenter.view']}><CallCenter /></ProtectedRoute>} />
+        <Route path="/approvals" element={<ProtectedRoute requiredPerms={['approvals.view', 'governance.view']}><Approvals /></ProtectedRoute>} />
+        <Route path="/datacenter" element={<ProtectedRoute requiredPerms={['datacenter.view', 'settings.manage']}><DataCenter /></ProtectedRoute>} />
+        <Route path="/system-health" element={<ProtectedRoute requiredPerms={['system_health.view', 'settings.manage', 'accounting.view']}><SystemHealth /></ProtectedRoute>} />
+        <Route path="/callcenter" element={<Navigate to="/pos" replace />} />
         <Route path="/notifications" element={<ProtectedRoute><NotificationsHistory /></ProtectedRoute>} />
         <Route path="/payroll" element={<Navigate to="/hr?tab=reports" replace />} />
         <Route path="/advances" element={<Navigate to="/hr?tab=reports&section=advances" replace />} />

@@ -38,7 +38,9 @@ export interface AppSettings {
   currency: string;
   locale: string;
   timezone: string;
+  taxEnabled: boolean;
   taxRate: number;
+  serviceChargeEnabled: boolean;
   serviceChargeRate: number;
 
   // POS Settings
@@ -179,14 +181,16 @@ export const useAppStore = create<AppState>()(
         currency: 'EGP',
         locale: 'ar-EG',
         timezone: 'Africa/Cairo',
+        taxEnabled: false,
         taxRate: 14,
+        serviceChargeEnabled: false,
         serviceChargeRate: 12,
 
         autoPrintReceipt: true,
-        printKitchenTicket: true,
+        printKitchenTicket: false,
         openDrawerPassword: "",
-        receiptWelcomeMessage: "شكراً لزيارتكم - نتمنى لكم وجبة شهية",
-        invoiceCompanyName: "مطعم الكرم",
+        receiptWelcomeMessage: "شكراً لزيارتكم - نسعد بخدمتكم دائماً",
+        invoiceCompanyName: "مكتبة ألوان التجارية",
         invoiceAddress: "القاهرة، مصر",
         invoicePhone: "01000000000",
         invoiceTaxNumber: "",

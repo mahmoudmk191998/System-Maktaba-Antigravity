@@ -112,38 +112,60 @@ export async function fetchExecutiveFinancialMetrics(
   const { start, end } = getDateBounds(dateRange, customStart, customEnd);
   const isAllBranches = !branchId || branchId === 'all';
 
-  // 1. Fetch Orders (Sales Source of Truth)
-  const ordersConstraints: any[] = [where('tenant_id', '==', tenantId)];
+  // 1. Fetch Sales (Retail Sales Source of Truth)
+  const salesConstraints: any[] = [where('tenantId', '==', tenantId)];
   if (!isAllBranches) {
-    ordersConstraints.push(where('branch_id', '==', branchId));
+    salesConstraints.push(where('branchId', '==', branchId));
   }
-  const ordersSnap = await getDocs(query(collection(db, 'orders'), ...ordersConstraints));
-  const rawOrders = ordersSnap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
+  let salesSnap = await getDocs(query(collection(db, 'sales'), ...salesConstraints));
+  if (salesSnap.empty) {
+    // Fallback to legacy orders or tenant_id if sales collection is not populated
+    const fallbackSnap = await getDocs(query(collection(db, 'orders'), where('tenant_id', '==', tenantId)));
+    if (!fallbackSnap.empty) {
+      salesSnap = fallbackSnap;
+    }
+  }
+  const rawSales = salesSnap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
 
-  // Filter valid completed/paid orders within date bounds
-  const validOrders = rawOrders.filter((o) => {
-    if (!o.created_at) return false;
-    if (o.status === 'cancelled') return false;
-    const oDate = new Date(o.created_at);
-    return oDate >= start && oDate <= end;
+  // Filter valid completed/paid sales within date bounds
+  const validSales = rawSales.filter((s) => {
+    const sDateStr = s.createdAt || s.created_at;
+    if (!sDateStr) return false;
+    if (s.status === 'cancelled' || s.saleStatus === 'cancelled') return false;
+    const sDate = new Date(sDateStr);
+    return sDate >= start && sDate <= end;
   });
 
   let totalSales = 0;
   let cashSales = 0;
   let electronicSales = 0;
 
-  validOrders.forEach((o) => {
-    const amount = Number(o.total_amount || o.final_amount || o.total || 0);
+  validSales.forEach((s) => {
+    const amount = Number(s.total || s.total_amount || s.final_amount || 0);
     totalSales += amount;
-    const method = String(o.payment_method || '').toLowerCase();
-    if (method === 'cash' || method === 'نقدي' || method === 'كاش') {
-      cashSales += amount;
+
+    const payments = s.payments || s.paymentMethods || [];
+    if (payments.length > 0) {
+      payments.forEach((p: any) => {
+        const pMethod = String(p.method || '').toLowerCase();
+        const pAmt = Number(p.amount || 0);
+        if (pMethod === 'cash' || pMethod === 'نقدي' || pMethod === 'كاش') {
+          cashSales += pAmt;
+        } else {
+          electronicSales += pAmt;
+        }
+      });
     } else {
-      electronicSales += amount;
+      const method = String(s.payment_method || '').toLowerCase();
+      if (method === 'cash' || method === 'نقدي' || method === 'كاش') {
+        cashSales += amount;
+      } else {
+        electronicSales += amount;
+      }
     }
   });
 
-  const ordersCount = validOrders.length;
+  const ordersCount = validSales.length;
   const averageTicket = ordersCount > 0 ? Math.round(totalSales / ordersCount) : 0;
 
   // 2. Fetch Expenses (Expenses & Cash Outflows Source of Truth)
@@ -217,55 +239,60 @@ export async function fetchExecutiveFinancialMetrics(
   const payrollRemaining = rawPayroll.reduce((sum, p) => sum + Number(p.remaining || 0), 0);
 
   // 5. Fetch Purchases & Suppliers
-  const purchasesConstraints: any[] = [where('tenant_id', '==', tenantId)];
+  const purchasesConstraints: any[] = [where('tenantId', '==', tenantId)];
   if (!isAllBranches) {
-    purchasesConstraints.push(where('branch_id', '==', branchId));
+    purchasesConstraints.push(where('branchId', '==', branchId));
   }
-  const purchasesSnap = await getDocs(query(collection(db, 'purchase_orders'), ...purchasesConstraints));
+  let purchasesSnap = await getDocs(query(collection(db, 'purchase_orders'), ...purchasesConstraints));
+  if (purchasesSnap.empty) {
+    purchasesSnap = await getDocs(query(collection(db, 'purchase_orders'), where('tenant_id', '==', tenantId)));
+  }
   const rawPurchases = purchasesSnap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
 
   const periodPurchases = rawPurchases.filter((p) => {
     if (p.status === 'cancelled') return false;
-    if (!p.created_at) return false;
-    const pDate = new Date(p.created_at);
+    const pDateStr = p.createdAt || p.created_at;
+    if (!pDateStr) return false;
+    const pDate = new Date(pDateStr);
     return pDate >= start && pDate <= end;
   });
 
-  const purchasesTotal = periodPurchases.reduce((sum, p) => sum + Number(p.total_amount || 0), 0);
-  const purchasesPaid = periodPurchases.reduce((sum, p) => sum + Number(p.paid_amount || 0), 0);
+  const purchasesTotal = periodPurchases.reduce((sum, p) => sum + Number(p.totalAmount || p.total_amount || p.total || 0), 0);
+  const purchasesPaid = periodPurchases.reduce((sum, p) => sum + Number(p.paidAmount || p.paid_amount || 0), 0);
   const purchasesUnpaid = Math.max(0, purchasesTotal - purchasesPaid);
 
   // Fetch Suppliers Outstanding Balances
-  const suppliersSnap = await getDocs(query(collection(db, 'suppliers'), where('tenant_id', '==', tenantId)));
-  const rawSuppliers = suppliersSnap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
-  const supplierBalancesTotal = rawSuppliers.reduce((sum, s) => sum + Number(s.current_balance || 0), 0);
-
-  // 6. Fetch Waste (from stock_movements where movement_type === 'waste')
-  const inventoryItemsSnap = await getDocs(query(collection(db, 'inventory_items'), where('tenant_id', '==', tenantId)));
-  const itemCostMap = new Map<string, number>();
-  inventoryItemsSnap.docs.forEach((d) => {
-    const data = d.data() as any;
-    itemCostMap.set(d.id, Number(data.cost_per_unit || 0));
-  });
-
-  const wasteConstraints: any[] = [where('tenant_id', '==', tenantId)];
-  if (!isAllBranches) {
-    wasteConstraints.push(where('branch_id', '==', branchId));
+  let suppliersSnap = await getDocs(query(collection(db, 'suppliers'), where('tenantId', '==', tenantId)));
+  if (suppliersSnap.empty) {
+    suppliersSnap = await getDocs(query(collection(db, 'suppliers'), where('tenant_id', '==', tenantId)));
   }
-  const movementsSnap = await getDocs(query(collection(db, 'stock_movements'), ...wasteConstraints));
+  const rawSuppliers = suppliersSnap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
+  const supplierBalancesTotal = rawSuppliers.reduce((sum, s) => sum + Number(s.currentBalance ?? s.current_balance ?? 0), 0);
+
+  // 6. Fetch Waste (from stock_movements where movementType === 'waste')
+  const wasteConstraints: any[] = [where('tenantId', '==', tenantId)];
+  if (!isAllBranches) {
+    wasteConstraints.push(where('branchId', '==', branchId));
+  }
+  let movementsSnap = await getDocs(query(collection(db, 'stock_movements'), ...wasteConstraints));
+  if (movementsSnap.empty) {
+    movementsSnap = await getDocs(query(collection(db, 'stock_movements'), where('tenant_id', '==', tenantId)));
+  }
   const rawMovements = movementsSnap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
 
   const periodWasteMovements = rawMovements.filter((m) => {
-    if (m.movement_type !== 'waste') return false;
-    if (!m.created_at) return false;
-    const mDate = new Date(m.created_at);
+    const isWaste = m.movementType === 'waste' || m.movement_type === 'waste';
+    if (!isWaste) return false;
+    const mDateStr = m.createdAt || m.created_at;
+    if (!mDateStr) return false;
+    const mDate = new Date(mDateStr);
     return mDate >= start && mDate <= end;
   });
 
   const wasteCost = periodWasteMovements.reduce((sum, m) => {
-    const unitCost = itemCostMap.get(m.item_id) || 0;
-    const qty = Math.abs(Number(m.quantity || 0));
-    return sum + qty * unitCost;
+    const unitCost = Number(m.unitCostSnapshot || m.unit_cost || m.averageCost || 0);
+    const qty = Math.abs(Number(m.quantity || m.baseQuantity || 0));
+    return sum + (qty * unitCost);
   }, 0);
 
   // 7. Calculate Operating Result (صافي الحركة التشغيلية)
@@ -291,14 +318,23 @@ export async function fetchExecutiveFinancialMetrics(
   // 9. Timeline Data for Trend Charts
   const dailyMap = new Map<string, { sales: number; cashSales: number; cashOutflows: number; operatingExpenses: number }>();
 
-  // Aggregate orders by day
-  validOrders.forEach((o) => {
-    const dStr = new Date(o.created_at).toLocaleDateString('ar-EG', { month: 'short', day: 'numeric' });
+  // Aggregate sales by day
+  validSales.forEach((s) => {
+    const sDateStr = s.createdAt || s.created_at;
+    const dStr = new Date(sDateStr).toLocaleDateString('ar-EG', { month: 'short', day: 'numeric' });
     const cur = dailyMap.get(dStr) || { sales: 0, cashSales: 0, cashOutflows: 0, operatingExpenses: 0 };
-    const amount = Number(o.total_amount || o.final_amount || o.total || 0);
+    const amount = Number(s.total || s.total_amount || 0);
     cur.sales += amount;
-    const method = String(o.payment_method || '').toLowerCase();
-    if (method === 'cash' || method === 'نقدي' || method === 'كاش') {
+
+    const payments = s.payments || s.paymentMethods || [];
+    let isCash = false;
+    if (payments.length > 0) {
+      isCash = payments.some((p: any) => String(p.method || '').toLowerCase() === 'cash');
+    } else {
+      const method = String(s.payment_method || '').toLowerCase();
+      isCash = (method === 'cash' || method === 'نقدي' || method === 'كاش');
+    }
+    if (isCash) {
       cur.cashSales += amount;
     }
     dailyMap.set(dStr, cur);

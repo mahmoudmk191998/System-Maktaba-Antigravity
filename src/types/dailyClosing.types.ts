@@ -14,6 +14,7 @@ export interface DailyClosing {
   cashSalesSnapshot: number;
   electronicSalesSnapshot: number;
   ordersCountSnapshot: number;
+  discountsSnapshot?: number;
 
   // Outflows & Operational Snapshots
   operatingExpensesSnapshot: number;
@@ -54,6 +55,7 @@ export interface DailyClosingPreview {
   cashSales: number;
   electronicSales: number;
   ordersCount: number;
+  totalDiscounts?: number;
 
   operatingExpenses: number;
   cashOutflows: number;

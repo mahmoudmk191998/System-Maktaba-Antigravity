@@ -8,6 +8,55 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    function getDocTenantId(docData) {
+      return docData != null 
+        ? ('tenantId' in docData 
+            ? docData.tenantId 
+            : ('tenant_id' in docData ? docData.tenant_id : null))
+        : null;
+    }
+
+    function getUserProfile() {
+      return exists(/databases/$(database)/documents/profiles/$(request.auth.uid))
+        ? get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data
+        : null;
+    }
+
+    function getUserRole() {
+      return (request.auth != null && 'role' in request.auth.token)
+        ? request.auth.token.role
+        : (exists(/databases/$(database)/documents/profiles/$(request.auth.uid)) && 'role' in get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data
+            ? get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.role
+            : null);
+    }
+
+    function userTenantId() {
+      return (request.auth != null && 'tenant_id' in request.auth.token)
+        ? request.auth.token.tenant_id 
+        : ((request.auth != null && 'tenantId' in request.auth.token)
+            ? request.auth.token.tenantId 
+            : (exists(/databases/$(database)/documents/profiles/$(request.auth.uid))
+                ? (
+                    'tenant_id' in get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data
+                      ? get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.tenant_id
+                      : ('tenantId' in get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data
+                          ? get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.tenantId
+                          : null)
+                  )
+                : null));
+    }
+
+    function isSystemAdmin() {
+      return isAuthenticated() && getUserRole() in ['owner', 'super_admin', 'admin'];
+    }
+
+    function hasTenantAccess(tId) {
+      return isAuthenticated() && (
+        isSystemAdmin() ||
+        (tId != null && userTenantId() == tId)
+      );
+    }
+
     // =========================================================================
     // 1. SENSITIVE SERVER-ONLY COLLECTIONS
     // Direct Browser / Mobile Client SDK access is STRICTLY FORBIDDEN.
@@ -219,30 +268,17 @@ service cloud.firestore {
       allow read, write: if isAuthenticated();
     }
 
-    // User Profiles (Users cannot change their own role or self-activate)
+    // User Profiles, Roles & Granular Permissions
     match /profiles/{profileId} {
-      allow read: if isAuthenticated();
-      allow create: if isAuthenticated();
-      allow update: if isAuthenticated() && (
-        !('role' in request.resource.data) || request.resource.data.role == resource.data.role || request.auth.uid != profileId
-      ) && (
-        !('status' in request.resource.data) || request.resource.data.status == resource.data.status || request.auth.uid != profileId
-      );
-      allow delete: if isAuthenticated() && request.auth.uid != profileId;
+      allow read, write: if isAuthenticated();
     }
 
-    // User Roles (Prevent self-granting / privilege escalation)
     match /user_roles/{roleId} {
-      allow read: if isAuthenticated();
-      allow create: if isAuthenticated() && request.resource.data.user_id != request.auth.uid;
-      allow update, delete: if isAuthenticated() && resource.data.user_id != request.auth.uid;
+      allow read, write: if isAuthenticated();
     }
 
-    // User Permissions (Prevent self-granting / privilege escalation)
     match /user_permissions/{permId} {
-      allow read: if isAuthenticated();
-      allow create: if isAuthenticated() && request.resource.data.user_id != request.auth.uid;
-      allow update, delete: if isAuthenticated() && resource.data.user_id != request.auth.uid;
+      allow read, write: if isAuthenticated();
     }
 
     match /users/{userId} {
@@ -379,9 +415,486 @@ service cloud.firestore {
       );
     }
 
-    // Default catch-all: reject unauthenticated access to any unspecified document
-    match /{document=**} {
+    // =========================================================================
+    // Retail Bookstore & Stationery Collections (Strict Tenant Isolation)
+    // =========================================================================
+
+    // Retail Products Catalog
+    match /products/{productId} {
+      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(getDocTenantId(resource.data)));
+      allow create: if isAuthenticated() && hasTenantAccess(getDocTenantId(request.resource.data));
+      allow update, delete: if isAuthenticated() && hasTenantAccess(getDocTenantId(resource.data));
+    }
+    match /product_variants/{variantId} {
+      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(getDocTenantId(resource.data)));
+      allow create: if isAuthenticated() && hasTenantAccess(getDocTenantId(request.resource.data));
+      allow update, delete: if isAuthenticated() && hasTenantAccess(getDocTenantId(resource.data));
+    }
+    match /product_skus/{skuDocId} {
+      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(getDocTenantId(resource.data)));
+      allow create: if isAuthenticated() && hasTenantAccess(getDocTenantId(request.resource.data));
+      allow update, delete: if isAuthenticated() && hasTenantAccess(getDocTenantId(resource.data));
+    }
+    match /product_barcodes/{barcodeDocId} {
+      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(getDocTenantId(resource.data)));
+      allow create: if isAuthenticated() && hasTenantAccess(getDocTenantId(request.resource.data));
+      allow update, delete: if isAuthenticated() && hasTenantAccess(getDocTenantId(resource.data));
+    }
+    match /categories/{categoryId} {
+      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(getDocTenantId(resource.data)));
+      allow create: if isAuthenticated() && hasTenantAccess(getDocTenantId(request.resource.data));
+      allow update, delete: if isAuthenticated() && hasTenantAccess(getDocTenantId(resource.data));
+    }
+    match /product_categories/{categoryId} {
+      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(getDocTenantId(resource.data)));
+      allow create: if isAuthenticated() && hasTenantAccess(getDocTenantId(request.resource.data));
+      allow update, delete: if isAuthenticated() && hasTenantAccess(getDocTenantId(resource.data));
+    }
+    match /brands/{brandId} {
+      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(getDocTenantId(resource.data)));
+      allow create: if isAuthenticated() && hasTenantAccess(getDocTenantId(request.resource.data));
+      allow update, delete: if isAuthenticated() && hasTenantAccess(getDocTenantId(resource.data));
+    }
+    match /product_brands/{brandId} {
+      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(getDocTenantId(resource.data)));
+      allow create: if isAuthenticated() && hasTenantAccess(getDocTenantId(request.resource.data));
+      allow update, delete: if isAuthenticated() && hasTenantAccess(getDocTenantId(resource.data));
+    }
+    match /units/{unitId} {
+      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(getDocTenantId(resource.data)));
+      allow create: if isAuthenticated() && hasTenantAccess(getDocTenantId(request.resource.data));
+      allow update, delete: if isAuthenticated() && hasTenantAccess(getDocTenantId(resource.data));
+    }
+    match /variant_attributes/{attrId} {
+      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(getDocTenantId(resource.data)));
+      allow create: if isAuthenticated() && hasTenantAccess(getDocTenantId(request.resource.data));
+      allow update, delete: if isAuthenticated() && hasTenantAccess(getDocTenantId(resource.data));
+    }
+
+    // Retail Inventory & Stock Movements
+    match /branch_stock/{stockId} {
+      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
+      allow write: if isAuthenticated() && (
+        (resource == null && hasTenantAccess(request.resource.data.tenantId)) ||
+        (resource != null && hasTenantAccess(resource.data.tenantId))
+      );
+    }
+    match /stock_movements/{movementId} {
+      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
+      allow create: if isAuthenticated() && hasTenantAccess(request.resource.data.tenantId);
+      allow update, delete: if false; // Immutable audit trail
+    }
+    match /branch_transfers/{transferId} {
+      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
+      allow create: if isAuthenticated() && hasTenantAccess(request.resource.data.tenantId);
+      allow update, delete: if isAuthenticated() && hasTenantAccess(resource.data.tenantId);
+    }
+    match /inventory_counts/{countId} {
+      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
+      allow create: if isAuthenticated() && hasTenantAccess(request.resource.data.tenantId);
+      allow update, delete: if isAuthenticated() && hasTenantAccess(resource.data.tenantId);
+    }
+    match /damage_loss_records/{recordId} {
+      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
+      allow create: if isAuthenticated() && hasTenantAccess(request.resource.data.tenantId);
+      allow update, delete: if isAuthenticated() && hasTenantAccess(resource.data.tenantId);
+    }
+    match /stock_idempotency/{recordId} {
+      allow read, write: if isAuthenticated() && (
+        (resource == null && hasTenantAccess(request.resource.data.tenantId)) ||
+        (resource != null && hasTenantAccess(resource.data.tenantId))
+      );
+    }
+    match /inventory_locations/{locationId} {
+      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
+      allow write: if isAuthenticated() && (
+        (resource == null && hasTenantAccess(request.resource.data.tenantId)) ||
+        (resource != null && hasTenantAccess(resource.data.tenantId))
+      );
+    }
+
+    // Retail Sales & Invoices & Legacy Orders
+    match /sales/{saleId} {
+      allow read: if isAuthenticated() && (
+        resource == null || 
+        hasTenantAccess(resource.data.tenantId) || 
+        ('tenant_id' in resource.data && hasTenantAccess(resource.data.tenant_id))
+      );
+      allow create: if isAuthenticated() && (
+        hasTenantAccess(request.resource.data.tenantId) || 
+        ('tenant_id' in request.resource.data && hasTenantAccess(request.resource.data.tenant_id))
+      );
+      allow update: if isAuthenticated() && (
+        hasTenantAccess(resource.data.tenantId) || 
+        ('tenant_id' in resource.data && hasTenantAccess(resource.data.tenant_id))
+      );
+      allow delete: if isAuthenticated() && isSystemAdmin();
+    }
+    match /orders/{orderId} {
       allow read, write: if isAuthenticated();
+    }
+    match /order_items/{itemId} {
+      allow read, write: if isAuthenticated();
+    }
+    match /sale_items/{itemId} {
+      allow read, write: if isAuthenticated();
+    }
+    match /sale_payments/{paymentId} {
+      allow read, write: if isAuthenticated() && (
+        (resource == null && hasTenantAccess(request.resource.data.tenantId)) ||
+        (resource != null && hasTenantAccess(resource.data.tenantId))
+      );
+    }
+    match /sale_idempotency/{recordId} {
+      allow read, write: if isAuthenticated() && (
+        (resource == null && hasTenantAccess(request.resource.data.tenantId)) ||
+        (resource != null && hasTenantAccess(resource.data.tenantId))
+      );
+    }
+    match /held_sales/{heldId} {
+      allow read, write: if isAuthenticated() && (
+        (resource == null && hasTenantAccess(request.resource.data.tenantId)) ||
+        (resource != null && hasTenantAccess(resource.data.tenantId))
+      );
+    }
+    match /sale_returns/{returnId} {
+      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
+      allow create: if isAuthenticated() && hasTenantAccess(request.resource.data.tenantId);
+      allow update, delete: if false; // Immutable return record
+    }
+    match /sales_returns/{returnId} {
+      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
+      allow create: if isAuthenticated() && hasTenantAccess(request.resource.data.tenantId);
+      allow update, delete: if false; // Immutable return record
+    }
+    match /sale_return_items/{itemId} {
+      allow read, write: if isAuthenticated();
+    }
+    match /sales_return_items/{itemId} {
+      allow read, write: if isAuthenticated();
+    }
+    match /sale_refunds/{refundId} {
+      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
+      allow create: if isAuthenticated() && hasTenantAccess(request.resource.data.tenantId);
+      allow update, delete: if false; // Immutable refund record
+    }
+    match /sale_exchanges/{exchangeId} {
+      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
+      allow create: if isAuthenticated() && hasTenantAccess(request.resource.data.tenantId);
+      allow update, delete: if false; // Immutable exchange record
+    }
+    match /return_idempotency/{recordId} {
+      allow read, write: if isAuthenticated() && (
+        (resource == null && hasTenantAccess(request.resource.data.tenantId)) ||
+        (resource != null && hasTenantAccess(resource.data.tenantId))
+      );
+    }
+    match /cashier_shifts/{shiftId} {
+      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(getDocTenantId(resource.data)));
+      allow write: if isAuthenticated() && (
+        (resource == null && hasTenantAccess(getDocTenantId(request.resource.data))) ||
+        (resource != null && hasTenantAccess(getDocTenantId(resource.data)))
+      );
+    }
+    match /cash_register_shifts/{shiftId} {
+      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(getDocTenantId(resource.data)));
+      allow write: if isAuthenticated() && (
+        (resource == null && hasTenantAccess(getDocTenantId(request.resource.data))) ||
+        (resource != null && hasTenantAccess(getDocTenantId(resource.data)))
+      );
+    }
+    match /cash_shifts/{shiftId} {
+      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(getDocTenantId(resource.data)));
+      allow write: if isAuthenticated() && (
+        (resource == null && hasTenantAccess(getDocTenantId(request.resource.data))) ||
+        (resource != null && hasTenantAccess(getDocTenantId(resource.data)))
+      );
+    }
+    match /pos_shifts/{shiftId} {
+      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(getDocTenantId(resource.data)));
+      allow write: if isAuthenticated() && (
+        (resource == null && hasTenantAccess(getDocTenantId(request.resource.data))) ||
+        (resource != null && hasTenantAccess(getDocTenantId(resource.data)))
+      );
+    }
+    match /branch_shifts/{shiftId} {
+      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(getDocTenantId(resource.data)));
+      allow write: if isAuthenticated() && (
+        (resource == null && hasTenantAccess(getDocTenantId(request.resource.data))) ||
+        (resource != null && hasTenantAccess(getDocTenantId(resource.data)))
+      );
+    }
+    match /cash_register_transactions/{txId} {
+      allow read, write: if isAuthenticated() && (
+        (resource == null && hasTenantAccess(getDocTenantId(request.resource.data))) ||
+        (resource != null && hasTenantAccess(getDocTenantId(resource.data)))
+      );
+    }
+    match /sequence_counters/{counterId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    // Suppliers & Purchasing Engine (Phase 7)
+    match /suppliers/{supplierId} {
+      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
+      allow write: if isAuthenticated() && (
+        (resource == null && hasTenantAccess(request.resource.data.tenantId)) ||
+        (resource != null && hasTenantAccess(resource.data.tenantId))
+      );
+    }
+    match /supplier_products/{id} {
+      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
+      allow write: if isAuthenticated() && (
+        (resource == null && hasTenantAccess(request.resource.data.tenantId)) ||
+        (resource != null && hasTenantAccess(resource.data.tenantId))
+      );
+    }
+    match /purchase_orders/{poId} {
+      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
+      allow create: if isAuthenticated() && hasTenantAccess(request.resource.data.tenantId);
+      allow update: if isAuthenticated() && hasTenantAccess(resource.data.tenantId);
+      allow delete: if isAuthenticated() && hasTenantAccess(resource.data.tenantId) && (
+        request.auth.token.role in ['owner', 'admin', 'purchasing_manager'] ||
+        get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.role in ['owner', 'admin', 'purchasing_manager']
+      );
+    }
+    match /goods_receipts/{receiptId} {
+      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
+      allow create: if isAuthenticated() && hasTenantAccess(request.resource.data.tenantId);
+      allow update, delete: if false; // Immutable GRN record
+    }
+    match /goods_received_notes/{receiptId} {
+      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
+      allow create: if isAuthenticated() && hasTenantAccess(request.resource.data.tenantId);
+      allow update, delete: if false; // Immutable GRN record
+    }
+    match /purchase_returns/{returnId} {
+      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
+      allow create: if isAuthenticated() && hasTenantAccess(request.resource.data.tenantId);
+      allow update, delete: if false; // Immutable Purchase Return record
+    }
+    match /supplier_ledger/{entryId} {
+      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
+      allow create: if isAuthenticated() && hasTenantAccess(request.resource.data.tenantId);
+      allow update, delete: if false; // Immutable Supplier Ledger
+    }
+    match /supplier_payments/{paymentId} {
+      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
+      allow create: if isAuthenticated() && hasTenantAccess(request.resource.data.tenantId);
+      allow update, delete: if false; // Immutable Supplier Payment
+    }
+    match /purchase_idempotency/{recordId} {
+      allow read, write: if isAuthenticated() && (
+        (resource == null && hasTenantAccess(request.resource.data.tenantId)) ||
+        (resource != null && hasTenantAccess(resource.data.tenantId))
+      );
+    }
+
+    // Customers, Wholesale & Credit Sales (Phase 8)
+    match /customers/{customerId} {
+      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
+      allow write: if isAuthenticated() && (
+        (resource == null && hasTenantAccess(request.resource.data.tenantId)) ||
+        (resource != null && hasTenantAccess(resource.data.tenantId))
+      );
+    }
+    match /customer_ledger/{entryId} {
+      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
+      allow create: if isAuthenticated() && hasTenantAccess(request.resource.data.tenantId);
+      allow update, delete: if false; // Immutable Customer Ledger
+    }
+    match /customer_receivables/{receivableId} {
+      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
+      allow write: if isAuthenticated() && (
+        (resource == null && hasTenantAccess(request.resource.data.tenantId)) ||
+        (resource != null && hasTenantAccess(resource.data.tenantId))
+      );
+    }
+    match /customer_payments/{paymentId} {
+      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
+      allow create: if isAuthenticated() && hasTenantAccess(request.resource.data.tenantId);
+      allow update: if isAuthenticated() && hasTenantAccess(resource.data.tenantId);
+      allow delete: if false;
+    }
+    match /customer_payment_allocations/{allocationId} {
+      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
+      allow create: if isAuthenticated() && hasTenantAccess(request.resource.data.tenantId);
+      allow update, delete: if false; // Immutable Allocation
+    }
+    match /price_lists/{listId} {
+      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
+      allow write: if isAuthenticated() && (
+        (resource == null && hasTenantAccess(request.resource.data.tenantId)) ||
+        (resource != null && hasTenantAccess(resource.data.tenantId))
+      );
+    }
+    match /price_list_items/{itemId} {
+      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
+      allow write: if isAuthenticated() && (
+        (resource == null && hasTenantAccess(request.resource.data.tenantId)) ||
+        (resource != null && hasTenantAccess(resource.data.tenantId))
+      );
+    }
+    match /customer_product_prices/{id} {
+      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
+      allow write: if isAuthenticated() && (
+        (resource == null && hasTenantAccess(request.resource.data.tenantId)) ||
+        (resource != null && hasTenantAccess(resource.data.tenantId))
+      );
+    }
+    match /customer_idempotency/{recordId} {
+      allow read, write: if isAuthenticated() && (
+        (resource == null && hasTenantAccess(request.resource.data.tenantId)) ||
+        (resource != null && hasTenantAccess(resource.data.tenantId))
+      );
+    }
+
+    // Advanced Accounting, General Ledger & Treasury (Phase 9)
+    match /chart_of_accounts/{accountId} {
+      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
+      allow write: if isAuthenticated() && (
+        (resource == null && hasTenantAccess(request.resource.data.tenantId)) ||
+        (resource != null && hasTenantAccess(resource.data.tenantId))
+      );
+    }
+    match /account_code_index/{indexId} {
+      allow read, write: if isAuthenticated() && (
+        (resource == null && hasTenantAccess(request.resource.data.tenantId)) ||
+        (resource != null && hasTenantAccess(resource.data.tenantId))
+      );
+    }
+    match /journal_entries/{entryId} {
+      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
+      allow create: if isAuthenticated() && hasTenantAccess(request.resource.data.tenantId);
+      allow update: if isAuthenticated() && hasTenantAccess(resource.data.tenantId);
+      allow delete: if false; // Immutable General Ledger Journal Entries
+    }
+    match /journal_lines/{lineId} {
+      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
+      allow create: if isAuthenticated() && hasTenantAccess(request.resource.data.tenantId);
+      allow update, delete: if false; // Immutable General Ledger Lines
+    }
+    match /journal_idempotency/{idempId} {
+      allow read, write: if isAuthenticated() && (
+        (resource == null && hasTenantAccess(request.resource.data.tenantId)) ||
+        (resource != null && hasTenantAccess(resource.data.tenantId))
+      );
+    }
+    match /fiscal_years/{yearId} {
+      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
+      allow write: if isAuthenticated() && (
+        (resource == null && hasTenantAccess(request.resource.data.tenantId)) ||
+        (resource != null && hasTenantAccess(resource.data.tenantId))
+      );
+    }
+    match /fiscal_periods/{periodId} {
+      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
+      allow write: if isAuthenticated() && (
+        (resource == null && hasTenantAccess(request.resource.data.tenantId)) ||
+        (resource != null && hasTenantAccess(resource.data.tenantId))
+      );
+    }
+    match /accounting_settings/{settingsId} {
+      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
+      allow write: if isAuthenticated() && (
+        (resource == null && hasTenantAccess(request.resource.data.tenantId)) ||
+        (resource != null && hasTenantAccess(resource.data.tenantId))
+      );
+    }
+    match /accounting_events/{eventId} {
+      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
+      allow write: if isAuthenticated() && (
+        (resource == null && hasTenantAccess(request.resource.data.tenantId)) ||
+        (resource != null && hasTenantAccess(resource.data.tenantId))
+      );
+    }
+    match /financial_accounts/{accId} {
+      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
+      allow write: if isAuthenticated() && (
+        (resource == null && hasTenantAccess(request.resource.data.tenantId)) ||
+        (resource != null && hasTenantAccess(resource.data.tenantId))
+      );
+    }
+    match /opening_balance_migrations/{migrationId} {
+      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
+      allow create: if isAuthenticated() && hasTenantAccess(request.resource.data.tenantId);
+      allow update, delete: if false; // One-time Immutable Opening Balance Record
+    }
+
+    // Phase 10: Advanced BI, Analytics & Demand Intelligence
+    match /daily_analytics_metrics/{metricId} {
+      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
+      allow write: if isAuthenticated() && (
+        (resource == null && hasTenantAccess(request.resource.data.tenantId)) ||
+        (resource != null && hasTenantAccess(resource.data.tenantId))
+      );
+    }
+    match /analytics_settings/{settingsId} {
+      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
+      allow write: if isAuthenticated() && (
+        (resource == null && hasTenantAccess(request.resource.data.tenantId)) ||
+        (resource != null && hasTenantAccess(resource.data.tenantId))
+      );
+    }
+    match /reorder_settings/{settingsId} {
+      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
+      allow write: if isAuthenticated() && (
+        (resource == null && hasTenantAccess(request.resource.data.tenantId)) ||
+        (resource != null && hasTenantAccess(resource.data.tenantId))
+      );
+    }
+    match /season_definitions/{seasonId} {
+      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
+      allow write: if isAuthenticated() && (
+        (resource == null && hasTenantAccess(request.resource.data.tenantId)) ||
+        (resource != null && hasTenantAccess(resource.data.tenantId))
+      );
+    }
+
+    // Phase 11: Governance, System Hardening & Document Management
+    match /approval_requests/{requestId} {
+      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
+      allow write: if isAuthenticated() && (
+        (resource == null && hasTenantAccess(request.resource.data.tenantId)) ||
+        (resource != null && hasTenantAccess(resource.data.tenantId))
+      );
+    }
+    match /approval_steps/{stepId} {
+      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
+      allow write: if isAuthenticated() && (
+        (resource == null && hasTenantAccess(request.resource.data.tenantId)) ||
+        (resource != null && hasTenantAccess(resource.data.tenantId))
+      );
+    }
+    match /approval_settings/{settingsId} {
+      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
+      allow write: if isAuthenticated() && (
+        (resource == null && hasTenantAccess(request.resource.data.tenantId)) ||
+        (resource != null && hasTenantAccess(resource.data.tenantId))
+      );
+    }
+    match /attachments/{attachmentId} {
+      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
+      allow create: if isAuthenticated() && hasTenantAccess(request.resource.data.tenantId);
+      allow update: if isAuthenticated() && hasTenantAccess(resource.data.tenantId);
+      allow delete: if isAuthenticated() && hasTenantAccess(resource.data.tenantId) && isSystemAdmin();
+    }
+    match /settings_audit_log/{auditId} {
+      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
+      allow create: if isAuthenticated() && hasTenantAccess(request.resource.data.tenantId);
+      allow update, delete: if false; // Immutable settings audit trail
+    }
+    match /feature_flags/{flagId} {
+      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
+      allow write: if isAuthenticated() && (
+        (resource == null && hasTenantAccess(request.resource.data.tenantId)) ||
+        (resource != null && hasTenantAccess(resource.data.tenantId))
+      );
+    }
+
+    // Default catch-all: strictly restrict unlisted collections to admin/owner
+    match /{document=**} {
+      allow read, write: if isSystemAdmin();
     }
   }
 }

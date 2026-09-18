@@ -371,3 +371,92 @@ export async function notifySecurityRoleChanged(
     metadata: { adminName, targetUserName, newRole },
   });
 }
+
+/**
+ * Triggered when an accounting event permanently fails into dead-letter queue.
+ */
+export async function notifyOutboxDeadLetter(
+  tenantId: string,
+  eventId: string,
+  sourceType: string,
+  errorMsg: string
+) {
+  return publishNotification({
+    type: 'critical',
+    category: 'system',
+    priority: 'critical',
+    title: 'فشل ترحيل قيد محاسبي (Dead Letter Alert)',
+    message: `تعذر ترحيل القيد المحاسبي للعملية (${sourceType} - ${eventId}) بعد عدة محاولات: ${errorMsg}`,
+    branchId: 'all',
+    relatedEntityType: 'accounting_event',
+    relatedEntityId: eventId,
+    requiredPermission: 'accounting.view',
+    actionRoute: '/system-health',
+    deduplicationKey: `dead_letter_${eventId}`,
+    metadata: { tenantId, eventId, sourceType, errorMsg },
+  });
+}
+
+/**
+ * Triggered when a backup or restore job fails.
+ */
+export async function notifyBackupFailure(tenantId: string, errorMsg: string) {
+  return publishNotification({
+    type: 'critical',
+    category: 'system',
+    priority: 'critical',
+    title: 'فشل عملية النسخ الاحتياطي للنظام',
+    message: `حدث خطأ أثناء إجراء النسخة الاحتياطية للمنشأة: ${errorMsg}`,
+    branchId: 'all',
+    relatedEntityType: 'backup',
+    requiredPermission: 'backup.view',
+    actionRoute: '/backup',
+    deduplicationKey: `backup_fail_${new Date().toISOString().slice(0, 10)}`,
+    metadata: { tenantId, errorMsg },
+  });
+}
+
+/**
+ * Triggered when a pending approval request is created.
+ */
+export async function notifyApprovalRequired(
+  tenantId: string,
+  requestId: string,
+  workflowTitle: string,
+  amount?: number
+) {
+  return publishNotification({
+    type: 'warning',
+    category: 'governance',
+    priority: 'high',
+    title: 'طلب اعتماد بانتظار المراجعة',
+    message: `يتطلب ${workflowTitle} ${amount ? `بقيمة ${amount} ج.م` : ''} اعتمادك للمتابعة`,
+    branchId: 'all',
+    relatedEntityType: 'approval_request',
+    relatedEntityId: requestId,
+    requiredPermission: 'approvals.manage',
+    actionRoute: '/approvals',
+    deduplicationKey: `approval_req_${requestId}`,
+    metadata: { tenantId, requestId, workflowTitle, amount },
+  });
+}
+
+/**
+ * Triggered on data integrity reconciliation mismatches.
+ */
+export async function notifySystemIntegrityMismatch(tenantId: string, issueTitle: string) {
+  return publishNotification({
+    type: 'critical',
+    category: 'system',
+    priority: 'critical',
+    title: 'تنبيه عدم تطابق محاسبي أو مخزني',
+    message: `تم رصد فارق في مطابقة النظام: ${issueTitle}. يرجى فحص مركز سلامة النظام.`,
+    branchId: 'all',
+    relatedEntityType: 'system_health',
+    requiredPermission: 'accounting.reconcile',
+    actionRoute: '/system-health',
+    deduplicationKey: `integrity_${new Date().toISOString().slice(0, 10)}`,
+    metadata: { tenantId, issueTitle },
+  });
+}
+
