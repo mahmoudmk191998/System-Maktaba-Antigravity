@@ -16,6 +16,7 @@ import {
   limit,
   startAfter,
   runTransaction,
+  deleteDoc,
   type DocumentSnapshot,
 } from 'firebase/firestore';
 import type {
@@ -37,6 +38,11 @@ import {
 } from '@/services/inventory/retailInventory.service';
 import { formatSequenceNumber } from './invoiceNumber.service';
 import { checkCustomerCreditEligibility } from '@/services/customers/creditSales.service';
+import {
+  applySaleToStatsInTransaction,
+  applyVoidSaleToStatsInTransaction,
+} from '@/services/analytics/aggregatedStats.service';
+import { firestoreLogger } from '@/lib/firestoreLogger';
 
 export interface CartLineItemInput {
   productId: string;
@@ -676,7 +682,25 @@ export async function completeSaleTransaction(
         });
       }
 
-      // 12. Register Idempotency Lock
+      // 12. Update Aggregated Daily & Monthly Statistics atomically
+      try {
+        const itemsSummary = items.map((it) => ({
+          id: it.productId,
+          name: it.productName || 'صنف',
+          quantity: Number(it.quantity || 1),
+          total: Number(it.total || 0),
+        }));
+        await applySaleToStatsInTransaction(transaction, tenantId, now, {
+          grossTotal: finalGrandTotal,
+          profit: overallGrossProfit,
+          itemsCount: totalUnitsDeducted,
+          itemsSummary,
+        });
+      } catch (statsErr) {
+        console.warn('Stats aggregation inside sale transaction warning:', statsErr);
+      }
+
+      // 13. Register Idempotency Lock
       transaction.set(idempRef, {
         tenantId,
         idempotencyKey,
@@ -843,3 +867,181 @@ export async function getSaleById(tenantId: string, saleId: string): Promise<Sal
   if (data.tenantId !== tenantId) return null;
   return { id: snap.id, ...data };
 }
+
+/**
+ * Safely cancels/voids a sale record atomically without physical hard delete (Zero Data Loss).
+ * Restores stock balance, reverses daily/monthly stats, and marks invoice as voided/cancelled.
+ * Preserves full API compatibility for existing caller components.
+ */
+export async function deleteSaleRecord(
+  tenantId: string,
+  saleId: string,
+  reason: string = 'إلغاء الفاتورة من قبل الإدارة',
+  operatorName: string = 'الإدارة'
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    if (!saleId || !tenantId) return { success: false, error: 'معرف الفاتورة مفقود' };
+
+    const now = new Date().toISOString();
+    const saleRef = doc(db, 'sales', saleId);
+    const orderRef = doc(db, 'orders', saleId);
+
+    // 0. Query existing partial/full returns for this sale to avoid double restoration or double reversal
+    const returnsQ = query(collection(db, 'sale_returns'), where('saleId', '==', saleId));
+    let existingReturnsSnap;
+    try {
+      existingReturnsSnap = await getDocs(returnsQ);
+    } catch {
+      existingReturnsSnap = { docs: [] } as any;
+    }
+
+    const alreadyReturnedMap = new Map<string, number>();
+    let totalAlreadyRefunded = 0;
+    let totalAlreadyProfitReversed = 0;
+    let totalAlreadyReturnedUnits = 0;
+
+    existingReturnsSnap.docs.forEach((d: any) => {
+      const ret = d.data();
+      if (ret.status !== 'cancelled' && ret.status !== 'voided') {
+        totalAlreadyRefunded += Number(ret.refundAmount ?? ret.totalRefund ?? 0);
+        totalAlreadyProfitReversed += Number(ret.totalProfitReversed ?? 0);
+        ret.items?.forEach((ri: any) => {
+          const itemKey = ri.saleItemId || ri.productId;
+          const qty = Number(ri.baseQuantity ?? ri.returnBaseQuantity ?? ri.quantity ?? 0);
+          alreadyReturnedMap.set(itemKey, (alreadyReturnedMap.get(itemKey) || 0) + qty);
+          if (ri.productId && ri.productId !== itemKey) {
+            alreadyReturnedMap.set(ri.productId, (alreadyReturnedMap.get(ri.productId) || 0) + qty);
+          }
+          totalAlreadyReturnedUnits += qty;
+        });
+      }
+    });
+
+    await runTransaction(db, async (tx) => {
+      const snap = await tx.get(saleRef);
+      if (!snap.exists()) {
+        throw new Error('الفاتورة غير موجودة');
+      }
+      const sale = snap.data() as Sale;
+      if (sale.tenantId !== tenantId && (sale as any).tenant_id !== tenantId) {
+        throw new Error('غير مصرح بالوصول إلى هذه الفاتورة');
+      }
+
+      // Strict Idempotency: if already cancelled/voided, exit safely without double counting
+      if (sale.status === 'cancelled' || sale.status === 'voided' || (sale as any).isReversed) {
+        return;
+      }
+
+      const branchId = sale.branchId || (sale as any).branch_id || 'HQ';
+      const saleItems: SaleItem[] = Array.isArray(sale.items) ? sale.items : [];
+
+      // 1. Restore Inventory Stock for only the unreturned portion of each item
+      for (const it of saleItems) {
+        if (!it.productId) continue;
+        const conv = Math.max(1, Number(it.conversionFactor || 1));
+        const totalSoldBase = Number(it.quantity || it.baseQuantity || 1) * conv;
+        const alreadyReturnedBase = alreadyReturnedMap.get(it.id) || alreadyReturnedMap.get(it.productId) || 0;
+        const netBaseToRestore = Math.max(0, totalSoldBase - alreadyReturnedBase);
+
+        if (netBaseToRestore <= 0) {
+          // Entire line item was already returned and restocked in return transaction
+          continue;
+        }
+
+        const stockKey = getBranchStockDocId(tenantId, branchId, it.productId, it.variantId);
+        const stockRef = doc(db, 'branch_stock', stockKey);
+
+        const stockSnap = await tx.get(stockRef);
+        if (stockSnap.exists()) {
+          const currentData = stockSnap.data();
+          const currentOnHand = Number(currentData.onHandQuantity ?? currentData.quantity ?? 0);
+          const currentAvailable = Number(currentData.availableQuantity ?? currentOnHand);
+          const restoredOnHand = currentOnHand + netBaseToRestore;
+          const restoredAvailable = currentAvailable + netBaseToRestore;
+
+          const updatedBalance = normalizeStockBalance({
+            id: stockKey,
+            tenantId,
+            branchId,
+            productId: it.productId,
+            variantId: it.variantId,
+            onHandQuantity: restoredOnHand,
+            availableQuantity: restoredAvailable,
+            averageCost: Number(currentData.averageCost ?? it.costPriceSnapshot ?? 0),
+            updatedAt: now,
+          });
+          tx.set(stockRef, updatedBalance, { merge: true });
+        }
+
+        // Record stock movement for reversal
+        const moveRef = doc(collection(db, 'stock_movements'));
+        tx.set(moveRef, {
+          id: moveRef.id,
+          tenantId,
+          branchId,
+          productId: it.productId,
+          variantId: it.variantId || null,
+          movementType: 'recovery',
+          direction: 'in',
+          quantity: netBaseToRestore,
+          baseQuantity: netBaseToRestore,
+          reason: `استرجاع مخزون متبقي بسبب إلغاء فاتورة رقم ${sale.invoiceNumber || saleId}`,
+          referenceType: 'sale_void',
+          referenceId: saleId,
+          createdAt: now,
+          createdBy: operatorName,
+        });
+      }
+
+      // 2. Reverse Aggregated Daily & Monthly Statistics
+      const totalUnits = saleItems.reduce((acc, it) => acc + Number(it.quantity || 1), 0);
+      const remainingUnits = Math.max(0, totalUnits - totalAlreadyReturnedUnits);
+      const remainingNetSales = Math.max(0, Number(sale.total || 0) - totalAlreadyRefunded);
+      const remainingProfit = Math.max(0, Number(sale.grossProfit || 0) - totalAlreadyProfitReversed);
+
+      await applyVoidSaleToStatsInTransaction(tx, tenantId, sale.createdAt || now, {
+        total: remainingNetSales,
+        profit: remainingProfit,
+        itemsCount: remainingUnits,
+        returnsToReverse: totalAlreadyRefunded,
+        originalSaleTotal: Number(sale.total || 0),
+      });
+
+      // 3. Mark Sale as Voided
+      tx.update(saleRef, {
+        status: 'voided',
+        saleStatus: 'voided',
+        isReversed: true,
+        cancelledAt: now,
+        cancelledBy: operatorName,
+        cancellationReason: reason,
+        updatedAt: now,
+      });
+
+      // 4. Update mirrored order if exists
+      tx.set(
+        orderRef,
+        {
+          status: 'cancelled',
+          isReversed: true,
+          cancelledAt: now,
+          cancelledBy: operatorName,
+          cancellationReason: reason,
+          updatedAt: now,
+        },
+        { merge: true }
+      );
+    });
+
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('alwan_sales_synced'));
+      window.dispatchEvent(new CustomEvent('alwan_inventory_synced'));
+    }
+
+    return { success: true };
+  } catch (err: any) {
+    console.error('Failed to void sale record:', err);
+    return { success: false, error: err.message || 'تعذر إلغاء سجل الفاتورة' };
+  }
+}
+

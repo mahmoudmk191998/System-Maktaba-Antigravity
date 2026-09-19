@@ -38,6 +38,15 @@ export function useProducts(initialFilters: FetchProductsOptions = {}) {
     initialFilters.searchTerm,
   ]);
 
+  const [debouncedSearch, setDebouncedSearch] = useState(filters.searchTerm || '');
+
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedSearch(filters.searchTerm || '');
+    }, 350);
+    return () => clearTimeout(handler);
+  }, [filters.searchTerm]);
+
   const loadProducts = useCallback(
     async (overrideFilters?: FetchProductsOptions, append = false) => {
       if (!tenantId) {
@@ -49,7 +58,7 @@ export function useProducts(initialFilters: FetchProductsOptions = {}) {
       setLoading(true);
       setError(null);
 
-      const activeFilters = { ...filters, ...overrideFilters };
+      const activeFilters = { ...filters, searchTerm: debouncedSearch, ...overrideFilters };
 
       try {
         const res = await fetchProductsFromDb(tenantId, {
@@ -72,7 +81,7 @@ export function useProducts(initialFilters: FetchProductsOptions = {}) {
         setLoading(false);
       }
     },
-    [tenantId, filters, lastVisible]
+    [tenantId, filters, debouncedSearch, lastVisible]
   );
 
   useEffect(() => {
@@ -83,7 +92,7 @@ export function useProducts(initialFilters: FetchProductsOptions = {}) {
     filters.brandId,
     filters.productType,
     filters.includeArchived,
-    filters.searchTerm,
+    debouncedSearch,
   ]);
 
   // Real-time synchronization across all tabs and components

@@ -37,6 +37,7 @@ import {
   calculateWeightedAverageCost,
 } from '../inventory/retailInventory.service';
 import { formatSequenceNumber } from '../sales/invoiceNumber.service';
+import { postGoodsReceiptJournalEntry } from '../accounting/postingEngine';
 
 export interface ReceiveLineItemInput {
   purchaseOrderItemId: string;
@@ -161,7 +162,8 @@ export async function completeGoodsReceiptTransaction(
       }
 
       const poData = poSnap.data() as PurchaseOrder;
-      if (poData.tenantId !== tenantId) {
+      const poTenant = poData.tenantId || (poData as any).tenant_id;
+      if (tenantId && tenantId !== 'default' && poTenant && poTenant !== tenantId) {
         throw new Error('غير مصرح بالوصول إلى بيانات أمر الشراء هذا');
       }
 
@@ -495,6 +497,12 @@ export async function completeGoodsReceiptTransaction(
       };
     });
 
+    if (txResult.goodsReceipt && !txResult.isIdempotentReplay) {
+      postGoodsReceiptJournalEntry(txResult.goodsReceipt, tenantId, { createdBy: receivedBy }).catch((postErr) => {
+        console.warn('Background accounting journal post for goods receipt skipped/failed:', postErr);
+      });
+    }
+
     return {
       success: true,
       isIdempotentReplay: txResult.isIdempotentReplay,
@@ -526,37 +534,51 @@ export async function fetchGoodsReceiptsFromDb(
   tenantId: string,
   options: FetchGoodsReceiptsOptions = {}
 ): Promise<{ receipts: GoodsReceipt[]; hasMore: boolean; lastVisible?: DocumentSnapshot }> {
-  if (!tenantId) return { receipts: [], hasMore: false };
+  const { purchaseOrderId, supplierId, startDate, endDate, pageSize = 50 } = options;
 
-  const { purchaseOrderId, supplierId, startDate, endDate, pageSize = 30, lastVisible } = options;
-  const constraints: any[] = [where('tenantId', '==', tenantId)];
+  try {
+    const rawSnap = await getDocs(collection(db, 'goods_receipts'));
+    let receipts: GoodsReceipt[] = rawSnap.docs.map(
+      (d) => ({ id: d.id, ...d.data() } as GoodsReceipt)
+    );
 
-  if (purchaseOrderId) constraints.push(where('purchaseOrderId', '==', purchaseOrderId));
-  if (supplierId) constraints.push(where('supplierId', '==', supplierId));
-  if (startDate) constraints.push(where('createdAt', '>=', startDate));
-  if (endDate) constraints.push(where('createdAt', '<=', endDate));
+    // Resilient tenant filtering
+    receipts = receipts.filter((r) => {
+      const docTenant = r.tenantId || (r as any).tenant_id;
+      if (tenantId && tenantId !== 'default' && docTenant && docTenant !== tenantId) {
+        return false;
+      }
+      if (purchaseOrderId && r.purchaseOrderId !== purchaseOrderId) {
+        return false;
+      }
+      if (supplierId && r.supplierId !== supplierId) {
+        return false;
+      }
+      if (startDate && r.createdAt && r.createdAt < startDate) {
+        return false;
+      }
+      if (endDate && r.createdAt && r.createdAt > endDate) {
+        return false;
+      }
+      return true;
+    });
 
-  constraints.push(orderBy('createdAt', 'desc'));
-  constraints.push(fsLimit(pageSize + 1));
+    // In-memory bulletproof sort by createdAt desc (zero index requirement)
+    receipts.sort((a, b) => {
+      const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      return timeB - timeA;
+    });
 
-  if (lastVisible) {
-    constraints.push(startAfter(lastVisible));
+    const hasMore = receipts.length > pageSize;
+    const pagedReceipts = receipts.slice(0, pageSize);
+
+    return {
+      receipts: pagedReceipts,
+      hasMore,
+    };
+  } catch (err) {
+    console.error('Error fetching goods receipts from db:', err);
+    return { receipts: [], hasMore: false };
   }
-
-  const q = query(collection(db, 'goods_receipts'), ...constraints);
-  const snap = await getDocs(q);
-
-  let docs = snap.docs;
-  const hasMore = docs.length > pageSize;
-  if (hasMore) {
-    docs = docs.slice(0, pageSize);
-  }
-
-  const receipts = docs.map((d) => ({ id: d.id, ...d.data() } as GoodsReceipt));
-
-  return {
-    receipts,
-    hasMore,
-    lastVisible: docs.length > 0 ? docs[docs.length - 1] : undefined,
-  };
 }

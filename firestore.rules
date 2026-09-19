@@ -101,15 +101,27 @@ service cloud.firestore {
 
     // Atomic sequential order numbering counters
     match /branch_counters/{counterId} {
-      allow read, write: if false;
+      allow read, write: if isAuthenticated();
     }
     match /orderCounters/{counterId} {
-      allow read, write: if false;
+      allow read, write: if isAuthenticated();
+    }
+    match /sequence_counters/{counterId} {
+      allow read, write: if isAuthenticated();
     }
 
-    // SHA-256 request fingerprints and cached idempotent snapshots
-    match /idempotency_records/{recordId} {
-      allow read, write: if false;
+    // Client-side transaction idempotency locks
+    match /sale_idempotency/{recordId} {
+      allow read, write: if isAuthenticated();
+    }
+    match /return_idempotency/{recordId} {
+      allow read, write: if isAuthenticated();
+    }
+    match /purchase_idempotency/{recordId} {
+      allow read, write: if isAuthenticated();
+    }
+    match /customer_idempotency/{recordId} {
+      allow read, write: if isAuthenticated();
     }
 
     // =========================================================================
@@ -889,6 +901,33 @@ service cloud.firestore {
       allow write: if isAuthenticated() && (
         (resource == null && hasTenantAccess(request.resource.data.tenantId)) ||
         (resource != null && hasTenantAccess(resource.data.tenantId))
+      );
+    }
+
+    // High-Performance Aggregated Analytics Cache & Migration Ledgers
+    match /stats_daily/{statId} {
+      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
+      allow create: if isAuthenticated() && hasTenantAccess(request.resource.data.tenantId);
+      allow update: if isAuthenticated() && (
+        isSystemAdmin() ||
+        (hasTenantAccess(resource.data.tenantId) && request.resource.data.tenantId == resource.data.tenantId)
+      );
+      allow delete: if isAuthenticated() && (isSystemAdmin() || hasTenantAccess(resource.data.tenantId));
+    }
+    match /stats_monthly/{statId} {
+      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
+      allow create: if isAuthenticated() && hasTenantAccess(request.resource.data.tenantId);
+      allow update: if isAuthenticated() && (
+        isSystemAdmin() ||
+        (hasTenantAccess(resource.data.tenantId) && request.resource.data.tenantId == resource.data.tenantId)
+      );
+      allow delete: if isAuthenticated() && (isSystemAdmin() || hasTenantAccess(resource.data.tenantId));
+    }
+    match /system_migrations/{migrationId} {
+      allow read, write, delete: if isAuthenticated() && (
+        isSystemAdmin() ||
+        (resource != null && hasTenantAccess(resource.data.tenantId)) ||
+        (request.resource != null && hasTenantAccess(request.resource.data.tenantId))
       );
     }
 

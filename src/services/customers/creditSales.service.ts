@@ -244,14 +244,30 @@ export async function getOpenReceivablesForCustomer(
   tenantId: string,
   customerId: string
 ): Promise<CustomerReceivable[]> {
-  const q = query(
-    collection(db, 'customer_receivables'),
-    where('tenantId', '==', tenantId),
-    where('customerId', '==', customerId),
-    where('status', 'in', ['open', 'partially_paid', 'overdue']),
-    orderBy('dueDate', 'asc')
-  );
-
-  const snap = await getDocs(q);
-  return snap.docs.map((d) => d.data() as CustomerReceivable);
+  try {
+    let q = query(
+      collection(db, 'customer_receivables'),
+      where('tenantId', '==', tenantId),
+      where('customerId', '==', customerId)
+    );
+    let snap = await getDocs(q);
+    if (snap.empty) {
+      q = query(
+        collection(db, 'customer_receivables'),
+        where('tenant_id', '==', tenantId),
+        where('customerId', '==', customerId)
+      );
+      snap = await getDocs(q);
+    }
+    const docs = snap.docs.map((d) => ({ id: d.id, ...d.data() } as CustomerReceivable));
+    return docs
+      .filter((r) => {
+        const remaining = Number(r.remainingAmount || 0);
+        return remaining > 0 && r.status !== 'paid' && r.status !== 'cancelled';
+      })
+      .sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime());
+  } catch (err) {
+    console.warn('Failed getOpenReceivablesForCustomer query:', err);
+    return [];
+  }
 }

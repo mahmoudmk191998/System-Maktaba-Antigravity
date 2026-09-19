@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { db } from '@/lib/firebase';
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, getDoc, getDocs, collection, query, where, limit as fsLimit } from 'firebase/firestore';
 import { useAppStore } from '@/lib/store';
-import type { Product, ProductVariant, UnitDefinition } from '@/types/retail.types';
+import type { Product, ProductVariant, UnitDefinition, Customer } from '@/types/retail.types';
 import { calculateItemPrice } from '@/services/pricing/pricingEngine';
 import { getBarcodeIndexDocId } from '@/services/products/products.repository';
+import { fetchCategoriesFromDb } from '@/services/categories/categories.service';
 
 export interface POSCartItem {
   id: string; // unique item line id e.g. prodId_variantId
@@ -40,7 +41,20 @@ export function usePOSCart(tenantId: string, locationId: string, initialWholesal
   const [isWholesale, setIsWholesale] = useState(initialWholesale);
   const [cartDiscountType, setCartDiscountType] = useState<'fixed' | 'percentage'>('fixed');
   const [cartDiscountValue, setCartDiscountValue] = useState<number>(0);
-  const [selectedCustomer, setSelectedCustomer] = useState<any | null>(null);
+  const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
+  const [categoriesMap, setCategoriesMap] = useState<Map<string, string>>(new Map());
+
+  // Load categories map for category name resolution
+  useEffect(() => {
+    if (!tenantId) return;
+    fetchCategoriesFromDb(tenantId).then((cats) => {
+      const map = new Map<string, string>();
+      cats.forEach((c) => {
+        if (c.id && c.name) map.set(c.id, c.name);
+      });
+      setCategoriesMap(map);
+    }).catch(() => {});
+  }, [tenantId]);
 
   // Load draft from localStorage on mount
   useEffect(() => {
@@ -142,7 +156,7 @@ export function usePOSCart(tenantId: string, locationId: string, initialWholesal
         variantName: variant ? Object.values(variant.attributes || {}).join(' / ') || variant.sku : null,
         sku: variant?.sku || product.sku,
         barcode: variant?.barcode || product.barcode || '',
-        categoryName: product.categoryId,
+        categoryName: categoriesMap.get(product.categoryId) || (product as any).categoryName || (product as any).category_name || (product as any).category || product.categoryId || '',
         brandName: product.brandId,
         quantity,
         inputUnitId: customUnit?.id || product.baseUnitId,
@@ -192,31 +206,157 @@ export function usePOSCart(tenantId: string, locationId: string, initialWholesal
     [recalculateLine]
   );
 
-  // Direct fast barcode scan lookup
+  // Direct fast barcode & QR code scan lookup
   const addByBarcode = useCallback(
-    async (barcode: string): Promise<{ success: boolean; error?: string }> => {
-      if (!barcode || !tenantId) return { success: false, error: 'الباركود غير صالح' };
-      const normalizedBarcode = barcode.trim();
+    async (
+      barcode: string
+    ): Promise<{ success: boolean; error?: string; product?: Product; variant?: ProductVariant }> => {
+      if (!barcode || !tenantId) return { success: false, error: 'الباركود أو رمز QR غير صالح' };
+      
+      let raw = barcode.trim();
+
+      // Check if QR code is a URL (e.g. https://domain.com/product/123 or ?code=123)
+      if (raw.startsWith('http://') || raw.startsWith('https://')) {
+        try {
+          const url = new URL(raw);
+          const qCode =
+            url.searchParams.get('code') ||
+            url.searchParams.get('barcode') ||
+            url.searchParams.get('sku') ||
+            url.searchParams.get('id');
+          if (qCode) {
+            raw = qCode.trim();
+          } else {
+            const parts = url.pathname.split('/').filter(Boolean);
+            if (parts.length > 0) {
+              raw = parts[parts.length - 1].trim();
+            }
+          }
+        } catch {
+          // not a valid URL, retain raw
+        }
+      }
+
+      // Check if code is JSON encoded (from custom QR labels or systems)
+      if (raw.startsWith('{') && raw.endsWith('}')) {
+        try {
+          const parsed = JSON.parse(raw);
+          if (parsed.barcode) raw = String(parsed.barcode).trim();
+          else if (parsed.sku) raw = String(parsed.sku).trim();
+          else if (parsed.id) raw = String(parsed.id).trim();
+        } catch (e) {
+          console.debug('Scanned text is not valid JSON, using raw string', e);
+        }
+      }
+
+      // Prepare list of code candidates to test (e.g. ISBN with/without dashes, leading zeros)
+      const candidateList: string[] = [];
+      const addCandidate = (c: string) => {
+        const trimmed = c.trim();
+        if (trimmed && !candidateList.includes(trimmed)) {
+          candidateList.push(trimmed);
+        }
+      };
+
+      addCandidate(raw);
+      const noHyphens = raw.replace(/[-\s_]/g, '');
+      if (noHyphens) addCandidate(noHyphens);
+      if (noHyphens.startsWith('0')) {
+        addCandidate(noHyphens.replace(/^0+/, ''));
+      } else if (noHyphens.length === 12) {
+        addCandidate('0' + noHyphens);
+      }
 
       try {
-        // Fast direct lookup via index document
-        const bRef = doc(db, 'product_barcodes', getBarcodeIndexDocId(tenantId, normalizedBarcode));
-        const bSnap = await getDoc(bRef);
-
         let productId: string | null = null;
         let variantId: string | null = null;
 
-        if (bSnap.exists()) {
-          const bData = bSnap.data();
-          if (bData.archived) {
-            return { success: false, error: 'هذا الباركود يتبع صنفاً مؤرشفاً' };
+        // Loop candidates through lookup strategies
+        for (const testCode of candidateList) {
+          // 1. Fast direct lookup via index document
+          const bRef = doc(db, 'product_barcodes', getBarcodeIndexDocId(tenantId, testCode));
+          const bSnap = await getDoc(bRef);
+
+          if (bSnap.exists()) {
+            const bData = bSnap.data();
+            if (bData.archived) {
+              return { success: false, error: 'هذا الباركود يتبع صنفاً مؤرشفاً' };
+            }
+            productId = bData.productId;
+            variantId = bData.variantId || null;
+            break;
           }
-          productId = bData.productId;
-          variantId = bData.variantId || null;
+
+          // 2. Query products collection directly by barcode
+          const qBarcode = query(
+            collection(db, 'products'),
+            where('tenantId', '==', tenantId),
+            where('barcode', '==', testCode),
+            fsLimit(1)
+          );
+          const snapBarcode = await getDocs(qBarcode);
+          if (!snapBarcode.empty) {
+            productId = snapBarcode.docs[0].id;
+            break;
+          }
+
+          // 3. Query products by SKU (or ISBN)
+          const qSku = query(
+            collection(db, 'products'),
+            where('tenantId', '==', tenantId),
+            where('sku', '==', testCode.toUpperCase()),
+            fsLimit(1)
+          );
+          const snapSku = await getDocs(qSku);
+          if (!snapSku.empty) {
+            productId = snapSku.docs[0].id;
+            break;
+          }
+
+          // 4. Check if the scanned QR code is the direct product document ID
+          try {
+            const directSnap = await getDoc(doc(db, 'products', testCode));
+            if (directSnap.exists() && directSnap.data().tenantId === tenantId) {
+              productId = directSnap.id;
+              break;
+            }
+          } catch (e) {
+            console.debug('Scanned code is not a valid Firestore doc ID', e);
+          }
+        }
+
+        // 5. Fallback: Check products with variants by variant barcode or SKU
+        if (!productId) {
+          const qVariants = query(
+            collection(db, 'products'),
+            where('tenantId', '==', tenantId),
+            where('hasVariants', '==', true)
+          );
+          const snapVariants = await getDocs(qVariants);
+          for (const docSnap of snapVariants.docs) {
+            const p = { id: docSnap.id, ...docSnap.data() } as Product;
+            if (p.variants && Array.isArray(p.variants)) {
+              const matchedVar = p.variants.find((v) => {
+                const vBar = (v.barcode || '').trim();
+                const vSku = (v.sku || '').trim().toUpperCase();
+                return candidateList.some(
+                  (c) =>
+                    c === vBar ||
+                    c.replace(/[-\s_]/g, '') === vBar.replace(/[-\s_]/g, '') ||
+                    c.toUpperCase() === vSku
+                );
+              });
+              if (matchedVar) {
+                productId = p.id;
+                variantId = matchedVar.id;
+                break;
+              }
+            }
+          }
         }
 
         if (!productId) {
-          return { success: false, error: `لم يتم العثور على صنف بالباركود: ${normalizedBarcode}` };
+          return { success: false, error: `لم يتم العثور على صنف بالرمز: ${raw}` };
         }
 
         // Fetch product document
@@ -237,10 +377,11 @@ export function usePOSCart(tenantId: string, locationId: string, initialWholesal
         }
 
         addToCart(prod, matchedVariant, 1);
-        return { success: true };
-      } catch (err: any) {
+        return { success: true, product: prod, variant: matchedVariant || undefined };
+      } catch (err: unknown) {
         console.error('Barcode scan error:', err);
-        return { success: false, error: err.message || 'خطأ أثناء فحص الباركود' };
+        const errMsg = err instanceof Error ? err.message : 'خطأ أثناء فحص الباركود';
+        return { success: false, error: errMsg };
       }
     },
     [tenantId, addToCart]

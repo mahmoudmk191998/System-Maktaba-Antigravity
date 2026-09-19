@@ -242,13 +242,13 @@ export function getDateRangeFromPreset(
       break;
     }
     case 'all': {
-      startDateStr = '2020-01-01';
-      endDateStr = todayStr;
+      startDateStr = '1970-01-01';
+      endDateStr = '2099-12-31';
       return {
-        startDate: '2020-01-01',
-        endDate: todayStr,
-        startIso: '2020-01-01T00:00:00.000Z',
-        endIso: getZonedDayBounds(todayStr, timeZone).endIso,
+        startDate: '1970-01-01',
+        endDate: '2099-12-31',
+        startIso: '1970-01-01T00:00:00.000Z',
+        endIso: '2099-12-31T23:59:59.999Z',
       };
     }
   }
@@ -272,8 +272,8 @@ export function getComparisonRange(
   mode: ComparisonMode,
   timeZone: string = DEFAULT_TIMEZONE
 ): ComparisonRange {
-  if (mode === 'none') {
-    return { current: currentRange, mode };
+  if (mode === 'none' || currentRange.startDate <= '1970-01-01' || currentRange.endDate >= '2099-01-01') {
+    return { current: currentRange, mode: 'none' };
   }
 
   const startUtc = new Date(currentRange.startIso);

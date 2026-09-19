@@ -8,21 +8,21 @@ import {
   fetchDamageLossRecordsFromDb,
   recordDamageOrLoss,
   recordStockRecovery,
+  deleteDamageLossRecord,
   type CreateDamageLossInput,
 } from '@/services/inventory/damageLoss.service';
-import type { DamageLossRecord, DamageLossType } from '@/types/retail.types';
+import type { DamageLossRecord } from '@/types/retail.types';
 
 export function useDamageLoss(locationId?: string) {
   const currentTenant = useAppStore((state) => state.currentTenant);
   const currentUser = useAppStore((state) => state.currentUser);
-  const tenantId = currentTenant?.id || '';
+  const tenantId = currentTenant?.id || localStorage.getItem('current_tenant_id') || 'default-tenant';
   const user = currentUser;
   const [records, setRecords] = useState<DamageLossRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const loadRecords = useCallback(async () => {
-    if (!tenantId) return;
     setLoading(true);
     setError(null);
     try {
@@ -42,10 +42,10 @@ export function useDamageLoss(locationId?: string) {
   const handleRecordDamage = async (
     input: Omit<CreateDamageLossInput, 'tenantId' | 'employeeId'>
   ) => {
-    if (!tenantId || !user?.uid) return { success: false, error: 'المستخدم غير مسجل' };
+    const employeeId = user?.displayName || user?.email || user?.uid || 'المسؤول';
     const res = await recordDamageOrLoss({
       tenantId,
-      employeeId: user.displayName || user.email || user.uid,
+      employeeId,
       ...input,
     });
     if (res.success) {
@@ -55,7 +55,7 @@ export function useDamageLoss(locationId?: string) {
   };
 
   const handleRecordRecovery = async (
-    locationId: string,
+    locId: string,
     productId: string,
     variantId: string | null | undefined,
     quantity: number,
@@ -63,17 +63,39 @@ export function useDamageLoss(locationId?: string) {
     originalRecordId?: string,
     notes?: string
   ) => {
-    if (!tenantId || !user?.uid) return { success: false, error: 'المستخدم غير مسجل' };
+    const employeeId = user?.displayName || user?.email || user?.uid || 'المسؤول';
     const res = await recordStockRecovery(
       tenantId,
-      locationId,
+      locId || locationId || 'main',
       productId,
       variantId,
       quantity,
       unitCost,
-      user.displayName || user.email || user.uid,
+      employeeId,
       originalRecordId,
       notes
+    );
+    if (res.success) {
+      await loadRecords();
+    }
+    return res;
+  };
+
+  const handleDeleteDamage = async (
+    recordId: string,
+    productId?: string,
+    variantId?: string | null,
+    quantity?: number,
+    unitCost?: number
+  ) => {
+    const res = await deleteDamageLossRecord(
+      recordId,
+      tenantId,
+      locationId || 'main',
+      productId,
+      variantId,
+      quantity,
+      unitCost
     );
     if (res.success) {
       await loadRecords();
@@ -88,5 +110,6 @@ export function useDamageLoss(locationId?: string) {
     refresh: loadRecords,
     recordDamage: handleRecordDamage,
     recordRecovery: handleRecordRecovery,
+    deleteDamage: handleDeleteDamage,
   };
 }

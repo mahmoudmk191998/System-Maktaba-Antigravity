@@ -49,7 +49,16 @@ const Approvals = lazy(() => import("./pages/Approvals"));
 const DataCenter = lazy(() => import("./pages/DataCenter"));
 const SystemHealth = lazy(() => import("./pages/SystemHealth"));
 
-const queryClient = new QueryClient();
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 1000 * 60 * 5, // 5 minutes cache lifetime
+      gcTime: 1000 * 60 * 30, // 30 minutes garbage collection memory
+      refetchOnWindowFocus: false, // Disables aggressive reads on window refocus
+      retry: 1,
+    },
+  },
+});
 
 function ProtectedRoute({ children, requiredPerms }: { children: React.ReactNode; requiredPerms?: string[] }) {
   const { user, loading: authLoading } = useAuth();

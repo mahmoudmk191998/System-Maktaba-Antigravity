@@ -9,6 +9,7 @@ import { db } from '../../lib/firebase';
 import { Sale, SaleReturn, Product } from '../../types/retail.types';
 import { DateRange, DEFAULT_TIMEZONE, formatZonedDate, getZonedParts, parseToDate } from './reportingTimezone';
 import { buildKPIChange, KPIChange } from './analyticsDefinitions';
+import { fetchProductsCatalog } from './inventoryAnalytics.service';
 
 export interface SalesKPISummary {
   grossSales: KPIChange;
@@ -98,7 +99,8 @@ interface RawSalesPeriodData {
 export async function fetchSalesPeriodData(
   tenantId: string,
   dateRange: DateRange,
-  branchId?: string
+  branchId?: string,
+  timeZone: string = DEFAULT_TIMEZONE
 ): Promise<RawSalesPeriodData> {
   const startMs = new Date(dateRange.startIso).getTime();
   const endMs = new Date(dateRange.endIso).getTime();
@@ -108,13 +110,30 @@ export async function fetchSalesPeriodData(
 
     // Check branch
     const b = s.branchId || s.branch_id || s.destinationLocationId || s.locationId;
-    if (branchId && branchId !== 'all' && b && b !== branchId) return false;
+    if (branchId && branchId !== 'all' && b && b !== branchId && b !== 'default') return false;
+
+    // If preset is all-time (covers wide range)
+    if (dateRange.startDate <= '2020-01-01' && dateRange.endDate >= '2030-01-01') {
+      return true;
+    }
 
     // Parse date safely from any format (or default to now so un-dated sales aren't lost)
     const dVal = s.createdAt || s.created_at || s.completedAt || s.date || s.order_date || s.timestamp || s.saleDate || s.createdDate || s.time || s.updatedAt;
-    const date = parseToDate(dVal) || new Date();
+    const date = parseToDate(dVal);
+    if (!date) return true; // Don't drop sales with missing or unusual timestamp
     const ms = date.getTime();
-    return ms >= startMs && ms <= endMs;
+
+    // Check millisecond range
+    if (ms >= startMs && ms <= endMs) return true;
+
+    // Check date string in reporting timezone
+    const saleDateStr = formatZonedDate(date, timeZone);
+    if (saleDateStr && dateRange.startDate && dateRange.endDate) {
+      if (saleDateStr >= dateRange.startDate && saleDateStr <= dateRange.endDate) {
+        return true;
+      }
+    }
+    return false;
   };
 
   const normalizeSale = (d: any, id: string): Sale => {
@@ -185,39 +204,106 @@ export async function fetchSalesPeriodData(
     }
   };
 
-  // Helper to query collection safely by both tenantId and tenant_id
-  const fetchTenantDocs = async (collName: string) => {
+  // Fetch from 'sales', 'orders', and 'invoices' across all naming conventions
+  for (const collName of ['sales', 'orders', 'invoices']) {
+    let collFound = 0;
     if (tenantId) {
       try {
         const snap1 = await getDocs(query(collection(db, collName), where('tenantId', '==', tenantId)));
-        snap1.docs.forEach((d) => safeAddDoc(d.id, d.data()));
+        snap1.docs.forEach((d) => { safeAddDoc(d.id, d.data()); collFound++; });
       } catch (e) {}
       try {
         const snap2 = await getDocs(query(collection(db, collName), where('tenant_id', '==', tenantId)));
-        snap2.docs.forEach((d) => safeAddDoc(d.id, d.data()));
+        snap2.docs.forEach((d) => { safeAddDoc(d.id, d.data()); collFound++; });
       } catch (e) {}
     }
-  };
-
-  // Query both 'sales' and legacy 'orders' across both naming conventions
-  await Promise.all([
-    fetchTenantDocs('sales'),
-    fetchTenantDocs('orders'),
-  ]);
-
-  // Fallback: If no docs found with specific tenant filter, do safe collection read
-  if (salesDocsMap.size === 0) {
-    for (const collName of ['sales', 'orders']) {
+    // If no docs found with primary tenant, also check default tenant
+    if (collFound === 0 && tenantId && tenantId !== 'default') {
+      try {
+        const snap1 = await getDocs(query(collection(db, collName), where('tenantId', '==', 'default')));
+        snap1.docs.forEach((d) => { safeAddDoc(d.id, d.data()); collFound++; });
+      } catch (e) {}
+      try {
+        const snap2 = await getDocs(query(collection(db, collName), where('tenant_id', '==', 'default')));
+        snap2.docs.forEach((d) => { safeAddDoc(d.id, d.data()); collFound++; });
+      } catch (e) {}
+    }
+    // If still no docs found, try general collection read
+    if (collFound === 0) {
       try {
         const snap = await getDocs(collection(db, collName));
         snap.docs.forEach((d) => {
           const data = d.data();
           const docTenant = data.tenantId || data.tenant_id;
-          if (!tenantId || !docTenant || docTenant === tenantId || docTenant === 'default' || tenantId === 'default') {
+          if (!tenantId || tenantId === 'default' || !docTenant || docTenant === tenantId || docTenant === 'default') {
             safeAddDoc(d.id, data);
           }
         });
       } catch (e) {}
+    }
+  }
+
+  // If any orders/sales have no line items, attempt to load from 'order_items' or 'sale_items' collection
+  const missingItemsOrderIds = Array.from(salesDocsMap.entries())
+    .filter(([_, d]) => !d.items || d.items.length === 0)
+    .map(([id]) => id);
+
+  if (missingItemsOrderIds.length > 0) {
+    try {
+      for (let i = 0; i < missingItemsOrderIds.length; i += 10) {
+        const chunk = missingItemsOrderIds.slice(i, i + 10);
+        try {
+          const qItems = query(collection(db, 'order_items'), where('order_id', 'in', chunk));
+          const snapItems = await getDocs(qItems);
+          snapItems.forEach((docSnap) => {
+            const itemData = docSnap.data();
+            const ordId = itemData.order_id || itemData.orderId;
+            const ordDoc = salesDocsMap.get(ordId);
+            if (ordDoc) {
+              if (!ordDoc.items) ordDoc.items = [];
+              ordDoc.items.push({
+                id: docSnap.id,
+                productId: itemData.menu_item_id || itemData.productId || docSnap.id,
+                productName: itemData.name || itemData.productName || 'عنصر',
+                quantity: Number(itemData.quantity || 1),
+                baseQuantity: Number(itemData.quantity || 1),
+                unitPrice: Number(itemData.unit_price || itemData.price || 0),
+                unitCostSnapshot: Number(itemData.cost || 0),
+                totalCost: Number(itemData.cost || 0) * Number(itemData.quantity || 1),
+                lineTotal: Number(itemData.quantity || 1) * Number(itemData.unit_price || itemData.price || 0),
+                categoryName: itemData.category_id || 'عام',
+              });
+            }
+          });
+        } catch {}
+
+        try {
+          const qSaleItems = query(collection(db, 'sale_items'), where('sale_id', 'in', chunk));
+          const snapSaleItems = await getDocs(qSaleItems);
+          snapSaleItems.forEach((docSnap) => {
+            const itemData = docSnap.data();
+            const saleId = itemData.sale_id || itemData.saleId;
+            const saleDoc = salesDocsMap.get(saleId);
+            if (saleDoc) {
+              if (!saleDoc.items) saleDoc.items = [];
+              saleDoc.items.push({
+                id: docSnap.id,
+                productId: itemData.productId || docSnap.id,
+                productName: itemData.productNameSnapshot || itemData.productName || itemData.name || 'صنف',
+                quantity: Number(itemData.quantity || 1),
+                baseQuantity: Number(itemData.baseQuantity || itemData.quantity || 1),
+                unitPrice: Number(itemData.unitSellingPrice || itemData.unitPrice || itemData.price || 0),
+                unitCostSnapshot: Number(itemData.unitCostSnapshot || itemData.cost || 0),
+                totalCost: Number(itemData.totalCost || (Number(itemData.cost || 0) * Number(itemData.quantity || 1))),
+                lineTotal: Number(itemData.lineTotal || (Number(itemData.quantity || 1) * Number(itemData.unitSellingPrice || 0))),
+                categoryName: itemData.categorySnapshot || 'عام',
+              });
+            }
+          });
+        } catch {}
+      }
+    } catch (e) {
+      console.warn('Could not load line items fallback:', e);
     }
   }
 
@@ -236,32 +322,35 @@ export async function fetchSalesPeriodData(
     }
   };
 
-  const fetchTenantReturns = async (collName: string) => {
+  for (const collName of ['sale_returns', 'sales_returns']) {
+    let collFound = 0;
     if (tenantId) {
       try {
         const snap1 = await getDocs(query(collection(db, collName), where('tenantId', '==', tenantId)));
-        snap1.docs.forEach((d) => safeAddReturn(d.id, d.data()));
+        snap1.docs.forEach((d) => { safeAddReturn(d.id, d.data()); collFound++; });
       } catch {}
       try {
         const snap2 = await getDocs(query(collection(db, collName), where('tenant_id', '==', tenantId)));
-        snap2.docs.forEach((d) => safeAddReturn(d.id, d.data()));
+        snap2.docs.forEach((d) => { safeAddReturn(d.id, d.data()); collFound++; });
       } catch {}
     }
-  };
-
-  await Promise.all([
-    fetchTenantReturns('sale_returns'),
-    fetchTenantReturns('sales_returns'),
-  ]);
-
-  if (returnsDocsMap.size === 0) {
-    for (const collName of ['sale_returns', 'sales_returns']) {
+    if (collFound === 0 && tenantId && tenantId !== 'default') {
+      try {
+        const snap1 = await getDocs(query(collection(db, collName), where('tenantId', '==', 'default')));
+        snap1.docs.forEach((d) => { safeAddReturn(d.id, d.data()); collFound++; });
+      } catch {}
+      try {
+        const snap2 = await getDocs(query(collection(db, collName), where('tenant_id', '==', 'default')));
+        snap2.docs.forEach((d) => { safeAddReturn(d.id, d.data()); collFound++; });
+      } catch {}
+    }
+    if (collFound === 0) {
       try {
         const snap = await getDocs(collection(db, collName));
         snap.docs.forEach((d) => {
           const data = d.data();
           const docTenant = data.tenantId || data.tenant_id;
-          if (!tenantId || !docTenant || docTenant === tenantId || docTenant === 'default' || tenantId === 'default') {
+          if (!tenantId || tenantId === 'default' || !docTenant || docTenant === tenantId || docTenant === 'default') {
             safeAddReturn(d.id, data);
           }
         });
@@ -278,7 +367,11 @@ export async function fetchSalesPeriodData(
     const dVal = r.createdAt || r.created_at || r.returnDate || r.completedAt || r.timestamp;
     const date = parseToDate(dVal) || new Date();
     const ms = date.getTime();
-    if (ms >= startMs && ms <= endMs) {
+    const returnDateStr = formatZonedDate(date, timeZone);
+    const inRange = (ms >= startMs && ms <= endMs) || 
+      Boolean(returnDateStr && dateRange.startDate && dateRange.endDate && returnDateStr >= dateRange.startDate && returnDateStr <= dateRange.endDate);
+
+    if (inRange) {
       returns.push({
         id,
         ...r,
@@ -300,14 +393,21 @@ function computePeriodAggregates(data: RawSalesPeriodData) {
   let discounts = 0;
   let itemsSoldCount = 0;
   let cogs = 0;
+  let totalInvoiceTotals = 0;
+  let recordedGrossProfit = 0;
 
   for (const sale of data.sales) {
-    const total = Number(sale.total || 0);
-    const disc = Number(sale.discountTotal || sale.discount || 0);
-    const sub = Number(sale.subtotal || (total + disc));
+    const total = Number(sale.total ?? (sale as any).final_amount ?? (sale as any).grandTotal ?? 0);
+    const disc = Number(sale.discountTotal ?? sale.discount ?? (sale as any).discount_amount ?? 0);
+    const sub = Number(sale.subtotal ?? (sale as any).subtotal_amount ?? (total + disc));
 
-    grossSales += sub;
+    grossSales += (sub > 0 ? sub : total + disc);
     discounts += disc;
+    totalInvoiceTotals += total;
+
+    if (sale.grossProfit !== undefined && Number(sale.grossProfit) > 0) {
+      recordedGrossProfit += Number(sale.grossProfit);
+    }
 
     let saleItemsCount = 0;
     let saleCost = 0;
@@ -325,8 +425,8 @@ function computePeriodAggregates(data: RawSalesPeriodData) {
     itemsSoldCount += saleItemsCount;
 
     // Fallback 1: document-level costTotal
-    if (saleCost === 0 && (sale.costTotal || (sale as any).totalCost)) {
-      saleCost = Number(sale.costTotal || (sale as any).totalCost || 0);
+    if (saleCost === 0 && (sale.costTotal || (sale as any).totalCost || (sale as any).cogs)) {
+      saleCost = Number(sale.costTotal || (sale as any).totalCost || (sale as any).cogs || 0);
     }
     // Fallback 2: compute cost from total - grossProfit if grossProfit was saved
     if (saleCost === 0 && (sale.grossProfit !== undefined && Number(sale.grossProfit) > 0 && total > Number(sale.grossProfit))) {
@@ -338,13 +438,28 @@ function computePeriodAggregates(data: RawSalesPeriodData) {
   let returnsTotal = 0;
   let returnCogs = 0;
   for (const ret of data.returns) {
-    returnsTotal += Number(ret.refundAmount || ret.subtotalReturned || (ret as any).total || 0);
-    returnCogs += Number(ret.costReversed || 0);
+    returnsTotal += Number(ret.refundAmount ?? ret.subtotalReturned ?? (ret as any).total ?? 0);
+    returnCogs += Number(ret.costReversed ?? 0);
   }
 
   const netCogs = Math.max(0, cogs - returnCogs);
-  const netSales = Math.max(0, grossSales - discounts - returnsTotal);
-  const grossProfit = Math.max(0, netSales - netCogs);
+
+  // Net Sales calculation:
+  // In POS invoices, the sum of totals already incorporates discounts.
+  // Net sales = (gross billed amount) - (refunds)
+  const billedNet = Math.max(0, totalInvoiceTotals - returnsTotal);
+  const standardNet = Math.max(0, grossSales - discounts - returnsTotal);
+  const netSales = Math.max(billedNet, standardNet);
+
+  // Gross profit calculation with fallbacks
+  let grossProfit = Math.max(0, netSales - netCogs);
+  if (grossProfit === 0 && recordedGrossProfit > 0) {
+    grossProfit = Math.max(0, recordedGrossProfit - returnsTotal);
+  }
+  if (grossProfit === 0 && cogs === 0 && netSales > 0) {
+    grossProfit = recordedGrossProfit > 0 ? recordedGrossProfit : netSales;
+  }
+
   const grossMarginPct = netSales > 0 ? Number(((grossProfit / netSales) * 100).toFixed(2)) : 0;
   const transactionsCount = data.sales.length;
   const averageBasketSize = transactionsCount > 0 ? Number((itemsSoldCount / transactionsCount).toFixed(1)) : 0;
@@ -376,12 +491,17 @@ export async function generateSalesAnalytics(
   timeZone: string = DEFAULT_TIMEZONE,
   productsCatalog?: Map<string, Product>
 ): Promise<SalesAnalyticsReport> {
-  const currentData = await fetchSalesPeriodData(tenantId, currentRange, branchId);
+  let catalog = productsCatalog;
+  if (!catalog) {
+    catalog = await fetchProductsCatalog(tenantId);
+  }
+
+  const currentData = await fetchSalesPeriodData(tenantId, currentRange, branchId, timeZone);
   const curAgg = computePeriodAggregates(currentData);
 
   let prevAgg: ReturnType<typeof computePeriodAggregates> | undefined;
   if (comparisonRange) {
-    const prevData = await fetchSalesPeriodData(tenantId, comparisonRange, branchId);
+    const prevData = await fetchSalesPeriodData(tenantId, comparisonRange, branchId, timeZone);
     prevAgg = computePeriodAggregates(prevData);
   }
 
@@ -518,16 +638,26 @@ export async function generateSalesAnalytics(
       const unitCost = item.unitCostSnapshot ?? (item as any).costPriceSnapshot ?? 0;
       const lineCost = item.totalCost !== undefined ? item.totalCost : qty * unitCost;
 
+      const prod = catalog?.get(item.productId);
+      const resolvedProdName =
+        prod?.name ||
+        (prod as any)?.nameAr ||
+        (prod as any)?.title ||
+        item.productNameSnapshot ||
+        item.productName ||
+        item.name ||
+        'كتاب / صنف مسجل';
+
       // Category
-      const cat = item.categorySnapshot || 'Uncategorized';
+      const cat = prod?.category || item.categorySnapshot || 'عام';
       const cRec = catMap.get(cat) || { label: cat, units: 0, sales: 0, cogs: 0 };
       cRec.units += qty;
       cRec.sales += lineTotal;
       cRec.cogs += lineCost;
       catMap.set(cat, cRec);
 
-      // Brand
-      const brand = item.brandSnapshot || 'Generic / None';
+      // Brand / Publisher
+      const brand = prod?.brand || (prod as any)?.publisher || item.brandSnapshot || 'عام';
       const bRec = brandMap.get(brand) || { label: brand, units: 0, sales: 0, cogs: 0 };
       bRec.units += qty;
       bRec.sales += lineTotal;
@@ -535,11 +665,10 @@ export async function generateSalesAnalytics(
       brandMap.set(brand, bRec);
 
       // Book-specific metadata from catalog if available
-      const prod = productsCatalog?.get(item.productId);
-      const author = prod?.metadata?.author || (prod as any)?.author || 'General / Not Specified';
-      const pub = prod?.metadata?.publisher || (prod as any)?.publisher || 'General / Not Specified';
-      const subject = prod?.metadata?.subject || (prod as any)?.subject || 'General / Not Specified';
-      const grade = prod?.metadata?.gradeLevel || (prod as any)?.gradeLevel || 'All Grades / General';
+      const author = prod?.metadata?.author || (prod as any)?.author || (prod as any)?.bookAuthor || 'عام / غير محدد';
+      const pub = prod?.metadata?.publisher || (prod as any)?.publisher || (prod as any)?.bookPublisher || prod?.brand || 'عام / غير محدد';
+      const subject = prod?.metadata?.subject || (prod as any)?.subject || prod?.category || 'عام / غير محدد';
+      const grade = prod?.metadata?.gradeLevel || (prod as any)?.gradeLevel || (prod as any)?.educationalStage || 'كافة المراحل / عام';
 
       const aRec = authorMap.get(author) || { label: author, units: 0, sales: 0, cogs: 0 };
       aRec.units += qty;
@@ -567,7 +696,7 @@ export async function generateSalesAnalytics(
 
       if (!uniqueSaleItemProductIds.includes(item.productId)) {
         uniqueSaleItemProductIds.push(item.productId);
-        itemMapById.set(item.productId, item.productNameSnapshot || 'Product');
+        itemMapById.set(item.productId, resolvedProdName);
       }
     }
 

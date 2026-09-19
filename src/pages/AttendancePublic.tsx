@@ -169,7 +169,7 @@ export default function AttendancePublic() {
     }
 
     if (sessionInfo?.locationRestriction && locationStatus !== 'granted') {
-      setErrorMessage('يجب السماح بتحديد الموقع الجغرافي للتحقق من تواجدك داخل المطعم');
+      setErrorMessage('يجب السماح بتحديد الموقع الجغرافي للتحقق من تواجدك داخل المكتبة');
       requestLocation();
       return;
     }
@@ -225,7 +225,7 @@ export default function AttendancePublic() {
           </div>
           <h2 className="text-xl font-bold mb-2 text-rose-400">رمز الحضور غير صالح</h2>
           <p className="text-slate-400 text-sm mb-6 leading-relaxed">
-            {initError || 'الرمز الممسوح منتهي أو تم إلغاؤه من قبل إدارة المطعم. يرجى مراجعة المدير لمسح أحدث رمز QR.'}
+            {initError || 'الرمز الممسوح منتهي أو تم إلغاؤه من قبل إدارة المكتبة. يرجى مراجعة الإدارة لمسح أحدث رمز QR.'}
           </p>
           <Button onClick={loadSession} variant="outline" className="gap-2 border-slate-700">
             <RefreshCw className="w-4 h-4" />
@@ -410,7 +410,7 @@ export default function AttendancePublic() {
                     {locationStatus === 'granted' ? (
                       <div className="flex items-center gap-2 text-xs text-emerald-400 bg-emerald-500/10 p-2.5 rounded-lg border border-emerald-500/20">
                         <MapPin className="w-4 h-4 shrink-0" />
-                        <span>تم التحقق من الموقع الجغرافي داخل المطعم</span>
+                        <span>تم التحقق من الموقع الجغرافي داخل المكتبة</span>
                       </div>
                     ) : (
                       <div className="flex items-center justify-between gap-2 text-xs text-amber-400 bg-amber-500/10 p-2.5 rounded-lg border border-amber-500/20">
@@ -533,7 +533,7 @@ export default function AttendancePublic() {
 
       {/* Footer */}
       <footer className="py-3 text-center text-[11px] text-slate-600 border-t border-slate-900 safe-area-bottom">
-        نظام إدارة المطعم الذكي • الحضور والانصراف الآمن
+        نظام إدارة المكتبة الذكي • الحضور والانصراف الآمن
       </footer>
     </div>
   );

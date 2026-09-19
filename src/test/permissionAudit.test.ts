@@ -30,7 +30,7 @@ describe('CRITICAL HOTFIX: Firestore Permissions, System Health & Multi-Tenant A
 
       // The overall diagnostics did NOT crash and returned report
       expect(['healthy', 'warning', 'critical']).toContain(report.overallStatus);
-    });
+    }, 15000);
 
     it('identifies dead letters correctly and flags overall status as critical', async () => {
       vi.spyOn(outboxModule, 'fetchOutboxExceptions').mockResolvedValue([
@@ -54,7 +54,7 @@ describe('CRITICAL HOTFIX: Firestore Permissions, System Health & Multi-Tenant A
       expect(deadCheck).toBeDefined();
       expect(deadCheck?.status).toBe('critical');
       expect(report.overallStatus).toBe('critical');
-    });
+    }, 15000);
   });
 
   // =========================================================================

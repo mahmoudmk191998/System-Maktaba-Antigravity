@@ -32,6 +32,7 @@ interface MainLayoutProps {
   showBack?: boolean;
   onBack?: () => void;
   backFallback?: string;
+  fullBleed?: boolean;
 }
 
 function LiveClock() {
@@ -88,7 +89,7 @@ function LiveClock() {
   );
 }
 
-export function MainLayout({ children, title, subtitle, actions, showBack, onBack, backFallback }: MainLayoutProps) {
+export function MainLayout({ children, title, subtitle, actions, showBack, onBack, backFallback, fullBleed }: MainLayoutProps) {
   const { sidebarCollapsed, settings, bottomNavVisible, toggleBottomNav } = useAppStore();
   const isMobile = useIsMobile();
   const isOnline = navigator.onLine;
@@ -142,21 +143,27 @@ export function MainLayout({ children, title, subtitle, actions, showBack, onBac
 
   const displayName = profile?.full_name || (user as any)?.displayName || user?.email?.split('@')[0] || 'User';
   const initials = displayName.charAt(0) || 'U';
+  const isPOS = location.pathname === '/pos';
 
   return (
-    <div className="min-h-[100dvh] bg-background">
-      <Sidebar />
+    <div className={cn("bg-background", isPOS ? "h-[100dvh] max-h-[100dvh] overflow-hidden" : "min-h-[100dvh]")}>
+      {!isPOS && <Sidebar />}
 
       <motion.main
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         transition={{ duration: 0.5, ease: [0.2, 0.8, 0.2, 1] }}
         className={cn(
-          "min-h-[100dvh] pt-2 md:pt-4 px-2 md:px-6 w-full max-w-[1800px] mx-auto relative transition-all duration-300 pb-24",
-          bottomNavVisible ? "md:pb-28" : "md:pb-12"
+          isPOS
+            ? "h-[100dvh] max-h-[100dvh] overflow-hidden p-0 w-full relative"
+            : cn(
+                "min-h-[100dvh] pt-2 md:pt-4 px-2 md:px-6 w-full max-w-[1800px] mx-auto relative transition-all duration-300 pb-24",
+                bottomNavVisible ? "md:pb-28" : "md:pb-12"
+              )
         )}
       >
-        {/* Top Header */}
+        {/* Top Header - Omitted on POS */}
+        {!isPOS && (
         <header className={cn(
           "sticky top-0 z-40 transition-all duration-500",
           isMobile 
@@ -343,16 +350,21 @@ export function MainLayout({ children, title, subtitle, actions, showBack, onBac
             </div>
           )}
         </header>
+        )}
 
-        <div className="p-2 sm:p-4 md:p-6 pb-6 md:pb-12">
-          <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }}>
-            {children}
-          </motion.div>
-        </div>
+        {isPOS || fullBleed ? (
+          children
+        ) : (
+          <div className="p-2 sm:p-4 md:p-6 pb-6 md:pb-12">
+            <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }}>
+              {children}
+            </motion.div>
+          </div>
+        )}
       </motion.main>
 
       {/* Native Mobile Bottom Navigation Dock */}
-      <MobileBottomNav />
+      {!isPOS && <MobileBottomNav />}
     </div>
   );
 }

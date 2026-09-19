@@ -17,7 +17,11 @@ import {
   limit,
   startAfter,
   runTransaction,
+  updateDoc,
+  setDoc,
   type DocumentSnapshot,
+  type DocumentReference,
+  type DocumentData,
 } from 'firebase/firestore';
 import type {
   Sale,
@@ -40,6 +44,7 @@ import {
   normalizeStockBalance,
   calculateWeightedAverageCost,
 } from '@/services/inventory/retailInventory.service';
+import { applyReturnToStatsInTransaction } from '@/services/analytics/aggregatedStats.service';
 import { formatSequenceNumber } from './invoiceNumber.service';
 import { completeSaleTransaction, type CartLineItemInput } from './sales.service';
 
@@ -148,9 +153,34 @@ export async function completeSaleReturnTransaction(
   const counterDocId = `${tenantId}_${branchId}_return_${year}`;
   const counterRef = doc(db, 'sequence_counters', counterDocId);
 
+  // Read existing returns and receivables before transaction for clean read-phase isolation
+  const existingReturnsQuery = query(
+    collection(db, 'sale_returns'),
+    where('tenantId', '==', tenantId),
+    where('saleId', '==', saleId)
+  );
+  const existingReturnsSnap = await getDocs(existingReturnsQuery);
+
+  const recQuery = query(
+    collection(db, 'customer_receivables'),
+    where('tenantId', '==', tenantId),
+    where('saleId', '==', saleId)
+  );
+  const recSnap = await getDocs(recQuery);
+  let existingReceivable: CustomerReceivable | null = null;
+  let receivableRef: DocumentReference<DocumentData> | null = null;
+  if (!recSnap.empty) {
+    existingReceivable = recSnap.docs[0].data() as CustomerReceivable;
+    receivableRef = doc(db, 'customer_receivables', existingReceivable.id);
+  }
+
   try {
     const txResult = await runTransaction(db, async (transaction) => {
-      // 1. Idempotency Check
+      // ==========================================
+      // PHASE 1: ALL TRANSACTION READS FIRST
+      // ==========================================
+
+      // 1. Idempotency Check Read
       const idempSnap = await transaction.get(idempRef);
       if (idempSnap.exists()) {
         const idempData = idempSnap.data();
@@ -186,39 +216,18 @@ export async function completeSaleReturnTransaction(
         );
       }
 
-      // 3. Read All Existing Returns for this Sale to check cumulative quantities
-      const existingReturnsQuery = query(
-        collection(db, 'sale_returns'),
-        where('tenantId', '==', tenantId),
-        where('saleId', '==', saleId)
-      );
-      const existingReturnsSnap = await getDocs(existingReturnsQuery);
-
-      // Read Customer & Customer Receivable for Credit Sales
+      // 3. Read Customer Document if customerId exists
       let customerData: Customer | null = null;
-      let customerRef: any = null;
-      let existingReceivable: CustomerReceivable | null = null;
-      let receivableRef: any = null;
-
+      let customerRef: DocumentReference<DocumentData> | null = null;
       if (saleData.customerId) {
         customerRef = doc(db, 'customers', saleData.customerId);
         const customerSnap = await transaction.get(customerRef);
         if (customerSnap.exists()) {
           customerData = customerSnap.data() as Customer;
         }
-
-        const recQuery = query(
-          collection(db, 'customer_receivables'),
-          where('tenantId', '==', tenantId),
-          where('saleId', '==', saleId)
-        );
-        const recSnap = await getDocs(recQuery);
-        if (!recSnap.empty) {
-          existingReceivable = recSnap.docs[0].data() as CustomerReceivable;
-          receivableRef = doc(db, 'customer_receivables', existingReceivable.id);
-        }
       }
 
+      // 4. In-Memory Calculation of Return Items & Restock Requirements
       const alreadyReturnedBaseMap = new Map<string, number>();
       existingReturnsSnap.docs.forEach((d) => {
         const ret = d.data() as SaleReturn;
@@ -230,7 +239,6 @@ export async function completeSaleReturnTransaction(
         }
       });
 
-      // 4. Validate Each Requested Return Item & Compute Proportional Reversals
       const returnItemsToRecord: SaleReturnItem[] = [];
       let totalSubtotalReturned = 0;
       let totalDiscountReversed = 0;
@@ -239,7 +247,6 @@ export async function completeSaleReturnTransaction(
       let totalCostReversed = 0;
       let totalProfitReversed = 0;
 
-      // Group restocked items by target stock document
       const restockRequirements = new Map<string, {
         productId: string;
         variantId?: string | null;
@@ -270,17 +277,14 @@ export async function completeSaleReturnTransaction(
           );
         }
 
-        // Calculate Proportional Financials based on original sale snapshot
         const proportion = reqBaseQty / originalItem.baseQuantity;
         const lineUnitSelling = originalItem.unitSellingPrice;
         const lineSubtotalReturned = Math.round(lineUnitSelling * reqItem.quantity * 100) / 100;
 
-        // Reversal of discounts and taxes proportional to returned quantity
         const lineDiscountReversed = Math.round(originalItem.discountAmount * proportion * 100) / 100;
         const lineTaxReversed = Math.round(originalItem.taxAmount * proportion * 100) / 100;
         const lineRefundAmount = Math.max(0, Math.round((lineSubtotalReturned - lineDiscountReversed + lineTaxReversed) * 100) / 100);
 
-        // Historical cost reversal using original sale WAC cost snapshot!
         const unitCostSnapshot = originalItem.unitCostSnapshot;
         const lineCostReversed = Math.round(unitCostSnapshot * reqBaseQty * 100) / 100;
         const lineProfitReversed = Math.round((lineRefundAmount - lineCostReversed) * 100) / 100;
@@ -323,7 +327,6 @@ export async function completeSaleReturnTransaction(
 
         returnItemsToRecord.push(returnItemRecord);
 
-        // Group restock items
         if (reqItem.restock) {
           const variantId = originalItem.variantId && originalItem.variantId.trim() !== '' ? originalItem.variantId.trim() : null;
           const stockKey = getBranchStockDocId(tenantId, locationId, originalItem.productId, variantId);
@@ -344,12 +347,46 @@ export async function completeSaleReturnTransaction(
         }
       }
 
-      // 5. Generate Return Number atomically
+      // 5. Read all branch_stock documents needed for restocked items
+      const stockSnapsMap = new Map<string, {
+        stockRef: DocumentReference<DocumentData>;
+        stockSnap: DocumentSnapshot<DocumentData>;
+        req: {
+          productId: string;
+          variantId?: string | null;
+          totalBaseQty: number;
+          costSnapshot: number;
+          items: ReturnItemInput[];
+        };
+      }>();
+
+      for (const [stockKey, req] of restockRequirements) {
+        const stockRef = doc(db, 'branch_stock', stockKey);
+        const stockSnap = await transaction.get(stockRef);
+        stockSnapsMap.set(stockKey, { stockRef, stockSnap, req });
+      }
+
+      // 6. Read Return Number sequence counter
       const counterSnap = await transaction.get(counterRef);
       let nextCounter = 1;
       if (counterSnap.exists()) {
         nextCounter = (counterSnap.data().current || 0) + 1;
       }
+
+      // 7. Read Cashier Shift document if shiftId exists
+      let shiftRef: DocumentReference<DocumentData> | null = null;
+      let shiftSnap: DocumentSnapshot<DocumentData> | null = null;
+      if (shiftId) {
+        shiftRef = doc(db, 'cashier_shifts', shiftId);
+        shiftSnap = await transaction.get(shiftRef);
+      }
+
+      // ==========================================
+      // PHASE 2: ALL TRANSACTION WRITES NOW FOLLOW
+      // (NO transaction.get calls below this line!)
+      // ==========================================
+
+      // Write 1: Update sequence counter
       transaction.set(counterRef, {
         tenantId,
         branchId,
@@ -364,11 +401,8 @@ export async function completeSaleReturnTransaction(
       const returnId = returnRef.id;
       const now = new Date().toISOString();
 
-      // 6. Restock Resellable Items & Update Destination WAC
-      for (const [stockKey, req] of restockRequirements) {
-        const stockRef = doc(db, 'branch_stock', stockKey);
-        const stockSnap = await transaction.get(stockRef);
-
+      // Write 2: Restock Resellable Items & Update Destination WAC
+      for (const [stockKey, { stockRef, stockSnap, req }] of stockSnapsMap) {
         let beforeOnHand = 0;
         let reserved = 0;
         let currentCost = req.costSnapshot;
@@ -383,7 +417,6 @@ export async function completeSaleReturnTransaction(
         const afterOnHand = beforeOnHand + req.totalBaseQty;
         const afterAvailable = Math.max(0, afterOnHand - reserved);
 
-        // Recalculate WAC with incoming returned items using original cost snapshot!
         const updatedWac = calculateWeightedAverageCost(
           beforeOnHand,
           currentCost,
@@ -435,7 +468,7 @@ export async function completeSaleReturnTransaction(
         transaction.set(moveRef, moveRecord);
       }
 
-      // 7. Record Damaged Non-Restocked Items directly in damage_loss_records
+      // Write 3: Record Damaged Non-Restocked Items directly in damage_loss_records
       for (const item of returnItemsToRecord) {
         if (!item.restock) {
           const dmgRef = doc(collection(db, 'damage_loss_records'));
@@ -459,7 +492,7 @@ export async function completeSaleReturnTransaction(
         }
       }
 
-      // 8. Write Sale Return Document
+      // Write 4: Write Sale Return Document
       const saleReturnRecord: SaleReturn = {
         id: returnId,
         tenantId,
@@ -493,11 +526,11 @@ export async function completeSaleReturnTransaction(
       };
       transaction.set(returnRef, saleReturnRecord);
 
-      // 9. Process Accounts Receivable & Customer Ledger Integration (Phase 8 Audit 4)
+      // Write 5: Process Accounts Receivable & Customer Ledger Integration
       let receivableReduction = 0;
       let effectiveCashRefund = totalRefundCalculated;
 
-      if (existingReceivable && Number(existingReceivable.remainingAmount || 0) > 0) {
+      if (existingReceivable && Number(existingReceivable.remainingAmount || 0) > 0 && receivableRef) {
         const currentRemaining = Number(existingReceivable.remainingAmount || 0);
         receivableReduction = Math.min(currentRemaining, totalRefundCalculated);
         const newRem = Math.max(0, Math.round((currentRemaining - receivableReduction) * 100) / 100);
@@ -511,7 +544,6 @@ export async function completeSaleReturnTransaction(
           updatedAt: now,
         });
 
-        // Credit decreases customer debt to bookstore
         if (customerData && customerRef) {
           const prevBal = Number(customerData.currentBalance ?? customerData.balance ?? 0);
           const newBal = Math.round((prevBal - receivableReduction) * 100) / 100;
@@ -548,11 +580,10 @@ export async function completeSaleReturnTransaction(
           customerData.currentBalance = newBal;
         }
 
-        // Remaining refund amount beyond the receivable reduction
         effectiveCashRefund = Math.max(0, Math.round((totalRefundCalculated - receivableReduction) * 100) / 100);
       }
 
-      // If customer requested refund as Customer Credit, or excess return converted to credit
+      // Write 6: If customer requested refund as Customer Credit, or excess return converted to credit
       if (refundMethod === 'customer_credit' && customerData && customerRef && effectiveCashRefund > 0) {
         const prevBal = Number(customerData.currentBalance ?? customerData.balance ?? 0);
         const newBal = Math.round((prevBal - effectiveCashRefund) * 100) / 100;
@@ -586,10 +617,10 @@ export async function completeSaleReturnTransaction(
           updatedBy: cashierId,
         });
 
-        effectiveCashRefund = 0; // Handled as customer credit, no cash out of register
+        effectiveCashRefund = 0;
       }
 
-      // 10. Write Refund Record
+      // Write 7: Write Refund Record
       const refundRef = doc(collection(db, 'sale_refunds'));
       const refundRecord: SaleRefundRecord = {
         id: refundRef.id,
@@ -605,38 +636,32 @@ export async function completeSaleReturnTransaction(
       };
       transaction.set(refundRef, refundRecord);
 
-      // 11. Update Cash Register Shift only by actual cash refunded from drawer
-      if (refundMethod === 'cash' && shiftId && effectiveCashRefund > 0) {
-        const shiftRef = doc(db, 'cashier_shifts', shiftId);
-        const shiftSnap = await transaction.get(shiftRef);
-        if (shiftSnap.exists()) {
-          const shiftData = shiftSnap.data() as CashierShift;
-          transaction.update(shiftRef, {
-            totalRefunds: (shiftData.totalRefunds || 0) + effectiveCashRefund,
-            updatedAt: now,
-          });
+      // Write 8: Update Cash Register Shift only by actual cash refunded from drawer
+      if (refundMethod === 'cash' && shiftRef && shiftSnap && shiftSnap.exists() && effectiveCashRefund > 0) {
+        const shiftData = shiftSnap.data() as CashierShift;
+        transaction.update(shiftRef, {
+          totalRefunds: (shiftData.totalRefunds || 0) + effectiveCashRefund,
+          updatedAt: now,
+        });
 
-          // Write cash register transaction
-          const regTxRef = doc(collection(db, 'cash_register_transactions'));
-          transaction.set(regTxRef, {
-            id: regTxRef.id,
-            tenantId,
-            branchId,
-            shiftId,
-            cashierId,
-            type: 'refund',
-            amount: effectiveCashRefund,
-            reason: `استرداد نقدي لمرتجع رقم ${returnNumber}`,
-            createdAt: now,
-          });
-        }
+        const regTxRef = doc(collection(db, 'cash_register_transactions'));
+        transaction.set(regTxRef, {
+          id: regTxRef.id,
+          tenantId,
+          branchId,
+          shiftId,
+          cashierId,
+          type: 'refund',
+          amount: effectiveCashRefund,
+          reason: `استرداد نقدي لمرتجع رقم ${returnNumber}`,
+          createdAt: now,
+        });
       }
 
-      // 11. Update Original Sale Summary Fields without altering original items!
+      // Write 9: Update Original Sale Summary Fields without altering original items
       const prevReturnedAmount = Number(saleData.returnedAmount || 0);
       const newReturnedAmount = prevReturnedAmount + totalRefundCalculated;
 
-      // Check if all items across the sale are now fully returned
       let isFullyReturned = true;
       for (const si of saleData.items) {
         const returnedBase = (alreadyReturnedBaseMap.get(si.id) || 0) +
@@ -654,7 +679,18 @@ export async function completeSaleReturnTransaction(
         updatedAt: now,
       });
 
-      // 12. Register Idempotency Lock
+      // Write 10: Apply return to Aggregated Daily & Monthly Statistics atomically
+      try {
+        await applyReturnToStatsInTransaction(transaction, tenantId, now, {
+          refundAmount: totalRefundCalculated,
+          costReversed: totalCostReversed,
+          returnedItemsCount: returnItemsToRecord.reduce((acc, it) => acc + Number(it.quantity || 1), 0),
+        });
+      } catch (statsErr) {
+        console.warn('Stats aggregation inside return transaction warning:', statsErr);
+      }
+
+      // Write 11: Register Idempotency Lock
       transaction.set(idempRef, {
         tenantId,
         idempotencyKey,
@@ -717,6 +753,9 @@ export async function completeSaleExchangeTransaction(
   }
 
   // 1. Process Return portion
+  // Note: In an exchange, the return amount serves as store credit for the replacement goods.
+  // We use refundMethod: 'credit' so the cash drawer is not prematurely depleted.
+  // The actual net cash difference (if any) is settled strictly in step 2.
   const returnRes = await completeSaleReturnTransaction({
     tenantId,
     branchId,
@@ -726,7 +765,7 @@ export async function completeSaleExchangeTransaction(
     cashierId,
     processedBy,
     items: returnItems,
-    refundMethod: differencePaymentMethod,
+    refundMethod: 'credit',
     shiftId,
     notes: `جزء من عملية استبدال: ${notes || ''}`,
     clientReturnId: `ret_${clientExchangeId}`,
@@ -748,12 +787,15 @@ export async function completeSaleExchangeTransaction(
   const calculatedNewSubtotal = newItems.reduce((acc, i) => acc + (i.unitSellingPrice * i.quantity), 0);
   const difference = Math.round((calculatedNewSubtotal - returnCreditAmount) * 100) / 100;
 
-  // Determine payments for new sale: return credit + difference if customer pays
+  // Determine payments for new sale:
+  // If difference > 0: Customer pays the difference + exchange credit covers the rest
+  // If difference <= 0: Exchange credit covers the entire new sale total
   const newSalePayments: any[] = [];
-  if (returnCreditAmount > 0) {
+  const creditApplied = Math.min(returnCreditAmount, calculatedNewSubtotal);
+  if (creditApplied > 0) {
     newSalePayments.push({
       method: 'other',
-      amount: Math.min(returnCreditAmount, calculatedNewSubtotal),
+      amount: creditApplied,
       referenceNumber: `رصيد استبدال من مرتجع ${returnRes.saleReturn.returnNumber}`,
     });
   }
@@ -791,8 +833,27 @@ export async function completeSaleExchangeTransaction(
     };
   }
 
-  // 3. Record Exchange Document
+  // If customer had excess credit (difference < 0) and settlement is cash, record cash drawer refund
+  if (difference < 0 && shiftId && differencePaymentMethod === 'cash') {
+    try {
+      const shiftRef = doc(db, 'cashier_shifts', shiftId);
+      const shiftSnap = await getDoc(shiftRef);
+      if (shiftSnap.exists()) {
+        const shiftData = shiftSnap.data() as CashierShift;
+        const refundAmt = Math.abs(difference);
+        await updateDoc(shiftRef, {
+          totalRefunds: (shiftData.totalRefunds || 0) + refundAmt,
+          updatedAt: new Date().toISOString(),
+        });
+      }
+    } catch (e) {
+      console.warn('Could not record cash drawer excess refund for shift:', e);
+    }
+  }
+
+  // 3. Record Exchange Document in sale_exchanges
   const exchangeRef = doc(collection(db, 'sale_exchanges'));
+  const settlementType = difference > 0 ? 'customer_pays' : difference < 0 ? 'customer_refunded' : 'even_exchange';
   const exchangeRecord: SaleExchange = {
     id: exchangeRef.id,
     tenantId,
@@ -805,30 +866,78 @@ export async function completeSaleExchangeTransaction(
     oldItemsValue: returnCreditAmount,
     newItemsValue: calculatedNewSubtotal,
     difference,
-    settlementType: difference > 0 ? 'customer_pays' : difference < 0 ? 'customer_refunded' : 'even_exchange',
+    settlementType,
     settlementMethod: differencePaymentMethod,
     processedBy,
     createdAt: new Date().toISOString(),
   };
 
   try {
-    const { setDoc } = await import('firebase/firestore');
     await setDoc(exchangeRef, exchangeRecord);
   } catch (err) {
     console.warn('Could not save exchange linking record:', err);
   }
 
+  // 4. Update return document with exchange link and metadata
+  try {
+    const returnDocRef = doc(db, 'sale_returns', returnRes.saleReturn.id);
+    await updateDoc(returnDocRef, {
+      isExchange: true,
+      exchangeId: exchangeRef.id,
+      replacementSaleId: saleRes.sale.id,
+      replacementInvoiceNumber: saleRes.sale.invoiceNumber,
+      difference,
+      settlementType,
+      exchangeNewItemsCount: newItems.length,
+    });
+  } catch (err) {
+    console.warn('Could not update return document with exchange link:', err);
+  }
+
+  // 5. Update original sale document with exchange link
+  try {
+    const origSaleRef = doc(db, 'sales', saleId);
+    await updateDoc(origSaleRef, {
+      hasExchange: true,
+      exchangeInvoiceNumber: saleRes.sale.invoiceNumber,
+    });
+  } catch (err) {
+    console.warn('Could not update original sale document with exchange link:', err);
+  }
+
+  // 6. Update new sale document with origin link
+  try {
+    const newSaleRef = doc(db, 'sales', saleRes.sale.id);
+    await updateDoc(newSaleRef, {
+      isExchangeReplacement: true,
+      exchangeOriginInvoice: returnRes.saleReturn.invoiceNumberSnapshot,
+    });
+  } catch (err) {
+    console.warn('Could not update new sale document with exchange link:', err);
+  }
+
+  const enrichedReturn: SaleReturn = {
+    ...returnRes.saleReturn,
+    isExchange: true,
+    exchangeId: exchangeRef.id,
+    replacementSaleId: saleRes.sale.id,
+    replacementInvoiceNumber: saleRes.sale.invoiceNumber,
+    difference,
+    settlementType,
+    exchangeNewItemsCount: newItems.length,
+  };
+
   return {
     success: true,
     isIdempotentReplay: returnRes.isIdempotentReplay,
     exchange: exchangeRecord,
-    saleReturn: returnRes.saleReturn,
+    saleReturn: enrichedReturn,
     newSale: saleRes.sale,
   };
 }
 
 /**
- * Fetches returns with cursor-based pagination and filtering
+ * Fetches returns with cursor-based pagination, resilient fallback, and exchange cross-referencing
  */
 export interface FetchReturnsOptions {
   branchId?: string;
@@ -846,39 +955,107 @@ export async function fetchSaleReturnsFromDb(
 ): Promise<{ returns: SaleReturn[]; hasMore: boolean; lastVisible?: DocumentSnapshot }> {
   if (!tenantId) return { returns: [], hasMore: false };
 
-  const { branchId, saleId, returnNumber, startDate, endDate, pageSize = 20, lastVisible } = options;
-  const constraints: any[] = [where('tenantId', '==', tenantId)];
+  const { branchId, saleId, returnNumber, startDate, endDate, pageSize = 50 } = options;
 
-  if (branchId) constraints.push(where('branchId', '==', branchId));
-  if (saleId) constraints.push(where('saleId', '==', saleId));
-  if (returnNumber) constraints.push(where('returnNumber', '==', returnNumber.trim().toUpperCase()));
-  if (startDate) constraints.push(where('createdAt', '>=', startDate));
-  if (endDate) constraints.push(where('createdAt', '<=', endDate));
+  try {
+    // 1. Fetch returns from both tenantId and tenant_id fields across collections
+    const returnsMap = new Map<string, SaleReturn>();
 
-  constraints.push(orderBy('createdAt', 'desc'));
-  constraints.push(limit(pageSize + 1));
+    for (const collName of ['sale_returns', 'sales_returns']) {
+      for (const tenantKey of ['tenantId', 'tenant_id']) {
+        try {
+          const snap = await getDocs(query(collection(db, collName), where(tenantKey, '==', tenantId)));
+          snap.docs.forEach((d) => {
+            if (!returnsMap.has(d.id)) {
+              returnsMap.set(d.id, { id: d.id, ...d.data() } as SaleReturn);
+            }
+          });
+        } catch {}
+      }
+    }
 
-  if (lastVisible) {
-    constraints.push(startAfter(lastVisible));
+    // Fallback: If map is empty and tenantId is provided, do a safe collection scan
+    if (returnsMap.size === 0) {
+      try {
+        const snap = await getDocs(collection(db, 'sale_returns'));
+        snap.docs.forEach((d) => {
+          const data = d.data();
+          const docTenant = data.tenantId || data.tenant_id;
+          if (!tenantId || tenantId === 'default' || !docTenant || docTenant === tenantId || docTenant === 'default') {
+            returnsMap.set(d.id, { id: d.id, ...data } as SaleReturn);
+          }
+        });
+      } catch {}
+    }
+
+    // 2. Fetch exchanges to cross-reference and enrich returns
+    const exchangesMap = new Map<string, SaleExchange>();
+    for (const tenantKey of ['tenantId', 'tenant_id']) {
+      try {
+        const snap = await getDocs(query(collection(db, 'sale_exchanges'), where(tenantKey, '==', tenantId)));
+        snap.docs.forEach((d) => {
+          const data = { id: d.id, ...d.data() } as SaleExchange;
+          if (data.returnId) exchangesMap.set(data.returnId, data);
+          if (data.originalSaleId) exchangesMap.set(data.originalSaleId, data);
+        });
+      } catch {}
+    }
+
+    // 3. Enrich returns with exchange details
+    let returnsList: SaleReturn[] = Array.from(returnsMap.values()).map((ret) => {
+      const ex = exchangesMap.get(ret.id) || (ret.exchangeId ? exchangesMap.get(ret.exchangeId) : undefined) || exchangesMap.get(ret.saleId);
+      if (ex) {
+        return {
+          ...ret,
+          isExchange: true,
+          exchangeId: ex.id,
+          replacementSaleId: ex.newSaleId,
+          replacementInvoiceNumber: ex.newInvoiceNumber,
+          difference: ex.difference !== undefined ? ex.difference : ret.difference,
+          settlementType: ex.settlementType || ret.settlementType,
+        };
+      }
+      return ret;
+    });
+
+    // 4. In-memory filtering (resilient to composite index errors)
+    if (branchId && branchId !== 'all') {
+      returnsList = returnsList.filter((r) => (r.branchId || (r as any).branch_id) === branchId);
+    }
+    if (saleId) {
+      returnsList = returnsList.filter((r) => r.saleId === saleId || (r as any).originalSaleId === saleId);
+    }
+    if (returnNumber) {
+      const qNum = returnNumber.trim().toUpperCase();
+      returnsList = returnsList.filter(
+        (r) =>
+          (r.returnNumber || '').toUpperCase().includes(qNum) ||
+          (r.invoiceNumberSnapshot || '').toUpperCase().includes(qNum) ||
+          (r.replacementInvoiceNumber || '').toUpperCase().includes(qNum)
+      );
+    }
+    if (startDate) {
+      returnsList = returnsList.filter((r) => (r.createdAt || '') >= startDate);
+    }
+    if (endDate) {
+      returnsList = returnsList.filter((r) => (r.createdAt || '') <= endDate);
+    }
+
+    // Sort descending by date
+    returnsList.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+
+    const hasMore = returnsList.length > pageSize;
+    if (hasMore) {
+      returnsList = returnsList.slice(0, pageSize);
+    }
+
+    return {
+      returns: returnsList,
+      hasMore,
+      lastVisible: undefined,
+    };
+  } catch (err) {
+    console.error('fetchSaleReturnsFromDb error:', err);
+    return { returns: [], hasMore: false };
   }
-
-  const q = query(collection(db, 'sale_returns'), ...constraints);
-  const snap = await getDocs(q);
-
-  let docs = snap.docs;
-  const hasMore = docs.length > pageSize;
-  if (hasMore) {
-    docs = docs.slice(0, pageSize);
-  }
-
-  const returns = docs.map((d) => ({
-    id: d.id,
-    ...d.data(),
-  } as SaleReturn));
-
-  return {
-    returns,
-    hasMore,
-    lastVisible: docs.length > 0 ? docs[docs.length - 1] : undefined,
-  };
 }

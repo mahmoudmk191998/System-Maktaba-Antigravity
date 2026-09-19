@@ -1,7 +1,9 @@
 import { db } from '@/lib/firebase';
-import { collection, query, where, getDocs } from 'firebase/firestore';
+import { collection, query, where, getDocs, limit as fsLimit } from 'firebase/firestore';
 import type { Expense } from '@/types/expenses';
 import type { Advance, PayrollRecord } from '@/types/payroll';
+import { parseToDate } from './analytics/reportingTimezone';
+import { firestoreLogger } from '@/lib/firestoreLogger';
 
 export interface ExecutiveFinancialMetrics {
   // Sales Metrics
@@ -71,11 +73,11 @@ export function getDateBounds(dateRange: string, customStart?: string, customEnd
       start.setHours(0, 0, 0, 0);
       break;
     case 'month':
-      start.setMonth(now.getMonth() - 1);
+      start.setDate(1);
       start.setHours(0, 0, 0, 0);
       break;
     case 'year':
-      start.setFullYear(now.getFullYear() - 1);
+      start.setMonth(0, 1);
       start.setHours(0, 0, 0, 0);
       break;
     case 'custom':
@@ -90,8 +92,10 @@ export function getDateBounds(dateRange: string, customStart?: string, customEnd
       break;
     case 'all':
     default:
-      start.setFullYear(2020, 0, 1);
+      start.setFullYear(2000, 0, 1);
       start.setHours(0, 0, 0, 0);
+      end.setFullYear(2099, 11, 31);
+      end.setHours(23, 59, 59, 999);
       break;
   }
 
@@ -112,27 +116,50 @@ export async function fetchExecutiveFinancialMetrics(
   const { start, end } = getDateBounds(dateRange, customStart, customEnd);
   const isAllBranches = !branchId || branchId === 'all';
 
-  // 1. Fetch Sales (Retail Sales Source of Truth)
-  const salesConstraints: any[] = [where('tenantId', '==', tenantId)];
-  if (!isAllBranches) {
-    salesConstraints.push(where('branchId', '==', branchId));
-  }
-  let salesSnap = await getDocs(query(collection(db, 'sales'), ...salesConstraints));
-  if (salesSnap.empty) {
-    // Fallback to legacy orders or tenant_id if sales collection is not populated
-    const fallbackSnap = await getDocs(query(collection(db, 'orders'), where('tenant_id', '==', tenantId)));
-    if (!fallbackSnap.empty) {
-      salesSnap = fallbackSnap;
-    }
-  }
-  const rawSales = salesSnap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
+  // 1. Fetch Sales (Retail Sales Source of Truth) with comprehensive fallbacks
+  const salesMap = new Map<string, any>();
+  const tryLoadSales = async (col: string, field: string, val: string) => {
+    try {
+      const snap = await getDocs(query(collection(db, col), where(field, '==', val)));
+      snap.docs.forEach((d) => {
+        if (!salesMap.has(d.id)) salesMap.set(d.id, { id: d.id, ...d.data() });
+      });
+    } catch {}
+  };
 
-  // Filter valid completed/paid sales within date bounds
-  const validSales = rawSales.filter((s) => {
-    const sDateStr = s.createdAt || s.created_at;
-    if (!sDateStr) return false;
-    if (s.status === 'cancelled' || s.saleStatus === 'cancelled') return false;
-    const sDate = new Date(sDateStr);
+  if (tenantId) {
+    await tryLoadSales('sales', 'tenantId', tenantId);
+    await tryLoadSales('sales', 'tenant_id', tenantId);
+    await tryLoadSales('orders', 'tenantId', tenantId);
+    await tryLoadSales('orders', 'tenant_id', tenantId);
+  }
+  if (salesMap.size === 0) {
+    await tryLoadSales('sales', 'tenantId', 'default');
+    await tryLoadSales('sales', 'tenant_id', 'default');
+    await tryLoadSales('orders', 'tenantId', 'default');
+    await tryLoadSales('orders', 'tenant_id', 'default');
+  }
+  if (salesMap.size === 0) {
+    try {
+      const snap = await getDocs(collection(db, 'sales'));
+      snap.docs.forEach((d) => {
+        const data = d.data();
+        const docTenant = data.tenantId || data.tenant_id;
+        if (!tenantId || tenantId === 'default' || !docTenant || docTenant === tenantId || docTenant === 'default') {
+          if (!salesMap.has(d.id)) salesMap.set(d.id, { id: d.id, ...data });
+        }
+      });
+    } catch {}
+  }
+
+  // Filter valid completed/paid sales within date bounds and branch
+  const validSales = Array.from(salesMap.values()).filter((s) => {
+    const sBranch = s.branchId || s.branch_id || s.destinationLocationId || s.locationId;
+    if (!isAllBranches && sBranch && sBranch !== branchId && sBranch !== 'default') return false;
+    if (s.status === 'cancelled' || s.saleStatus === 'cancelled' || s.status === 'voided') return false;
+    const sDateVal = s.createdAt || s.created_at || s.completedAt || s.date || s.order_date || s.timestamp || s.saleDate;
+    const sDate = parseToDate(sDateVal);
+    if (!sDate) return false;
     return sDate >= start && sDate <= end;
   });
 
@@ -165,23 +192,94 @@ export async function fetchExecutiveFinancialMetrics(
     }
   });
 
+  // 1.5 Fetch Returns & Deduct from Sales Metrics with fallbacks
+  const returnsMap = new Map<string, any>();
+  const tryLoadReturns = async (col: string, field: string, val: string) => {
+    try {
+      const snap = await getDocs(query(collection(db, col), where(field, '==', val)));
+      snap.docs.forEach((d) => {
+        if (!returnsMap.has(d.id)) returnsMap.set(d.id, { id: d.id, ...d.data() });
+      });
+    } catch {}
+  };
+  if (tenantId) {
+    await tryLoadReturns('sale_returns', 'tenantId', tenantId);
+    await tryLoadReturns('sale_returns', 'tenant_id', tenantId);
+    await tryLoadReturns('sales_returns', 'tenantId', tenantId);
+    await tryLoadReturns('sales_returns', 'tenant_id', tenantId);
+  }
+  if (returnsMap.size === 0 && tenantId && tenantId !== 'default') {
+    await tryLoadReturns('sale_returns', 'tenantId', 'default');
+    await tryLoadReturns('sale_returns', 'tenant_id', 'default');
+  }
+
+  const validReturns = Array.from(returnsMap.values()).filter((r) => {
+    const rBranch = r.branchId || r.branch_id;
+    if (!isAllBranches && rBranch && rBranch !== branchId && rBranch !== 'default') return false;
+    if (r.status && r.status !== 'completed') return false;
+    const rDateVal = r.createdAt || r.created_at || r.date || r.timestamp;
+    const rDate = parseToDate(rDateVal);
+    if (!rDate) return false;
+    return rDate >= start && rDate <= end;
+  });
+
+  let totalReturns = 0;
+  let cashRefunds = 0;
+  validReturns.forEach((r) => {
+    const refundAmt = Number(r.refundAmount ?? r.subtotalReturned ?? r.total ?? 0);
+    totalReturns += refundAmt;
+    const method = String(r.refundMethod || '').toLowerCase();
+    if (method === 'cash' || method === 'نقدي' || method === 'كاش') {
+      cashRefunds += refundAmt;
+    }
+  });
+
+  // Net sales totals after returns deduction
+  totalSales = Math.max(0, totalSales - totalReturns);
+  cashSales = Math.max(0, cashSales - cashRefunds);
+
   const ordersCount = validSales.length;
   const averageTicket = ordersCount > 0 ? Math.round(totalSales / ordersCount) : 0;
 
-  // 2. Fetch Expenses (Expenses & Cash Outflows Source of Truth)
-  const expensesConstraints: any[] = [where('tenantId', '==', tenantId)];
-  if (!isAllBranches) {
-    expensesConstraints.push(where('branchId', '==', branchId));
+  // 2. Fetch Expenses (Expenses & Cash Outflows Source of Truth) with full fallbacks and safety
+  const expensesMap = new Map<string, Expense>();
+  const tryLoadExpenses = async (col: string, field: string, val: string) => {
+    try {
+      const snap = await getDocs(query(collection(db, col), where(field, '==', val)));
+      snap.docs.forEach((d) => {
+        if (!expensesMap.has(d.id)) expensesMap.set(d.id, { id: d.id, ...d.data() } as Expense);
+      });
+    } catch {}
+  };
+
+  if (tenantId) {
+    await tryLoadExpenses('expenses', 'tenantId', tenantId);
+    await tryLoadExpenses('expenses', 'tenant_id', tenantId);
   }
-  const expensesSnap = await getDocs(query(collection(db, 'expenses'), ...expensesConstraints));
-  const rawExpenses = expensesSnap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) as Expense[];
+  if (expensesMap.size === 0 && tenantId && tenantId !== 'default') {
+    await tryLoadExpenses('expenses', 'tenantId', 'default');
+    await tryLoadExpenses('expenses', 'tenant_id', 'default');
+  }
+  if (expensesMap.size === 0) {
+    try {
+      const snap = await getDocs(collection(db, 'expenses'));
+      snap.docs.forEach((d) => {
+        const data = d.data() as any;
+        const docTenant = data.tenantId || data.tenant_id;
+        if (!tenantId || tenantId === 'default' || !docTenant || docTenant === tenantId || docTenant === 'default') {
+          if (!expensesMap.has(d.id)) expensesMap.set(d.id, { id: d.id, ...data } as Expense);
+        }
+      });
+    } catch {}
+  }
 
   // Filter active expenses within date bounds
-  const activeExpenses = rawExpenses.filter((e) => {
-    if (e.status === 'voided') return false;
-    if (!e.date) return false;
-    const [year, month, day] = e.date.split('-').map(Number);
-    const eDate = new Date(year, month - 1, day);
+  const activeExpenses = Array.from(expensesMap.values()).filter((e: any) => {
+    if (e.status === 'voided' || e.status === 'cancelled') return false;
+    const eBranch = e.branchId || e.branch_id;
+    if (!isAllBranches && eBranch && eBranch !== branchId && eBranch !== 'default') return false;
+    const eDate = parseToDate(e.date || e.createdAt || e.created_at || e.timestamp);
+    if (!eDate) return false;
     return eDate >= start && eDate <= end;
   });
 
@@ -205,114 +303,114 @@ export async function fetchExecutiveFinancialMetrics(
     .map(([name, value]) => ({ name, value }))
     .sort((a, b) => b.value - a.value);
 
-  // 3. Fetch Advances
-  const advancesConstraints: any[] = [where('tenant_id', '==', tenantId)];
-  if (!isAllBranches) {
-    advancesConstraints.push(where('branch_id', '==', branchId));
-  }
-  const advancesSnap = await getDocs(query(collection(db, 'advances'), ...advancesConstraints));
-  const rawAdvances = advancesSnap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) as Advance[];
+  // 3. Fetch Advances (wrapped safely)
+  let advancesDisbursed = 0;
+  let advancesOutstanding = 0;
+  try {
+    const advancesConstraints: any[] = [where('tenant_id', '==', tenantId)];
+    const advancesSnap = await getDocs(query(collection(db, 'advances'), ...advancesConstraints));
+    const rawAdvances = advancesSnap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) as Advance[];
+    const periodAdvances = rawAdvances.filter((a) => {
+      if (a.status === 'cancelled') return false;
+      if (!isAllBranches && (a as any).branch_id && (a as any).branch_id !== branchId) return false;
+      const aDate = parseToDate(a.createdAt);
+      if (!aDate) return false;
+      return aDate >= start && aDate <= end;
+    });
+    advancesDisbursed = periodAdvances.reduce((sum, a) => sum + Number(a.amount || 0), 0);
+    advancesOutstanding = rawAdvances
+      .filter((a) => a.status === 'active' || a.status === 'partially_paid')
+      .reduce((sum, a) => sum + Number(a.remainingAmount || 0), 0);
+  } catch {}
 
-  // Filter advances disbursed in this period
-  const periodAdvances = rawAdvances.filter((a) => {
-    if (a.status === 'cancelled') return false;
-    if (!a.createdAt) return false;
-    const aDate = new Date(a.createdAt);
-    return aDate >= start && aDate <= end;
-  });
-  const advancesDisbursed = periodAdvances.reduce((sum, a) => sum + Number(a.amount || 0), 0);
+  // 4. Fetch Payroll (wrapped safely)
+  let payrollDisbursed = 0;
+  let payrollRemaining = 0;
+  try {
+    const payrollSnap = await getDocs(query(collection(db, 'payrolls'), where('tenant_id', '==', tenantId)));
+    const rawPayroll = payrollSnap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) as PayrollRecord[];
+    const activePayroll = rawPayroll.filter((p) => isAllBranches || !(p as any).branch_id || (p as any).branch_id === branchId);
+    payrollDisbursed = activePayroll.reduce((sum, p) => sum + Number(p.totalPaid || 0), 0);
+    payrollRemaining = activePayroll.reduce((sum, p) => sum + Number(p.remaining || 0), 0);
+  } catch {}
 
-  // All active/partially paid advances outstanding balance
-  const advancesOutstanding = rawAdvances
-    .filter((a) => a.status === 'active' || a.status === 'partially_paid')
-    .reduce((sum, a) => sum + Number(a.remainingAmount || 0), 0);
+  // 5. Fetch Purchases & Suppliers (wrapped safely)
+  let purchasesTotal = 0;
+  let purchasesPaid = 0;
+  let purchasesUnpaid = 0;
+  let supplierBalancesTotal = 0;
+  try {
+    let purchasesSnap = await getDocs(query(collection(db, 'purchase_orders'), where('tenantId', '==', tenantId)));
+    if (purchasesSnap.empty) {
+      purchasesSnap = await getDocs(query(collection(db, 'purchase_orders'), where('tenant_id', '==', tenantId)));
+    }
+    const rawPurchases = purchasesSnap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
+    const periodPurchases = rawPurchases.filter((p) => {
+      if (p.status === 'cancelled') return false;
+      if (!isAllBranches && (p.branchId || p.branch_id) && (p.branchId || p.branch_id) !== branchId) return false;
+      const pDate = parseToDate(p.createdAt || p.created_at);
+      if (!pDate) return false;
+      return pDate >= start && pDate <= end;
+    });
+    purchasesTotal = periodPurchases.reduce((sum, p) => sum + Number(p.totalAmount || p.total_amount || p.total || 0), 0);
+    purchasesPaid = periodPurchases.reduce((sum, p) => sum + Number(p.paidAmount || p.paid_amount || 0), 0);
+    purchasesUnpaid = Math.max(0, purchasesTotal - purchasesPaid);
 
-  // 4. Fetch Payroll
-  const payrollConstraints: any[] = [where('tenant_id', '==', tenantId)];
-  if (!isAllBranches) {
-    payrollConstraints.push(where('branch_id', '==', branchId));
-  }
-  const payrollSnap = await getDocs(query(collection(db, 'payrolls'), ...payrollConstraints));
-  const rawPayroll = payrollSnap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) as PayrollRecord[];
+    let suppliersSnap = await getDocs(query(collection(db, 'suppliers'), where('tenantId', '==', tenantId)));
+    if (suppliersSnap.empty) {
+      suppliersSnap = await getDocs(query(collection(db, 'suppliers'), where('tenant_id', '==', tenantId)));
+    }
+    const rawSuppliers = suppliersSnap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
+    supplierBalancesTotal = rawSuppliers.reduce((sum, s) => sum + Number(s.currentBalance ?? s.current_balance ?? 0), 0);
+  } catch {}
 
-  const payrollDisbursed = rawPayroll.reduce((sum, p) => sum + Number(p.totalPaid || 0), 0);
-  const payrollRemaining = rawPayroll.reduce((sum, p) => sum + Number(p.remaining || 0), 0);
+  // 6. Fetch Waste (wrapped safely)
+  let wasteCost = 0;
+  try {
+    let movementsSnap = await getDocs(query(collection(db, 'stock_movements'), where('tenantId', '==', tenantId)));
+    if (movementsSnap.empty) {
+      movementsSnap = await getDocs(query(collection(db, 'stock_movements'), where('tenant_id', '==', tenantId)));
+    }
+    const rawMovements = movementsSnap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
+    const periodWasteMovements = rawMovements.filter((m) => {
+      if (!isAllBranches && (m.branchId || m.branch_id) && (m.branchId || m.branch_id) !== branchId) return false;
+      const isWaste = m.movementType === 'waste' || m.movement_type === 'waste';
+      if (!isWaste) return false;
+      const mDate = parseToDate(m.createdAt || m.created_at);
+      if (!mDate) return false;
+      return mDate >= start && mDate <= end;
+    });
+    wasteCost = periodWasteMovements.reduce((sum, m) => {
+      const unitCost = Number(m.unitCostSnapshot || m.unit_cost || m.averageCost || 0);
+      const qty = Math.abs(Number(m.quantity || m.baseQuantity || 0));
+      return sum + (qty * unitCost);
+    }, 0);
+  } catch {}
 
-  // 5. Fetch Purchases & Suppliers
-  const purchasesConstraints: any[] = [where('tenantId', '==', tenantId)];
-  if (!isAllBranches) {
-    purchasesConstraints.push(where('branchId', '==', branchId));
-  }
-  let purchasesSnap = await getDocs(query(collection(db, 'purchase_orders'), ...purchasesConstraints));
-  if (purchasesSnap.empty) {
-    purchasesSnap = await getDocs(query(collection(db, 'purchase_orders'), where('tenant_id', '==', tenantId)));
-  }
-  const rawPurchases = purchasesSnap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
-
-  const periodPurchases = rawPurchases.filter((p) => {
-    if (p.status === 'cancelled') return false;
-    const pDateStr = p.createdAt || p.created_at;
-    if (!pDateStr) return false;
-    const pDate = new Date(pDateStr);
-    return pDate >= start && pDate <= end;
-  });
-
-  const purchasesTotal = periodPurchases.reduce((sum, p) => sum + Number(p.totalAmount || p.total_amount || p.total || 0), 0);
-  const purchasesPaid = periodPurchases.reduce((sum, p) => sum + Number(p.paidAmount || p.paid_amount || 0), 0);
-  const purchasesUnpaid = Math.max(0, purchasesTotal - purchasesPaid);
-
-  // Fetch Suppliers Outstanding Balances
-  let suppliersSnap = await getDocs(query(collection(db, 'suppliers'), where('tenantId', '==', tenantId)));
-  if (suppliersSnap.empty) {
-    suppliersSnap = await getDocs(query(collection(db, 'suppliers'), where('tenant_id', '==', tenantId)));
-  }
-  const rawSuppliers = suppliersSnap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
-  const supplierBalancesTotal = rawSuppliers.reduce((sum, s) => sum + Number(s.currentBalance ?? s.current_balance ?? 0), 0);
-
-  // 6. Fetch Waste (from stock_movements where movementType === 'waste')
-  const wasteConstraints: any[] = [where('tenantId', '==', tenantId)];
-  if (!isAllBranches) {
-    wasteConstraints.push(where('branchId', '==', branchId));
-  }
-  let movementsSnap = await getDocs(query(collection(db, 'stock_movements'), ...wasteConstraints));
-  if (movementsSnap.empty) {
-    movementsSnap = await getDocs(query(collection(db, 'stock_movements'), where('tenant_id', '==', tenantId)));
-  }
-  const rawMovements = movementsSnap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
-
-  const periodWasteMovements = rawMovements.filter((m) => {
-    const isWaste = m.movementType === 'waste' || m.movement_type === 'waste';
-    if (!isWaste) return false;
-    const mDateStr = m.createdAt || m.created_at;
-    if (!mDateStr) return false;
-    const mDate = new Date(mDateStr);
-    return mDate >= start && mDate <= end;
-  });
-
-  const wasteCost = periodWasteMovements.reduce((sum, m) => {
-    const unitCost = Number(m.unitCostSnapshot || m.unit_cost || m.averageCost || 0);
-    const qty = Math.abs(Number(m.quantity || m.baseQuantity || 0));
-    return sum + (qty * unitCost);
-  }, 0);
-
-  // 7. Calculate Operating Result (صافي الحركة التشغيلية)
-  // Sales - Operating Expenses - Recognized Waste
+  // 7. Calculate Operating Result
   const operatingResult = totalSales - operatingExpenses - wasteCost;
 
   // 8. Safe Cash Estimation (Opening Cash from shifts + Cash Sales - Cash Outflows)
-  const posShiftsConstraints: any[] = [];
-  if (!isAllBranches) {
-    posShiftsConstraints.push(where('branch_id', '==', branchId));
-  }
-  const posShiftsSnap = await getDocs(query(collection(db, 'pos_shifts'), ...posShiftsConstraints));
-  const rawPosShifts = posShiftsSnap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
-  
-  const periodShifts = rawPosShifts.filter((s) => {
-    if (!s.start_time) return false;
-    const sDate = new Date(s.start_time);
-    return sDate >= start && sDate <= end;
-  });
-  const openingCash = periodShifts.reduce((sum, s) => sum + Number(s.starting_cash || 0), 0);
+  let openingCash = 0;
+  try {
+    const shiftQ = tenantId
+      ? query(collection(db, 'cashier_shifts'), where('tenantId', '==', tenantId), fsLimit(50))
+      : query(collection(db, 'cashier_shifts'), fsLimit(50));
+    let posShiftsSnap = await getDocs(shiftQ);
+    firestoreLogger.logOperation('financialAnalytics.shifts', 'cashier_shifts', 'getDocs', posShiftsSnap.docs.length);
+    if (posShiftsSnap.empty && tenantId) {
+      posShiftsSnap = await getDocs(query(collection(db, 'cashier_shifts'), where('tenant_id', '==', tenantId), fsLimit(50)));
+      firestoreLogger.logOperation('financialAnalytics.shiftsAlt', 'cashier_shifts', 'getDocs', posShiftsSnap.docs.length);
+    }
+    const rawPosShifts = posShiftsSnap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
+    const periodShifts = rawPosShifts.filter((s) => {
+      if (!isAllBranches && (s.branchId || s.branch_id) && (s.branchId || s.branch_id) !== branchId) return false;
+      const sDate = parseToDate(s.start_time || s.openedAt || s.createdAt);
+      if (!sDate) return false;
+      return sDate >= start && sDate <= end;
+    });
+    openingCash = periodShifts.reduce((sum, s) => sum + Number(s.starting_cash || s.openingCash || 0), 0);
+  } catch {}
   const expectedCash = Math.max(0, openingCash + cashSales - totalCashOutflows);
 
   // 9. Timeline Data for Trend Charts
@@ -340,10 +438,27 @@ export async function fetchExecutiveFinancialMetrics(
     dailyMap.set(dStr, cur);
   });
 
-  // Aggregate expenses by day
-  activeExpenses.forEach((e) => {
-    const [year, month, day] = e.date.split('-').map(Number);
-    const dStr = new Date(year, month - 1, day).toLocaleDateString('ar-EG', { month: 'short', day: 'numeric' });
+  // Deduct returns by day
+  validReturns.forEach((r) => {
+    const rDateStr = r.createdAt || r.created_at;
+    if (!rDateStr) return;
+    const dStr = new Date(rDateStr).toLocaleDateString('ar-EG', { month: 'short', day: 'numeric' });
+    const cur = dailyMap.get(dStr) || { sales: 0, cashSales: 0, cashOutflows: 0, operatingExpenses: 0 };
+    const refundAmt = Number(r.refundAmount ?? r.subtotalReturned ?? r.total ?? 0);
+    cur.sales = Math.max(0, cur.sales - refundAmt);
+
+    const method = String(r.refundMethod || '').toLowerCase();
+    if (method === 'cash' || method === 'نقدي' || method === 'كاش') {
+      cur.cashSales = Math.max(0, cur.cashSales - refundAmt);
+    }
+    dailyMap.set(dStr, cur);
+  });
+
+  // Aggregate expenses by day safely
+  activeExpenses.forEach((e: any) => {
+    const eDate = parseToDate(e.date || e.createdAt || e.created_at || e.timestamp);
+    if (!eDate) return;
+    const dStr = eDate.toLocaleDateString('ar-EG', { month: 'short', day: 'numeric' });
     const cur = dailyMap.get(dStr) || { sales: 0, cashSales: 0, cashOutflows: 0, operatingExpenses: 0 };
     const amount = Number(e.amount || 0);
     if (e.affectsCashFlow !== false) {

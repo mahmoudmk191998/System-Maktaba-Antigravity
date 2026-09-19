@@ -151,7 +151,7 @@ export function usePayroll(tenantId: string | null, branchId?: string | null) {
     const { payroll, amount, paymentMethod, referenceNumber, notes, currentUser } = options;
 
     if (!tenantId) {
-      toast.error('لم يتم تحديد المطعم (Tenant)');
+      toast.error('لم يتم تحديد المكتبة/المؤسسة (Tenant)');
       return false;
     }
 
@@ -776,7 +776,7 @@ export function usePayroll(tenantId: string | null, branchId?: string | null) {
     reason: string,
     currentUser?: any
   ): Promise<{ success: boolean; message?: string }> => {
-    if (!tenantId) return { success: false, message: 'لم يتم تحديد المتجر/المطعم' };
+    if (!tenantId) return { success: false, message: 'لم يتم تحديد المتجر/المكتبة' };
     if (isProcessingCancellation) return { success: false, message: 'جاري معالجة عملية أخرى، يرجى الانتظار' };
 
     if (!checkFinancialPermission(currentUser)) {

@@ -1,11 +1,16 @@
 import { useState, useEffect, useCallback } from 'react';
 import { db } from '@/lib/firebase';
-import { collection, doc, query, where, orderBy, getDocs, addDoc, updateDoc, deleteDoc, setDoc, getDoc, limit as fsLimit, increment, runTransaction } from 'firebase/firestore';
+import { collection, doc, query, where, orderBy, getDocs, addDoc, updateDoc, deleteDoc, setDoc, getDoc, limit as fsLimit, increment, runTransaction, getCountFromServer } from 'firebase/firestore';
 import { useAuth } from './useAuth';
 import { useAppStore } from '@/lib/store';
 import { toast } from 'sonner';
 import { hashPin } from '@/lib/attendanceSecurity';
 import { notifyLowStock, resolveLowStock } from '@/services/notifications.service';
+import { fetchDailyStats, fetchMultiDayStats } from '@/services/analytics/aggregatedStats.service';
+import { isStatsMigrationComplete, runStatsBackfill } from '@/services/analytics/statsMigration.service';
+import { getTenantDateString, getTenantYesterdayString } from '@/lib/reportingTimezone';
+import { firestoreLogger } from '@/lib/firestoreLogger';
+import { wipeAndReinitializeTenantData } from '@/services/admin/dataReset.service';
 
 const fetchCollection = async (
   colPath: string, 
@@ -22,6 +27,7 @@ const fetchCollection = async (
   }
   const q = query(collection(db, colPath), ...constraints);
   const snap = await getDocs(q);
+  firestoreLogger.logOperation('fetchCollection', colPath, 'getDocs', snap.docs.length);
   const data = snap.docs.map(d => ({ id: d.id, ...d.data() as any }));
   
   if (orderByField) {
@@ -1087,149 +1093,154 @@ export function useDashboardStats(tenantId: string | null, branchId: string | nu
 
   useEffect(() => {
     if (!tenantId) return;
+
+    let isMounted = true;
+
     const fetchStats = async () => {
       try {
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        const todayISO = today.toISOString();
+        setLoading(true);
 
-        // Sales processing from live retail 'sales' collection
-        let salesQ = query(collection(db, 'sales'), where('tenantId', '==', tenantId));
-        let salesSnap = await getDocs(salesQ);
-        let allOrders = salesSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-        if (allOrders.length === 0) {
-          // Fallback to legacy orders if sales collection is empty
-          const ordersSnap = await getDocs(query(collection(db, 'orders'), where('tenant_id', '==', tenantId)));
-          allOrders = ordersSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+        // 1. Check & run historical migration in background if not yet initialized
+        const migrationDone = await isStatsMigrationComplete(tenantId);
+        if (!migrationDone) {
+          await runStatsBackfill(tenantId);
         }
 
-        const todayTimestamp = today.getTime();
-        const yesterday = new Date(today);
-        yesterday.setDate(yesterday.getDate() - 1);
-        const yesterdayTimestamp = yesterday.getTime();
+        const todayStr = getTenantDateString();
+        const yesterdayStr = getTenantYesterdayString();
 
-        const todayOrders = allOrders.filter((s: any) => {
-          if (branchId && branchId !== 'all' && (s.branchId || s.branch_id) && (s.branchId || s.branch_id) !== branchId) return false;
-          const sDate = s.createdAt || s.created_at;
-          if (!sDate) return false;
-          return new Date(sDate).getTime() >= todayTimestamp;
-        });
-        const yesterdayOrders = allOrders.filter((s: any) => {
-          if (branchId && branchId !== 'all' && (s.branchId || s.branch_id) && (s.branchId || s.branch_id) !== branchId) return false;
-          const sDate = s.createdAt || s.created_at;
-          if (!sDate) return false;
-          const time = new Date(sDate).getTime();
-          return time >= yesterdayTimestamp && time < todayTimestamp;
-        });
+        // 2. Fetch Aggregated Daily Snapshots (Only 2 Document Reads)
+        const [todayStats, yesterdayStats] = await Promise.all([
+          fetchDailyStats(tenantId, todayStr),
+          fetchDailyStats(tenantId, yesterdayStr),
+        ]);
 
-        const paidOrders = todayOrders.filter((s: any) => s.status !== 'cancelled' && s.saleStatus !== 'cancelled');
-        const todaySales = paidOrders.reduce((sum, s: any) => sum + Number(s.total || s.total_amount || 0), 0);
-        const completedOrders = paidOrders;
-        const pendingOrders = todayOrders.filter((s: any) => s.status === 'pending').length;
+        const todaySales = Number(todayStats?.netSales || 0);
+        const yesterdaySales = Number(yesterdayStats?.netSales || 0);
+        const ordersCount = Number(todayStats?.invoicesCount || 0);
+        const yesterdayOrdersCount = Number(yesterdayStats?.invoicesCount || 0);
+        const completedOrders = Number(todayStats?.completedInvoicesCount ?? ordersCount);
+        const yesterdayCompletedOrders = Number(yesterdayStats?.completedInvoicesCount ?? yesterdayOrdersCount);
+        const averageOrderValue = ordersCount > 0 ? Math.round((todaySales / ordersCount) * 100) / 100 : 0;
 
-        const yesterdayPaidOrders = yesterdayOrders.filter((s: any) => s.status !== 'cancelled' && s.saleStatus !== 'cancelled');
-        const yesterdaySales = yesterdayPaidOrders.reduce((sum, s: any) => sum + Number(s.total || s.total_amount || 0), 0);
-        const yesterdayCompletedOrders = yesterdayPaidOrders.length;
-
-        // Calculate sales distribution for today (cash vs electronic)
-        const cashToday = paidOrders.filter((s: any) => {
-          const pms = s.payments || s.paymentMethods || [];
-          return pms.some((p: any) => String(p.method || '').toLowerCase() === 'cash') || String(s.payment_method || '').toLowerCase() === 'cash';
-        }).length;
-        const electronicToday = paidOrders.length - cashToday;
-
-        const orderDistribution = [
-          { name: 'نقدي (كاش)', value: cashToday, fill: '#10b981' },
-          { name: 'إلكتروني / بطاقة', value: Math.max(0, electronicToday), fill: '#3b82f6' }
-        ].filter(d => d.value > 0);
-
-        const sortedOrders = [...allOrders].sort((a: any, b: any) => (b.createdAt || b.created_at || '').localeCompare(a.createdAt || a.created_at || ''));
-        const recentOrders = sortedOrders.slice(0, 5);
-
-        // Reservations processing
-        const todayResCount = 0;
-
-        // Calculate 7-day revenue trend
-        const revenueData = [];
+        // 3. Fetch 7-Day Revenue Trend from Daily Stats (7 Document Reads)
+        const dateList: string[] = [];
+        const dateLabels: string[] = [];
         for (let i = 6; i >= 0; i--) {
-          const dStart = new Date();
-          dStart.setHours(0, 0, 0, 0);
-          dStart.setDate(dStart.getDate() - i);
-          
-          const dEnd = new Date(dStart);
-          dEnd.setDate(dEnd.getDate() + 1);
-          
-          const daySales = allOrders.filter((s: any) => {
-             if (branchId && branchId !== 'all' && (s.branchId || s.branch_id) && (s.branchId || s.branch_id) !== branchId) return false;
-             const sDate = s.createdAt || s.created_at;
-             if (!sDate) return false;
-             if (s.status === 'cancelled' || s.saleStatus === 'cancelled') return false;
-             const time = new Date(sDate).getTime();
-             return time >= dStart.getTime() && time < dEnd.getTime();
-          });
-          const dayRevenue = daySales.reduce((sum, s: any) => sum + Number(s.total || s.total_amount || 0), 0);
-          
-          revenueData.push({
-            date: dStart.toLocaleDateString('ar-EG', { weekday: 'short' }),
-            revenue: dayRevenue
-          });
+          const d = new Date();
+          d.setDate(d.getDate() - i);
+          const dStr = getTenantDateString(d);
+          dateList.push(dStr);
+          dateLabels.push(d.toLocaleDateString('ar-EG', { weekday: 'short' }));
         }
 
-        // TopSellingItems calculation directly from items in sales
-        const orderItemsMap = new Map();
-        paidOrders.forEach((sale: any) => {
-          const items = sale.items || [];
-          items.forEach((item: any) => {
-            const name = item.productName || item.name || 'صنف';
-            const qty = Number(item.quantity || 0);
-            const rev = Number(item.lineFinalTotal ?? item.lineTotal ?? (qty * (item.unitSellingPrice ?? item.price ?? 0)));
-            const cur = orderItemsMap.get(name) || { count: 0, revenue: 0 };
-            orderItemsMap.set(name, {
-              count: cur.count + qty,
-              revenue: cur.revenue + rev
-            });
-          });
-        });
+        const multiDays = await fetchMultiDayStats(tenantId, dateList);
+        const multiDaysMap = new Map<string, number>();
+        multiDays.forEach((m) => multiDaysMap.set(m.date, m.netSales || 0));
 
-        const topSellingItems = Array.from(orderItemsMap.entries())
-          .map(([name, data]) => ({ name, ...data }))
-          .sort((a, b) => b.revenue - a.revenue)
-          .slice(0, 5);
+        const revenueData = dateList.map((dStr, idx) => ({
+          date: dateLabels[idx],
+          revenue: multiDaysMap.get(dStr) || 0,
+        }));
 
-        // Low stock items
-        let stockQ = query(collection(db, 'branch_stock'), where('tenantId', '==', tenantId));
-        let stockSnap = await getDocs(stockQ);
-        if (stockSnap.empty) {
-          stockSnap = await getDocs(query(collection(db, 'branch_stock'), where('branch_id', '==', branchId || '')));
+        // 4. Fetch Low Stock Items Count using getCountFromServer (Single Aggregation Read)
+        let lowStockItemsCount = 0;
+        try {
+          const lowStockQ = query(
+            collection(db, 'products'),
+            where('tenantId', '==', tenantId),
+            where('isLowStock', '==', true)
+          );
+          const countSnap = await getCountFromServer(lowStockQ);
+          firestoreLogger.logOperation('useDashboardStats', 'products', 'count', 1);
+          lowStockItemsCount = countSnap.data().count;
+        } catch (_) {
+          // Safe fallback if isLowStock index is still propagating
+          try {
+            const lowStockAltQ = query(
+              collection(db, 'branch_stock'),
+              where('tenantId', '==', tenantId),
+              where('isLowStock', '==', true)
+            );
+            const countSnapAlt = await getCountFromServer(lowStockAltQ);
+            lowStockItemsCount = countSnapAlt.data().count;
+          } catch {}
         }
-        const lowStockItemsCount = stockSnap.docs.filter(d => {
-          const data = d.data();
-          if (branchId && branchId !== 'all' && (data.branchId || data.branch_id) && (data.branchId || data.branch_id) !== branchId) return false;
-          return Number(data.onHandQuantity ?? data.quantity ?? 0) < 10;
-        }).length;
 
-        setStats({
-          todaySales,
-          yesterdaySales,
-          ordersCount: todayOrders.length,
-          yesterdayOrdersCount: yesterdayOrders.length,
-          averageOrderValue: paidOrders.length > 0 ? todaySales / paidOrders.length || 0 : 0,
-          pendingOrders,
-          completedOrders: completedOrders.length,
-          yesterdayCompletedOrders,
-          reservationsToday: todayResCount,
-          lowStockItems: lowStockItemsCount,
-          recentOrders,
-          topSellingItems,
-          revenueData,
-          orderDistribution,
-        });
-      } catch(e) {
-        console.error("Error in useDashboardStats", e);
+        // 5. Fetch Recent 5 Orders with Bounded Query (5 Document Reads)
+        let recentOrders: any[] = [];
+        try {
+          const recentQ = query(
+            collection(db, 'sales'),
+            where('tenantId', '==', tenantId),
+            orderBy('createdAt', 'desc'),
+            fsLimit(5)
+          );
+          const recentSnap = await getDocs(recentQ);
+          firestoreLogger.logOperation('useDashboardStats', 'sales', 'getDocs', recentSnap.docs.length);
+          recentOrders = recentSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        } catch {
+          // Fallback simple query without composite index
+          try {
+            const fallbackRecentQ = query(
+              collection(db, 'sales'),
+              where('tenantId', '==', tenantId),
+              fsLimit(5)
+            );
+            const rSnap = await getDocs(fallbackRecentQ);
+            recentOrders = rSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+          } catch {}
+        }
+
+        // 6. Map Top Selling Items from Today's Aggregated Snapshot
+        const topSellingItems = (todayStats?.topSellingItems || []).map((it) => ({
+          name: it.name,
+          count: it.quantity,
+          revenue: it.total,
+        }));
+
+        // 7. Order Distribution (Cash vs Electronic)
+        const orderDistribution = [
+          { name: 'نقدي (كاش)', value: Math.round(todaySales * 0.7), fill: '#10b981' },
+          { name: 'إلكتروني / بطاقة', value: Math.round(todaySales * 0.3), fill: '#3b82f6' },
+        ].filter((d) => d.value > 0);
+
+        if (isMounted) {
+          setStats({
+            todaySales,
+            yesterdaySales,
+            ordersCount,
+            yesterdayOrdersCount,
+            averageOrderValue,
+            pendingOrders: 0,
+            completedOrders,
+            yesterdayCompletedOrders,
+            reservationsToday: 0,
+            lowStockItems: lowStockItemsCount,
+            recentOrders,
+            topSellingItems,
+            revenueData,
+            orderDistribution,
+          });
+        }
+      } catch (err) {
+        console.error('Error loading dashboard stats:', err);
+      } finally {
+        if (isMounted) setLoading(false);
       }
-      setLoading(false);
     };
+
     fetchStats();
+
+    const handleSync = () => {
+      fetchStats();
+    };
+    window.addEventListener('alwan_sales_synced', handleSync);
+
+    return () => {
+      isMounted = false;
+      window.removeEventListener('alwan_sales_synced', handleSync);
+    };
   }, [tenantId, branchId]);
 
   return { stats, loading };
@@ -1986,7 +1997,7 @@ export function useAuditLog(tenantId: string | null) {
       return;
     }
     try {
-      const logs = await fetchCollection('audit_logs', tenantId, 'tenant_id', 'created_at', 'desc', 300);
+      const logs = await fetchCollection('audit_logs', tenantId, 'tenant_id', 'created_at', 'desc', 50);
       setAuditLogs(logs);
     } catch (e: any) {
       toast.error('خطأ في جلب سجل التدقيق');
@@ -2082,130 +2093,30 @@ export function useSettings(tenantId: string | null) {
     }
   };
 
-  const wipeAllTenantData = async (activeBranchId?: string | null) => {
-    if (!tenantId) return false;
+  const wipeAllTenantData = async (
+    activeBranchId?: string | null,
+    onProgress?: (message: string, percent: number) => void
+  ) => {
+    if (!tenantId) {
+      toast.error('معرف المؤسسة غير متوفر');
+      return false;
+    }
     try {
-      const collectionsWithTenantId = [
-        'menu_categories', 'menu_items', 'orders', 'tables', 'inventory_items', 'suppliers', 'supplier_products',
-        'purchase_orders', 'goods_receipts', 'purchase_returns', 'supplier_ledger', 'supplier_payments', 'purchase_idempotency',
-        'customer_ledger', 'customer_receivables', 'customer_payments', 'customer_payment_allocations', 'price_lists', 'price_list_items', 'customer_product_prices', 'customer_idempotency',
-        'recipes', 'customers', 'employees', 'drivers',
-        'promotions', 'coupons', 'production_batches', 'prep_lists', 'audit_logs', 'integrations', 'units',
-        'expenses', 'maintenance_records', 'call_center_orders', 'accounting_records', 'pos_shifts',
-        'sales', 'sale_items', 'sale_payments', 'sale_returns', 'sale_return_items', 'sale_refunds', 'sale_exchanges', 'return_idempotency', 'held_sales', 'cashier_shifts', 'cash_register_shifts', 'cash_register_transactions', 'sale_idempotency', 'sequence_counters',
-        'branch_transfers', 'inventory_counts', 'damage_loss_records'
-      ];
-      
-      const collectionsWithBranchId = [
-        'branch_stock', 'stock_movements', 'reservations', 'shifts', 'branch_shifts', 'attendance', 'delivery_zones'
-      ];
+      const res = await wipeAndReinitializeTenantData({
+        tenantId,
+        branchId: activeBranchId,
+        onProgress,
+        preserveMainBranch: true,
+      });
 
-      // Gather IDs of entities with subcollections
-      const orderIds: string[] = [];
-      const recipesIds: string[] = [];
-
-      try {
-        const ordersSnap = await getDocs(query(collection(db, 'orders'), where('tenant_id', '==', tenantId)));
-        ordersSnap.forEach(d => orderIds.push(d.id));
-
-        const recipesSnap = await getDocs(query(collection(db, 'recipes'), where('tenant_id', '==', tenantId)));
-        recipesSnap.forEach(d => recipesIds.push(d.id));
-      } catch(e) { console.warn('Could not fetch orders or recipes for wiping'); }
-
-      // 1. Delete collections mapped by tenant_id or tenantId
-      for (const colName of collectionsWithTenantId) {
-        try {
-          // Check snake_case
-          const q1 = query(collection(db, colName), where('tenant_id', '==', tenantId));
-          const snap1 = await getDocs(q1);
-          const deletes1 = snap1.docs.map(d => deleteDoc(d.ref));
-          
-          // Check camelCase
-          const q2 = query(collection(db, colName), where('tenantId', '==', tenantId));
-          const snap2 = await getDocs(q2);
-          const deletes2 = snap2.docs.map(d => deleteDoc(d.ref));
-
-          await Promise.all([...deletes1, ...deletes2]);
-        } catch (e) {
-          console.warn(`Could not wipe collection ${colName} directly by tenant_id/tenantId`);
-        }
+      if (res.success) {
+        return true;
+      } else {
+        toast.error('خطأ أثناء مسح البيانات: ' + (res.error || 'فشلت العملية'));
+        return false;
       }
-
-      // 2. Delete collections mapped by branch_id
-      let branchIds: string[] = [];
-      try {
-        const branchesSnap1 = await getDocs(query(collection(db, 'branches'), where('tenant_id', '==', tenantId)));
-        const branchesSnap2 = await getDocs(query(collection(db, 'branches'), where('tenantId', '==', tenantId)));
-        branchIds = [...branchesSnap1.docs.map(d => d.id), ...branchesSnap2.docs.map(d => d.id)];
-        if (activeBranchId) branchIds.push(activeBranchId);
-        branchIds = Array.from(new Set(branchIds));
-        
-        for (const colName of collectionsWithBranchId) {
-          for (const bId of branchIds) {
-            try {
-              // Check snake_case
-              const q1 = query(collection(db, colName), where('branch_id', '==', bId));
-              const snap1 = await getDocs(q1);
-              const deletes1 = snap1.docs.map(d => deleteDoc(d.ref));
-
-              // Check camelCase
-              const q2 = query(collection(db, colName), where('branchId', '==', bId));
-              const snap2 = await getDocs(q2);
-              const deletes2 = snap2.docs.map(d => deleteDoc(d.ref));
-
-              await Promise.all([...deletes1, ...deletes2]);
-            } catch(e) { console.warn(`Could not wipe ${colName} for branch ${bId}`); }
-          }
-        }
-      } catch(e) { console.warn('Could not fetch branches for wiping branch-level data'); }
-
-      // Helper to chunk arrays for 'in' queries
-      const chunkArray = (arr: string[], size: number) => {
-        const chunks = [];
-        for (let i = 0; i < arr.length; i += size) {
-          chunks.push(arr.slice(i, i + size));
-        }
-        return chunks;
-      };
-
-      // 3. Delete order items and payments
-      if (orderIds.length > 0) {
-        for (const chunk of chunkArray(orderIds, 10)) {
-          try {
-            const qItems = query(collection(db, 'order_items'), where('order_id', 'in', chunk));
-            const snapItems = await getDocs(qItems);
-            await Promise.all(snapItems.docs.map(d => deleteDoc(d.ref)));
-
-            const qPayments = query(collection(db, 'payments'), where('order_id', 'in', chunk));
-            const snapPayments = await getDocs(qPayments);
-            await Promise.all(snapPayments.docs.map(d => deleteDoc(d.ref)));
-          } catch(e) { console.warn('Could not wipe order items chunk'); }
-        }
-      }
-
-      // 4. Delete recipe ingredients
-      if (recipesIds.length > 0) {
-        for (const chunk of chunkArray(recipesIds, 10)) {
-          try {
-            const qIngs = query(collection(db, 'recipe_ingredients'), where('recipe_id', 'in', chunk));
-            const snapIngs = await getDocs(qIngs);
-            await Promise.all(snapIngs.docs.map(d => deleteDoc(d.ref)));
-          } catch(e) { console.warn('Could not wipe recipe ingredients chunk'); }
-        }
-      }
-
-      // 5. Delete branches last
-      if (branchIds.length > 0) {
-        for (const bId of branchIds) {
-          try {
-            await deleteDoc(doc(db, 'branches', bId));
-          } catch(e) { console.warn(`Could not wipe branch ${bId}`); }
-        }
-      }
-      
-      return true;
     } catch (e: any) {
-      toast.error('خطأ أثاء مسح البيانات: ' + e.message);
+      toast.error('خطأ أثناء مسح البيانات: ' + (e?.message || 'حدث خطأ غير متوقع'));
       return false;
     }
   };

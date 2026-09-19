@@ -5,6 +5,7 @@ import { Printer, RotateCcw } from 'lucide-react';
 import type { SaleReturn } from '@/types/retail.types';
 import { useFormatters } from '@/lib/formatters';
 import { useAppStore } from '@/lib/store';
+import { printReturnReceipt } from '@/lib/thermalPrinter';
 
 interface ReturnReceiptDialogProps {
   open: boolean;
@@ -36,7 +37,7 @@ export const ReturnReceiptDialog: React.FC<ReturnReceiptDialogProps> = ({
   if (!saleReturn) return null;
 
   const handlePrint = () => {
-    window.print();
+    printReturnReceipt(saleReturn, settings, effectiveStoreName);
   };
 
   return (

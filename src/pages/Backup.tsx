@@ -270,7 +270,7 @@ export default function BackupPage() {
       toast.error('ليس لديك صلاحية حذف نسخ احتياطية.');
       return;
     }
-    if (!confirm(`هل أنت متأكد من حذف سجل النسخة الاحتياطية [${record.backupId}]؟ لن يتم المساس بأي بيانات فعلية داخل المطعم.`)) {
+    if (!confirm(`هل أنت متأكد من حذف سجل النسخة الاحتياطية [${record.backupId}]؟ لن يتم المساس بأي بيانات فعلية داخل المكتبة.`)) {
       return;
     }
 
@@ -563,8 +563,8 @@ export default function BackupPage() {
                     <option value="hr">الموارد البشرية والرواتب والسلف والحضور (HR & Payroll)</option>
                     <option value="inventory">المخزون والمشتريات والموردين والهالك (Inventory & Purchasing)</option>
                     <option value="orders">الطلبات ونقاط البيع وورديات الكاشير (Orders & POS)</option>
-                    <option value="catalog">قائمة الطعام والأصناف والأسعار (Menu & Catalog)</option>
-                    <option value="operations">العمليات والطاولات والتوصيل والعملاء (Operations)</option>
+                    <option value="catalog">كتالوج الكتب والأصناف والأسعار (Catalog & Books)</option>
+                    <option value="operations">العمليات والمقاعد والقاعات والعملاء (Operations & Spaces)</option>
                   </select>
                 </div>
               )}

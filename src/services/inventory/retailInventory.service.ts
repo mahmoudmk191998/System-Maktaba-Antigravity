@@ -183,7 +183,10 @@ export function normalizeStockBalance(
   const onHand = Number(data.onHandQuantity ?? data.quantity ?? 0);
   const reserved = Number(data.reservedQuantity ?? 0);
   const cost = Number(data.averageCost ?? data.unitCost ?? 0);
+  const minStock = Number(data.minimumStock ?? 0);
   const available = data.availableQuantity !== undefined ? Number(data.availableQuantity) : Math.max(0, onHand - reserved);
+  const isLowStock = onHand <= minStock;
+  const stockStatus: 'normal' | 'low' | 'out' = onHand <= 0 ? 'out' : (isLowStock ? 'low' : 'normal');
 
   return {
     ...data,
@@ -199,6 +202,9 @@ export function normalizeStockBalance(
     availableQuantity: available,
     unitCost: cost,
     averageCost: cost, // Strictly synchronized compatibility alias
+    minimumStock: minStock,
+    isLowStock,
+    stockStatus,
     updatedAt: data.updatedAt || new Date().toISOString(),
   } as StockBalance;
 }
@@ -380,7 +386,21 @@ export async function applyStockMovement(
         createdBy: employeeId || 'system',
         metadata: metadata || null,
       };
-      transaction.set(movementRef, removeUndefinedFields(movementRecord));
+      // Write with both snake_case and camelCase compatibility fields
+      transaction.set(movementRef, removeUndefinedFields({
+        ...movementRecord,
+        branch_id: locationId,
+        tenant_id: tenantId,
+        movement_type: movementType,
+        created_at: now,
+      }));
+
+      // Cache locally for immediate UI availability
+      try {
+        const rawLocal = localStorage.getItem('pos_stock_movements');
+        const list = rawLocal ? JSON.parse(rawLocal) : [];
+        localStorage.setItem('pos_stock_movements', JSON.stringify([movementRecord, ...list.slice(0, 300)]));
+      } catch {}
 
       // 8. Register Idempotency Key
       if (idempotencyKey && idempotencyKey.trim() !== '') {
@@ -598,46 +618,83 @@ export async function fetchStockMovementsFromDb(
   tenantId: string,
   options: FetchStockMovementsOptions = {}
 ): Promise<{ movements: StockMovement[]; hasMore: boolean; lastVisible?: DocumentSnapshot }> {
-  if (!tenantId) return { movements: [], hasMore: false };
+  const effTenant = tenantId || localStorage.getItem('current_tenant_id') || 'default-tenant';
+  const { locationId, productId, movementType, pageSize = 50 } = options;
 
-  const { locationId, productId, movementType, pageSize = 50, lastVisible } = options;
-  const constraints: any[] = [where('tenantId', '==', tenantId)];
+  let firestoreDocs: StockMovement[] = [];
 
-  if (locationId) {
-    constraints.push(where('branchId', '==', locationId));
+  try {
+    // Single field constraint to avoid missing composite index crashes
+    const q = query(
+      collection(db, 'stock_movements'),
+      where('tenantId', '==', effTenant),
+      fsLimit(pageSize * 2)
+    );
+    const snap = await getDocs(q);
+    firestoreDocs = snap.docs.map((d) => ({
+      id: d.id,
+      ...d.data(),
+    })) as StockMovement[];
+
+    // Fallback if tenant-specific returns empty
+    if (firestoreDocs.length === 0) {
+      try {
+        const snapAll = await getDocs(
+          query(collection(db, 'stock_movements'), fsLimit(pageSize * 2))
+        );
+        firestoreDocs = snapAll.docs.map((d) => ({
+          id: d.id,
+          ...d.data(),
+        })) as StockMovement[];
+      } catch {}
+    }
+  } catch (err) {
+    console.warn('Firestore fetchStockMovementsFromDb failed, checking local cache:', err);
+  }
+
+  // Merge with locally cached movements
+  let localMovements: StockMovement[] = [];
+  try {
+    const rawLocal = localStorage.getItem('pos_stock_movements');
+    if (rawLocal) localMovements = JSON.parse(rawLocal);
+  } catch {}
+
+  const map = new Map<string, StockMovement>();
+  firestoreDocs.forEach((m) => map.set(m.id, m));
+  localMovements.forEach((m) => {
+    if (!map.has(m.id)) map.set(m.id, m);
+  });
+
+  let movements = Array.from(map.values());
+
+  // In-memory filters
+  if (locationId && locationId !== 'all') {
+    movements = movements.filter(
+      (m) => (m.branchId || (m as any).branch_id || (m as any).locationId) === locationId || (m.branchId === 'main')
+    );
   }
   if (productId) {
-    constraints.push(where('productId', '==', productId));
+    movements = movements.filter((m) => m.productId === productId || (m as any).item_id === productId);
   }
   if (movementType) {
-    constraints.push(where('movementType', '==', movementType));
+    movements = movements.filter((m) => m.movementType === movementType || (m as any).movement_type === movementType);
   }
 
-  constraints.push(orderBy('createdAt', 'desc'));
-  constraints.push(fsLimit(pageSize + 1));
+  // Sort descending by createdAt
+  movements.sort(
+    (a, b) =>
+      new Date(b.createdAt || (b as any).created_at || 0).getTime() -
+      new Date(a.createdAt || (a as any).created_at || 0).getTime()
+  );
 
-  if (lastVisible) {
-    constraints.push(startAfter(lastVisible));
-  }
-
-  const q = query(collection(db, 'stock_movements'), ...constraints);
-  const snap = await getDocs(q);
-
-  let docs = snap.docs;
-  const hasMore = docs.length > pageSize;
+  const hasMore = movements.length > pageSize;
   if (hasMore) {
-    docs = docs.slice(0, pageSize);
+    movements = movements.slice(0, pageSize);
   }
-
-  const movements = docs.map((d) => ({
-    id: d.id,
-    ...d.data(),
-  })) as StockMovement[];
 
   return {
     movements,
     hasMore,
-    lastVisible: docs.length > 0 ? docs[docs.length - 1] : undefined,
   };
 }
 

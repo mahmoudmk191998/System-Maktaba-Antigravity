@@ -309,7 +309,7 @@ export default function Integrations() {
             <Card className="p-12 text-center text-muted-foreground border-dashed">
               <Key className="w-12 h-12 mx-auto mb-3 opacity-40 text-muted-foreground" />
               <h4 className="font-bold text-base text-foreground mb-1">لا توجد مفاتيح API مسجلة حالياً</h4>
-              <p className="text-xs md:text-sm mb-4">قم بإنشاء مفتاح API لربط موقعك الخارجي أو تطبيق التوصيل بنظام المطعم.</p>
+              <p className="text-xs md:text-sm mb-4">قم بإنشاء مفتاح API لربط موقعك الخارجي أو متجر الكتب الإلكتروني بنظام المكتبة.</p>
               <Button onClick={() => setIsCreateModalOpen(true)} size="sm" className="gap-2">
                 <Plus className="w-4 h-4" />
                 إنشاء أول مفتاح

@@ -4,9 +4,11 @@ import { useTenantBranch } from '@/hooks/useDatabase';
 import {
   fetchSalesFromDb,
   getSaleById,
+  deleteSaleRecord,
   type FetchSalesOptions,
 } from '@/services/sales/sales.service';
-import type { Sale } from '@/types/retail.types';
+import { fetchSaleReturnsFromDb } from '@/services/sales/saleReturns.service';
+import type { Sale, SaleReturn } from '@/types/retail.types';
 import type { DocumentSnapshot } from 'firebase/firestore';
 
 export function useSales() {
@@ -28,15 +30,71 @@ export function useSales() {
       setLoading(true);
       setError(null);
       try {
-        const res = await fetchSalesFromDb(tenantId, {
-          branchId: options.branchId !== undefined ? options.branchId : branchId,
-          ...options,
+        const [res, returnsRes] = await Promise.all([
+          fetchSalesFromDb(tenantId, {
+            branchId: options.branchId !== undefined ? options.branchId : branchId,
+            ...options,
+          }),
+          fetchSaleReturnsFromDb(tenantId, { pageSize: 300 }).catch(() => ({ returns: [] })),
+        ]);
+
+        const returnsBySaleId = new Map<string, SaleReturn[]>();
+        const returnsByInvoice = new Map<string, SaleReturn[]>();
+        for (const ret of returnsRes.returns) {
+          const sid = ret.saleId || (ret as any).originalSaleId;
+          if (sid) {
+            const list = returnsBySaleId.get(sid) || [];
+            list.push(ret);
+            returnsBySaleId.set(sid, list);
+          }
+          if (ret.invoiceNumberSnapshot) {
+            const inv = ret.invoiceNumberSnapshot.trim().toUpperCase();
+            const list = returnsByInvoice.get(inv) || [];
+            list.push(ret);
+            returnsByInvoice.set(inv, list);
+          }
+        }
+
+        const enrichedSales = res.sales.map((sale) => {
+          const matchedReturns = [
+            ...(returnsBySaleId.get(sale.id) || []),
+            ...(returnsByInvoice.get(sale.invoiceNumber?.trim().toUpperCase()) || []),
+          ].filter((v, i, a) => a.findIndex((t) => t.id === v.id) === i);
+
+          const totalReturned = matchedReturns.reduce(
+            (sum, r) => sum + Number(r.refundAmount || (r as any).subtotalReturned || 0),
+            0
+          );
+          const costReversedTotal = matchedReturns.reduce(
+            (sum, r) => sum + Number(r.costReversed || 0),
+            0
+          );
+          const exchangeReturn = matchedReturns.find((r) => r.isExchange || r.replacementInvoiceNumber);
+
+          const returnedAmount = Math.max(Number(sale.returnedAmount || 0), totalReturned);
+          const isFull =
+            sale.returnStatus === 'full' ||
+            (returnedAmount > 0 && returnedAmount >= Number(sale.total) - 0.01);
+          const isPartial = (sale.returnStatus === 'partial' || returnedAmount > 0) && !isFull;
+          const returnStatus = isFull ? 'full' : isPartial ? 'partial' : 'none';
+
+          return {
+            ...sale,
+            returnedAmount,
+            costReversedTotal,
+            returnStatus,
+            hasExchange: Boolean(sale.hasExchange || exchangeReturn),
+            exchangeInvoiceNumber: sale.exchangeInvoiceNumber || exchangeReturn?.replacementInvoiceNumber,
+            isExchangeReplacement:
+              sale.isExchangeReplacement ||
+              Boolean(sale.notes && sale.notes.includes('عملية استبدال')),
+          } as Sale & { costReversedTotal?: number };
         });
 
         if (append) {
-          setSales((prev) => [...prev, ...res.sales]);
+          setSales((prev) => [...prev, ...enrichedSales]);
         } else {
-          setSales(res.sales);
+          setSales(enrichedSales);
         }
 
         setHasMore(res.hasMore);
@@ -79,6 +137,18 @@ export function useSales() {
     [tenantId]
   );
 
+  const removeSale = useCallback(
+    async (saleId: string) => {
+      if (!tenantId || !saleId) return { success: false, error: 'معرف الفاتورة مفقود' };
+      const res = await deleteSaleRecord(tenantId, saleId);
+      if (res.success) {
+        setSales((prev) => prev.filter((s) => s.id !== saleId));
+      }
+      return res;
+    },
+    [tenantId]
+  );
+
   return {
     sales,
     loading,
@@ -87,5 +157,6 @@ export function useSales() {
     refresh: loadSales,
     loadMore,
     fetchSingleSale,
+    removeSale,
   };
 }

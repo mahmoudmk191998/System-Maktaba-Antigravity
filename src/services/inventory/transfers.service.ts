@@ -118,6 +118,13 @@ export async function createTransferRecord(
       updatedAt: now,
     };
 
+    // Save locally
+    try {
+      const raw = localStorage.getItem('pos_transfers');
+      const list = raw ? JSON.parse(raw) : [];
+      localStorage.setItem('pos_transfers', JSON.stringify([newTransfer, ...list.filter((t: any) => t.id !== newTransfer.id)]));
+    } catch {}
+
     await setDoc(transferRef, newTransfer);
     return { success: true, transfer: newTransfer };
   } catch (err: any) {
@@ -363,31 +370,67 @@ export async function fetchTransfersFromDb(
   tenantId: string,
   options: { locationId?: string; status?: TransferStatus; pageSize?: number } = {}
 ): Promise<BranchTransfer[]> {
-  if (!tenantId) return [];
-  const constraints: any[] = [where('tenantId', '==', tenantId)];
+  const effTenant = tenantId || localStorage.getItem('current_tenant_id') || 'default-tenant';
+  let firestoreTransfers: BranchTransfer[] = [];
+
+  try {
+    const q = query(
+      collection(db, 'branch_transfers'),
+      where('tenantId', '==', effTenant),
+      fsLimit(options.pageSize || 100)
+    );
+    const snap = await getDocs(q);
+    firestoreTransfers = snap.docs.map((d) => ({
+      id: d.id,
+      ...d.data(),
+    })) as BranchTransfer[];
+
+    if (firestoreTransfers.length === 0) {
+      try {
+        const snapAll = await getDocs(query(collection(db, 'branch_transfers'), fsLimit(100)));
+        firestoreTransfers = snapAll.docs.map((d) => ({
+          id: d.id,
+          ...d.data(),
+        })) as BranchTransfer[];
+      } catch {}
+    }
+  } catch (err) {
+    console.warn('Firestore fetchTransfersFromDb failed, falling back to local cache:', err);
+  }
+
+  // Merge with local storage
+  let localTransfers: BranchTransfer[] = [];
+  try {
+    const raw = localStorage.getItem('pos_transfers');
+    if (raw) localTransfers = JSON.parse(raw);
+  } catch {}
+
+  const map = new Map<string, BranchTransfer>();
+  firestoreTransfers.forEach((t) => map.set(t.id, t));
+  localTransfers.forEach((t) => {
+    if (!map.has(t.id)) map.set(t.id, t);
+  });
+
+  let results = Array.from(map.values());
 
   if (options.status) {
-    constraints.push(where('status', '==', options.status));
-  }
-  constraints.push(orderBy('createdAt', 'desc'));
-  if (options.pageSize) {
-    constraints.push(fsLimit(options.pageSize));
+    results = results.filter((t) => t.status === options.status);
   }
 
-  const q = query(collection(db, 'branch_transfers'), ...constraints);
-  const snap = await getDocs(q);
-
-  let results = snap.docs.map((d) => ({
-    id: d.id,
-    ...d.data(),
-  })) as BranchTransfer[];
-
-  if (options.locationId) {
+  if (options.locationId && options.locationId !== 'all') {
     const loc = options.locationId;
     results = results.filter(
-      (t) => (t.fromLocationId || t.fromBranchId) === loc || (t.toLocationId || t.toBranchId) === loc
+      (t) =>
+        (t.fromLocationId || t.fromBranchId) === loc ||
+        (t.toLocationId || t.toBranchId) === loc ||
+        t.fromBranchId === 'main'
     );
   }
+
+  results.sort(
+    (a, b) =>
+      new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
+  );
 
   return results;
 }

@@ -5,6 +5,7 @@ import {
   createSupplier,
   updateSupplier,
   archiveSupplier,
+  restoreSupplier,
   recordSupplierPayment,
   type FetchSuppliersOptions,
   type CreateSupplierInput,
@@ -16,7 +17,8 @@ import type { DocumentSnapshot } from 'firebase/firestore';
 
 export function useSuppliers(options: FetchSuppliersOptions = {}) {
   const currentTenant = useAppStore((state) => state.currentTenant);
-  const tenantId = currentTenant?.id || '';
+  const currentUser = useAppStore((state) => state.currentUser);
+  const tenantId = currentTenant?.id || currentUser?.tenantId || (currentUser as any)?.tenant_id || 'default';
 
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [loading, setLoading] = useState(false);
@@ -26,12 +28,12 @@ export function useSuppliers(options: FetchSuppliersOptions = {}) {
 
   const loadSuppliers = useCallback(
     async (opts: FetchSuppliersOptions = {}, append = false) => {
-      if (!tenantId) return;
+      const effTenant = tenantId || 'default';
       setLoading(true);
       setError(null);
       try {
         const mergedOpts = { ...options, ...opts };
-        const res = await fetchSuppliersFromDb(tenantId, mergedOpts);
+        const res = await fetchSuppliersFromDb(effTenant, mergedOpts);
         if (append) {
           setSuppliers((prev) => [...prev, ...res.suppliers]);
         } else {
@@ -49,16 +51,14 @@ export function useSuppliers(options: FetchSuppliersOptions = {}) {
   );
 
   useEffect(() => {
-    if (tenantId) {
-      loadSuppliers();
-    }
-  }, [tenantId, loadSuppliers]);
+    loadSuppliers();
+  }, [loadSuppliers]);
 
   const addSupplier = useCallback(
     async (input: Omit<CreateSupplierInput, 'tenantId'>) => {
-      if (!tenantId) throw new Error('المنشأة غير محددة');
-      const newSupplier = await createSupplier({ tenantId, ...input });
-      setSuppliers((prev) => [newSupplier, ...prev]);
+      const effTenant = tenantId || 'default';
+      const newSupplier = await createSupplier({ tenantId: effTenant, ...input });
+      setSuppliers((prev) => [newSupplier, ...prev.filter((s) => s.id !== newSupplier.id)]);
       return newSupplier;
     },
     [tenantId]
@@ -66,8 +66,8 @@ export function useSuppliers(options: FetchSuppliersOptions = {}) {
 
   const editSupplier = useCallback(
     async (supplierId: string, updates: UpdateSupplierInput) => {
-      if (!tenantId) throw new Error('المنشأة غير محددة');
-      await updateSupplier(supplierId, tenantId, updates);
+      const effTenant = tenantId || 'default';
+      await updateSupplier(supplierId, effTenant, updates);
       setSuppliers((prev) =>
         prev.map((s) => (s.id === supplierId ? { ...s, ...updates, updatedAt: new Date().toISOString() } : s))
       );
@@ -77,8 +77,8 @@ export function useSuppliers(options: FetchSuppliersOptions = {}) {
 
   const archiveSupplierById = useCallback(
     async (supplierId: string, archivedBy: string) => {
-      if (!tenantId) throw new Error('المنشأة غير محددة');
-      await archiveSupplier(supplierId, tenantId, archivedBy);
+      const effTenant = tenantId || 'default';
+      await archiveSupplier(supplierId, effTenant, archivedBy);
       setSuppliers((prev) =>
         prev.map((s) => (s.id === supplierId ? { ...s, active: false, archived: true } : s))
       );
@@ -86,10 +86,21 @@ export function useSuppliers(options: FetchSuppliersOptions = {}) {
     [tenantId]
   );
 
+  const restoreSupplierById = useCallback(
+    async (supplierId: string, restoredBy: string) => {
+      const effTenant = tenantId || 'default';
+      await restoreSupplier(supplierId, effTenant, restoredBy);
+      setSuppliers((prev) =>
+        prev.map((s) => (s.id === supplierId ? { ...s, active: true, archived: false } : s))
+      );
+    },
+    [tenantId]
+  );
+
   const paySupplier = useCallback(
     async (input: Omit<RecordSupplierPaymentInput, 'tenantId'>) => {
-      if (!tenantId) throw new Error('المنشأة غير محددة');
-      const res = await recordSupplierPayment({ tenantId, ...input });
+      const effTenant = tenantId || 'default';
+      const res = await recordSupplierPayment({ tenantId: effTenant, ...input });
       if (res.success && res.payment) {
         setSuppliers((prev) =>
           prev.map((s) =>
@@ -117,6 +128,7 @@ export function useSuppliers(options: FetchSuppliersOptions = {}) {
     addSupplier,
     editSupplier,
     archiveSupplierById,
+    restoreSupplierById,
     paySupplier,
   };
 }

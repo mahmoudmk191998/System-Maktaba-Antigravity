@@ -15,6 +15,7 @@ import {
 import type { DailyClosing, DailyClosingPreview, DifferenceType } from '@/types/dailyClosing.types';
 import type { Expense } from '@/types/expenses';
 import { publishNotification } from './notifications.service';
+import { parseToDate } from './analytics/reportingTimezone';
 
 const CLOSINGS_COLLECTION = 'daily_closings';
 
@@ -32,26 +33,52 @@ export async function calculateDailyClosingPreview(
   const startOfDay = new Date(year, month - 1, day, 0, 0, 0, 0);
   const endOfDay = new Date(year, month - 1, day, 23, 59, 59, 999);
 
-  // 1. Fetch Day's Sales
-  let salesSnap = await getDocs(query(
-    collection(db, 'sales'),
-    where('tenantId', '==', tenantId)
-  ));
-  if (salesSnap.empty) {
-    const fallbackSnap = await getDocs(query(collection(db, 'orders'), where('tenant_id', '==', tenantId)));
-    if (!fallbackSnap.empty) salesSnap = fallbackSnap;
+  // 1. Fetch Day's Sales with comprehensive fallbacks
+  const salesMap = new Map<string, any>();
+  const tryLoadSales = async (col: string, field: string, val: string) => {
+    try {
+      const snap = await getDocs(query(collection(db, col), where(field, '==', val)));
+      snap.docs.forEach((d) => {
+        if (!salesMap.has(d.id)) salesMap.set(d.id, { id: d.id, ...d.data() });
+      });
+    } catch {}
+  };
+
+  if (tenantId) {
+    await tryLoadSales('sales', 'tenantId', tenantId);
+    await tryLoadSales('sales', 'tenant_id', tenantId);
+    await tryLoadSales('orders', 'tenantId', tenantId);
+    await tryLoadSales('orders', 'tenant_id', tenantId);
+  }
+  if (salesMap.size === 0) {
+    await tryLoadSales('sales', 'tenantId', 'default');
+    await tryLoadSales('sales', 'tenant_id', 'default');
+    await tryLoadSales('orders', 'tenantId', 'default');
+    await tryLoadSales('orders', 'tenant_id', 'default');
+  }
+  if (salesMap.size === 0) {
+    try {
+      const snap = await getDocs(collection(db, 'sales'));
+      snap.docs.forEach((d) => {
+        const data = d.data();
+        const docTenant = data.tenantId || data.tenant_id;
+        if (!tenantId || tenantId === 'default' || !docTenant || docTenant === tenantId || docTenant === 'default') {
+          if (!salesMap.has(d.id)) salesMap.set(d.id, { id: d.id, ...data });
+        }
+      });
+    } catch {}
   }
 
-  const daySales = salesSnap.docs
-    .map((d) => ({ id: d.id, ...(d.data() as any) }))
-    .filter((s) => {
-      if (branchId && branchId !== 'all' && (s.branchId || s.branch_id) && (s.branchId || s.branch_id) !== branchId) return false;
-      if (s.status === 'cancelled' || s.saleStatus === 'cancelled') return false;
-      const sDateStr = s.createdAt || s.created_at;
-      if (!sDateStr) return false;
-      const sDate = new Date(sDateStr);
-      return sDate >= startOfDay && sDate <= endOfDay;
-    });
+  const isAllBranches = !branchId || branchId === 'all';
+  const daySales = Array.from(salesMap.values()).filter((s) => {
+    const sBranch = s.branchId || s.branch_id || s.destinationLocationId || s.locationId;
+    if (!isAllBranches && sBranch && sBranch !== branchId && sBranch !== 'default') return false;
+    if (s.status === 'cancelled' || s.saleStatus === 'cancelled' || s.status === 'voided') return false;
+    const sDateVal = s.createdAt || s.created_at || s.completedAt || s.date || s.order_date || s.timestamp || s.saleDate;
+    const sDate = parseToDate(sDateVal);
+    if (!sDate) return false;
+    return sDate >= startOfDay && sDate <= endOfDay;
+  });
 
   let salesTotal = 0;
   let cashSales = 0;
@@ -84,20 +111,80 @@ export async function calculateDailyClosingPreview(
     }
   });
 
-  // 2. Fetch Day's Expenses & Cash Outflows
-  const expensesQuery = query(
-    collection(db, 'expenses'),
-    where('tenantId', '==', tenantId),
-    where('branchId', '==', branchId)
-  );
-  const expensesSnap = await getDocs(expensesQuery);
-  const dayExpenses = expensesSnap.docs
-    .map((d) => ({ id: d.id, ...(d.data() as any) })) as Expense[];
+  // 1.5 Fetch Day's Returns & Deduct from Sales Total & Cash with fallbacks
+  const returnsMap = new Map<string, any>();
+  const tryLoadReturns = async (col: string, field: string, val: string) => {
+    try {
+      const snap = await getDocs(query(collection(db, col), where(field, '==', val)));
+      snap.docs.forEach((d) => {
+        if (!returnsMap.has(d.id)) returnsMap.set(d.id, { id: d.id, ...d.data() });
+      });
+    } catch {}
+  };
+  if (tenantId) {
+    await tryLoadReturns('sale_returns', 'tenantId', tenantId);
+    await tryLoadReturns('sale_returns', 'tenant_id', tenantId);
+    await tryLoadReturns('sales_returns', 'tenantId', tenantId);
+    await tryLoadReturns('sales_returns', 'tenant_id', tenantId);
+  }
+  if (returnsMap.size === 0 && tenantId && tenantId !== 'default') {
+    await tryLoadReturns('sale_returns', 'tenantId', 'default');
+    await tryLoadReturns('sale_returns', 'tenant_id', 'default');
+  }
 
-  const activeDayExpenses = dayExpenses.filter((e) => {
-    if (e.status === 'voided') return false;
-    return e.date === dateStr;
+  const dayReturns = Array.from(returnsMap.values()).filter((r) => {
+    const rBranch = r.branchId || r.branch_id;
+    if (!isAllBranches && rBranch && rBranch !== branchId && rBranch !== 'default') return false;
+    if (r.status && r.status !== 'completed') return false;
+    const rDateVal = r.createdAt || r.created_at || r.date || r.timestamp;
+    const rDate = parseToDate(rDateVal);
+    if (!rDate) return false;
+    return rDate >= startOfDay && rDate <= endOfDay;
   });
+
+  let returnsTotal = 0;
+  let returnsCashRefund = 0;
+  dayReturns.forEach((r) => {
+    const rAmt = Number(r.refundAmount ?? r.subtotalReturned ?? r.total ?? 0);
+    returnsTotal += rAmt;
+    const method = String(r.refundMethod || '').toLowerCase();
+    if (method === 'cash' || method === 'نقدي' || method === 'كاش') {
+      returnsCashRefund += rAmt;
+    }
+  });
+
+  salesTotal = Math.max(0, salesTotal - returnsTotal);
+  cashSales = Math.max(0, cashSales - returnsCashRefund);
+
+  // 2. Fetch Day's Expenses & Cash Outflows with fallbacks
+  const expensesMap = new Map<string, any>();
+  const tryLoadExpenses = async (field: string, val: string) => {
+    try {
+      const snap = await getDocs(query(collection(db, 'expenses'), where(field, '==', val)));
+      snap.docs.forEach((d) => {
+        if (!expensesMap.has(d.id)) expensesMap.set(d.id, { id: d.id, ...d.data() });
+      });
+    } catch {}
+  };
+  if (tenantId) {
+    await tryLoadExpenses('tenantId', tenantId);
+    await tryLoadExpenses('tenant_id', tenantId);
+  }
+  if (expensesMap.size === 0 && tenantId && tenantId !== 'default') {
+    await tryLoadExpenses('tenantId', 'default');
+    await tryLoadExpenses('tenant_id', 'default');
+  }
+
+  const activeDayExpenses = Array.from(expensesMap.values()).filter((e) => {
+    const eBranch = e.branchId || e.branch_id;
+    if (!isAllBranches && eBranch && eBranch !== branchId && eBranch !== 'default') return false;
+    if (e.status === 'voided' || e.status === 'cancelled' || e.status === 'rejected') return false;
+    if (e.date === dateStr) return true;
+    const eDateVal = e.date || e.createdAt || e.created_at || e.timestamp;
+    const eDate = parseToDate(eDateVal);
+    if (!eDate) return false;
+    return eDate >= startOfDay && eDate <= endOfDay;
+  }) as Expense[];
 
   const operatingExpenses = activeDayExpenses
     .filter((e) => e.category !== 'سلف الموظفين' && e.isOperatingExpense !== false && e.type !== 'employee_advance')
@@ -116,23 +203,27 @@ export async function calculateDailyClosingPreview(
     .reduce((sum, e) => sum + Number(e.amount || 0), 0);
 
   // 3. Fetch Purchases
-  let purchasesSnap = await getDocs(query(
-    collection(db, 'purchase_orders'),
-    where('tenantId', '==', tenantId)
-  ));
-  if (purchasesSnap.empty) {
-    purchasesSnap = await getDocs(query(collection(db, 'purchase_orders'), where('tenant_id', '==', tenantId)));
-  }
-  const dayPurchases = purchasesSnap.docs
-    .map((d) => ({ id: d.id, ...(d.data() as any) }))
-    .filter((p) => {
-      if (branchId && branchId !== 'all' && (p.branchId || p.branch_id) && (p.branchId || p.branch_id) !== branchId) return false;
-      if (p.status === 'cancelled') return false;
-      const pDateStr = p.createdAt || p.created_at;
-      if (!pDateStr) return false;
-      const pDate = new Date(pDateStr);
-      return pDate >= startOfDay && pDate <= endOfDay;
-    });
+  let dayPurchases: any[] = [];
+  try {
+    let purchasesSnap = await getDocs(query(
+      collection(db, 'purchase_orders'),
+      where('tenantId', '==', tenantId)
+    ));
+    if (purchasesSnap.empty) {
+      purchasesSnap = await getDocs(query(collection(db, 'purchase_orders'), where('tenant_id', '==', tenantId)));
+    }
+    dayPurchases = purchasesSnap.docs
+      .map((d) => ({ id: d.id, ...(d.data() as any) }))
+      .filter((p) => {
+        if (branchId && branchId !== 'all' && (p.branchId || p.branch_id) && (p.branchId || p.branch_id) !== branchId) return false;
+        if (p.status === 'cancelled') return false;
+        const pDateStr = p.createdAt || p.created_at;
+        if (!pDateStr) return false;
+        const pDate = parseToDate(pDateStr);
+        if (!pDate) return false;
+        return pDate >= startOfDay && pDate <= endOfDay;
+      });
+  } catch {}
 
   const purchasesTotal = dayPurchases.reduce((sum, p) => sum + Number(p.totalAmount || p.total_amount || p.total || 0), 0);
   const purchasesCash = dayPurchases
@@ -140,24 +231,28 @@ export async function calculateDailyClosingPreview(
     .reduce((sum, p) => sum + Number(p.paidAmount || p.paid_amount || 0), 0);
 
   // 4. Fetch Waste Cost
-  let movementsSnap = await getDocs(query(
-    collection(db, 'stock_movements'),
-    where('tenantId', '==', tenantId)
-  ));
-  if (movementsSnap.empty) {
-    movementsSnap = await getDocs(query(collection(db, 'stock_movements'), where('tenant_id', '==', tenantId)));
-  }
-  const dayWaste = movementsSnap.docs
-    .map((d) => ({ id: d.id, ...(d.data() as any) }))
-    .filter((m) => {
-      if (branchId && branchId !== 'all' && (m.branchId || m.branch_id) && (m.branchId || m.branch_id) !== branchId) return false;
-      const isWaste = m.movementType === 'waste' || m.movement_type === 'waste';
-      if (!isWaste) return false;
-      const mDateStr = m.createdAt || m.created_at;
-      if (!mDateStr) return false;
-      const mDate = new Date(mDateStr);
-      return mDate >= startOfDay && mDate <= endOfDay;
-    });
+  let dayWaste: any[] = [];
+  try {
+    let movementsSnap = await getDocs(query(
+      collection(db, 'stock_movements'),
+      where('tenantId', '==', tenantId)
+    ));
+    if (movementsSnap.empty) {
+      movementsSnap = await getDocs(query(collection(db, 'stock_movements'), where('tenant_id', '==', tenantId)));
+    }
+    dayWaste = movementsSnap.docs
+      .map((d) => ({ id: d.id, ...(d.data() as any) }))
+      .filter((m) => {
+        if (branchId && branchId !== 'all' && (m.branchId || m.branch_id) && (m.branchId || m.branch_id) !== branchId) return false;
+        const isWaste = m.movementType === 'waste' || m.movement_type === 'waste';
+        if (!isWaste) return false;
+        const mDateStr = m.createdAt || m.created_at;
+        if (!mDateStr) return false;
+        const mDate = parseToDate(mDateStr);
+        if (!mDate) return false;
+        return mDate >= startOfDay && mDate <= endOfDay;
+      });
+  } catch {}
 
   const wasteCost = dayWaste.reduce((sum, m) => {
     const unitCost = Number(m.unitCostSnapshot || m.unit_cost || m.averageCost || 0);
@@ -168,19 +263,21 @@ export async function calculateDailyClosingPreview(
   // 5. Opening Cash
   let openingCash = openingCashOverride !== undefined ? Number(openingCashOverride) : 0;
   if (openingCashOverride === undefined) {
-    const posShiftsQuery = query(
-      collection(db, 'pos_shifts'),
-      where('branch_id', '==', branchId)
-    );
-    const shiftsSnap = await getDocs(posShiftsQuery);
-    const dayShifts = shiftsSnap.docs
-      .map((d) => ({ id: d.id, ...(d.data() as any) }))
-      .filter((s) => {
-        if (!s.start_time) return false;
-        const sDate = new Date(s.start_time);
-        return sDate >= startOfDay && sDate <= endOfDay;
-      });
-    openingCash = dayShifts.reduce((sum, s) => sum + Number(s.starting_cash || 0), 0);
+    try {
+      let shiftsSnap = await getDocs(query(collection(db, 'cashier_shifts'), where('tenantId', '==', tenantId)));
+      if (shiftsSnap.empty) {
+        shiftsSnap = await getDocs(collection(db, 'pos_shifts'));
+      }
+      const dayShifts = shiftsSnap.docs
+        .map((d) => ({ id: d.id, ...(d.data() as any) }))
+        .filter((s) => {
+          const sDateVal = s.start_time || s.openedAt || s.createdAt;
+          const sDate = parseToDate(sDateVal);
+          if (!sDate) return false;
+          return sDate >= startOfDay && sDate <= endOfDay;
+        });
+      openingCash = dayShifts.reduce((sum, s) => sum + Number(s.starting_cash || s.openingCash || 0), 0);
+    } catch {}
   }
 
   // Expected Cash = Opening Cash + Cash Sales - Cash Outflows
@@ -188,10 +285,13 @@ export async function calculateDailyClosingPreview(
 
   // Check if closing record already exists
   const closingDocId = `${tenantId}_${branchId}_${dateStr}`;
-  const existingClosingSnap = await getDoc(doc(db, CLOSINGS_COLLECTION, closingDocId));
-  const existingClosing = existingClosingSnap.exists()
-    ? ({ id: existingClosingSnap.id, ...(existingClosingSnap.data() as any) } as DailyClosing)
-    : null;
+  let existingClosing: DailyClosing | null = null;
+  try {
+    const existingClosingSnap = await getDoc(doc(db, CLOSINGS_COLLECTION, closingDocId));
+    existingClosing = existingClosingSnap.exists()
+      ? ({ id: existingClosingSnap.id, ...(existingClosingSnap.data() as any) } as DailyClosing)
+      : null;
+  } catch {}
 
   return {
     date: dateStr,
@@ -200,7 +300,7 @@ export async function calculateDailyClosingPreview(
     salesTotal,
     cashSales,
     electronicSales,
-    ordersCount: dayOrders.length,
+    ordersCount: daySales.length,
     totalDiscounts,
     operatingExpenses,
     cashOutflows,
@@ -386,15 +486,18 @@ export async function fetchDailyClosingsHistory(
   limitCount: number = 30
 ): Promise<DailyClosing[]> {
   try {
-    const constraints: any[] = [where('tenantId', '==', tenantId)];
-    if (branchId && branchId !== 'all') {
-      constraints.push(where('branchId', '==', branchId));
-    }
-    const q = query(collection(db, CLOSINGS_COLLECTION), ...constraints, firestoreLimit(limitCount));
+    const q = query(
+      collection(db, CLOSINGS_COLLECTION),
+      where('tenantId', '==', tenantId),
+      firestoreLimit(Math.max(limitCount * 2, 50))
+    );
     const snap = await getDocs(q);
-    const list = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) as DailyClosing[];
+    let list = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) as DailyClosing[];
+    if (branchId && branchId !== 'all') {
+      list = list.filter((c) => c.branchId === branchId || c.branchId === 'all');
+    }
     list.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-    return list;
+    return list.slice(0, limitCount);
   } catch (err) {
     console.error('Error fetching closings history:', err);
     return [];

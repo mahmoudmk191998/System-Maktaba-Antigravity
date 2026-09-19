@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, useEffect } from 'react';
+import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { MainLayout } from '@/components/layout';
 import { useFormatters } from '@/lib/formatters';
@@ -9,14 +9,15 @@ import {
   QrCode, Printer, Download, Copy, RefreshCw, KeyRound, MapPin,
   AlertTriangle, Sliders, FileText, CheckCircle2, XCircle, ArrowUpDown,
   Lock, Phone, ChevronRight, UserMinus, UserCheck, Calculator,
-  ChevronDown, FileDown, Image as ImageIcon, CalendarOff
+  ChevronDown, FileDown, Image as ImageIcon, CalendarOff,
+  CreditCard, Mail
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
-import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
 import {
   DropdownMenu,
@@ -42,7 +43,8 @@ import { LeavesTab } from '@/components/hr/LeavesTab';
 import { calculateEmployeeLeaveBalance } from '@/services/leave.service';
 import { LEAVE_TYPE_CONFIG, LEAVE_STATUS_CONFIG } from '@/types/leave';
 import { db } from '@/lib/firebase';
-import { collection, query, where, onSnapshot } from 'firebase/firestore';
+import { collection, query, where, getDocs } from 'firebase/firestore';
+import { firestoreLogger } from '@/lib/firestoreLogger';
 import { QRCodeSVG } from 'qrcode.react';
 import { toast } from 'sonner';
 import { formatWorkedHours, calculateLateMinutes, timeStringToMinutes } from '@/lib/attendanceSecurity';
@@ -119,19 +121,25 @@ export default function HR() {
 
   const [preselectedLeaveEmployeeId, setPreselectedLeaveEmployeeId] = useState<string | null>(null);
 
-  // Real-time Leaves Subscription for Payroll and Profile integration
+  // On-demand Leaves Fetch with event synchronization
   const [leaves, setLeaves] = useState<any[]>([]);
-  useEffect(() => {
+  const loadLeaves = useCallback(async () => {
     if (!tenantId) return;
-    const unsub = onSnapshot(
-      query(collection(db, 'employee_leaves'), where('tenant_id', '==', tenantId)),
-      (snap) => {
-        setLeaves(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-      },
-      (err) => console.warn('Leaves fetch warning:', err)
-    );
-    return () => unsub();
+    try {
+      const snap = await getDocs(query(collection(db, 'employee_leaves'), where('tenant_id', '==', tenantId)));
+      firestoreLogger.logOperation('HR.loadLeaves', 'employee_leaves', 'getDocs', snap.docs.length);
+      setLeaves(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    } catch (err) {
+      console.warn('Leaves fetch warning:', err);
+    }
   }, [tenantId]);
+
+  useEffect(() => {
+    loadLeaves();
+    const handleSync = () => loadLeaves();
+    window.addEventListener('alwan_leaves_synced', handleSync);
+    return () => window.removeEventListener('alwan_leaves_synced', handleSync);
+  }, [loadLeaves]);
 
   // Active Tab: initializes from URL search param (e.g. /hr?tab=reports or /hr?tab=leaves)
   const [activeTab, setActiveTab] = useState(() => {
@@ -184,6 +192,13 @@ export default function HR() {
     status: 'active',
     pin: '',
     shift_id: '',
+    national_id: '',
+    address: '',
+    photo_url: '',
+    emergency_contact: '',
+    email: '',
+    hire_date: new Date().toISOString().split('T')[0],
+    notes: '',
   });
 
   // Change PIN Modal
@@ -240,20 +255,30 @@ export default function HR() {
   // Normalized Employees List
   const employees = useMemo(() => {
     return dbEmployees.map((e) => ({
+      ...e,
       id: e.id,
       name: e.name || '',
       role: e.role || '',
       department: e.department || '',
       phone: e.phone || '',
       salary: Number(e.salary) || 0,
-      hireDate: e.hire_date || '',
-      employeeType: e.employee_type || 'full_time',
+      hireDate: e.hire_date || e.hireDate || '',
+      hire_date: e.hire_date || e.hireDate || '',
+      employeeType: e.employee_type || e.employeeType || 'full_time',
+      employee_type: e.employee_type || e.employeeType || 'full_time',
       status: e.status || 'active',
       pinSet: Boolean(e.pin_set || e.pin_hash || e.pin),
       shiftId: e.default_shift_id || e.shift_id || null,
       shift_id: e.shift_id || e.default_shift_id || null,
       default_shift_id: e.default_shift_id || e.shift_id || null,
       annual_leave_entitlement: e.annual_leave_entitlement ?? null,
+      national_id: e.national_id || '',
+      address: e.address || '',
+      photo_url: e.photo_url || e.avatar || '',
+      avatar: e.photo_url || e.avatar || '',
+      emergency_contact: e.emergency_contact || '',
+      email: e.email || '',
+      notes: e.notes || '',
       createdAt: e.created_at || '',
     }));
   }, [dbEmployees]);
@@ -358,8 +383,15 @@ export default function HR() {
       employee_type: newEmployee.employee_type,
       status: newEmployee.status,
       default_shift_id: newEmployee.shift_id || null,
-      hire_date: new Date().toISOString().split('T')[0],
+      hire_date: newEmployee.hire_date || new Date().toISOString().split('T')[0],
       pin: newEmployee.pin || null,
+      national_id: newEmployee.national_id || '',
+      address: newEmployee.address || '',
+      photo_url: newEmployee.photo_url || '',
+      avatar: newEmployee.photo_url || '',
+      emergency_contact: newEmployee.emergency_contact || '',
+      email: newEmployee.email || '',
+      notes: newEmployee.notes || '',
     });
 
     if (success) {
@@ -374,6 +406,13 @@ export default function HR() {
         status: 'active',
         pin: '',
         shift_id: '',
+        national_id: '',
+        address: '',
+        photo_url: '',
+        emergency_contact: '',
+        email: '',
+        hire_date: new Date().toISOString().split('T')[0],
+        notes: '',
       });
     }
   };
@@ -390,6 +429,14 @@ export default function HR() {
       employee_type: editingEmployee.employeeType || editingEmployee.employee_type,
       status: editingEmployee.status,
       default_shift_id: editingEmployee.shiftId || editingEmployee.default_shift_id || null,
+      national_id: editingEmployee.national_id || '',
+      address: editingEmployee.address || '',
+      photo_url: editingEmployee.photo_url || editingEmployee.avatar || '',
+      avatar: editingEmployee.photo_url || editingEmployee.avatar || '',
+      emergency_contact: editingEmployee.emergency_contact || '',
+      email: editingEmployee.email || '',
+      hire_date: editingEmployee.hire_date || editingEmployee.hireDate || '',
+      notes: editingEmployee.notes || '',
     });
 
     if (success) {
@@ -517,7 +564,7 @@ export default function HR() {
       <html dir="rtl" lang="ar">
         <head>
           <meta charset="utf-8">
-          <title>رمز QR لتسجيل الحضور والانصراف - نظام المطعم</title>
+          <title>رمز QR لتسجيل الحضور والانصراف - نظام المكتبة</title>
           <style>
             @page {
               size: A4 portrait;
@@ -632,13 +679,13 @@ export default function HR() {
               <ol>
                 <li>افتح تطبيق الكاميرا على هاتفك ووجّهه نحو الرمز.</li>
                 <li>اضغط على الرابط المنبثق لفتح صفحة الحضور.</li>
-                <li>اختر اسمك من قائمة موظفي المطعم.</li>
+                <li>اختر اسمك من قائمة موظفي المكتبة.</li>
                 <li>أدخل الرمز السري الخاص بك (PIN المكون من 4 أرقام).</li>
                 <li>سيتم تسجيل حضورك أو انصرافك وحساب ساعات العمل تلقائياً.</li>
               </ol>
             </div>
             <div class="footer-note">
-              تم إصدار هذا الرمز بواسطة لوحة تحكم إدارة المطعم • للاستخدام المكتبي فقط
+              تم إصدار هذا الرمز بواسطة لوحة تحكم إدارة المكتبة • للاستخدام المكتبي فقط
             </div>
           </div>
           <script>
@@ -720,7 +767,7 @@ export default function HR() {
       toast.error('المتصفح لا يدعم تحديد الموقع');
       return;
     }
-    toast.loading('جاري قراءة إحداثيات موقع المطعم...');
+    toast.loading('جاري قراءة إحداثيات موقع المكتبة...');
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         toast.dismiss();
@@ -728,7 +775,7 @@ export default function HR() {
           latitude: pos.coords.latitude,
           longitude: pos.coords.longitude,
         });
-        toast.success(`تم حفظ إحداثيات المطعم بدقة (${pos.coords.latitude.toFixed(5)}, ${pos.coords.longitude.toFixed(5)})`);
+        toast.success(`تم حفظ إحداثيات المكتبة بدقة (${pos.coords.latitude.toFixed(5)}, ${pos.coords.longitude.toFixed(5)})`);
       },
       (err) => {
         toast.dismiss();
@@ -1005,6 +1052,9 @@ export default function HR() {
                       {/* Avatar & Main Info */}
                       <div className="flex items-center gap-3">
                         <Avatar className="w-12 h-12 border border-slate-800">
+                          {emp.photo_url && (
+                            <AvatarImage src={emp.photo_url} alt={emp.name} className="object-cover" />
+                          )}
                           <AvatarFallback className="bg-primary/10 text-primary font-bold text-lg">
                             {emp.name.charAt(0)}
                           </AvatarFallback>
@@ -1023,12 +1073,24 @@ export default function HR() {
                             )}
                           </div>
                           <p className="text-xs text-primary font-medium">{emp.role}</p>
-                          <div className="flex items-center gap-3 text-[11px] text-muted-foreground mt-0.5">
+                          <div className="flex items-center gap-3 text-[11px] text-muted-foreground mt-0.5 flex-wrap">
                             <span className="flex items-center gap-1 font-mono" dir="ltr">
                               <Phone className="w-3 h-3" />
                               {emp.phone || 'بدون هاتف'}
                             </span>
                             {emp.department && <span>• {emp.department}</span>}
+                            {emp.national_id && (
+                              <span className="flex items-center gap-1 font-mono text-slate-300">
+                                <CreditCard className="w-3 h-3 text-slate-400" />
+                                {emp.national_id}
+                              </span>
+                            )}
+                            {emp.address && (
+                              <span className="flex items-center gap-1 text-slate-300">
+                                <MapPin className="w-3 h-3 text-slate-400" />
+                                {emp.address}
+                              </span>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -1371,7 +1433,7 @@ export default function HR() {
             <Card className="md:col-span-1 border-primary/30 text-center p-6 bg-slate-900/50">
               <CardTitle className="text-base mb-1">رمز QR الحضور والانصراف</CardTitle>
               <CardDescription className="text-xs mb-4">
-                يتم وضعه في مدخل المطعم أو لوحة الموظفين
+                يتم وضعه في مدخل المكتبة أو لوحة الموظفين
               </CardDescription>
 
               <div
@@ -1454,7 +1516,7 @@ export default function HR() {
                   </Badge>
                 </CardTitle>
                 <CardDescription className="text-xs">
-                  الرابط مشفر برمز فريد خاص بفرع المطعم لمنع التخمين أو التلاعب
+                  الرابط مشفر برمز فريد خاص بفرع المكتبة لمنع التخمين أو التلاعب
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
@@ -1479,7 +1541,7 @@ export default function HR() {
                         تدوير وإعادة إنشاء رمز الحضور (Token Rotation)
                       </h4>
                       <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
-                        في حال شعرت بتسريب رمز الـ QR أو أردت إلغاء الرمز القديم وطباعة رمز جديد للمطعم، يمكنك إعادة
+                        في حال شعرت بتسريب رمز الـ QR أو أردت إلغاء الرمز القديم وطباعة رمز جديد للمكتبة، يمكنك إعادة
                         التدوير فوراً. ستتوقف جميع الروابط القديمة ولن تؤثر على السجلات السابقة.
                       </p>
                     </div>
@@ -1706,10 +1768,10 @@ export default function HR() {
                   <div>
                     <h4 className="font-bold text-sm text-slate-100 flex items-center gap-2">
                       <MapPin className="w-4 h-4 text-primary" />
-                      تقييد الحضور داخل نطاق المطعم (Geofencing)
+                      تقييد الحضور داخل نطاق المكتبة (Geofencing)
                     </h4>
                     <p className="text-xs text-muted-foreground mt-0.5">
-                      إلزام الموظف بأن يكون متواجداً جغرافياً داخل مسافة محددة من المطعم
+                      إلزام الموظف بأن يكون متواجداً جغرافياً داخل مسافة محددة من المكتبة
                     </p>
                   </div>
                   <Switch
@@ -1721,7 +1783,7 @@ export default function HR() {
                 {hrSettings.location_restriction && (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-3 border-t border-slate-800">
                     <div className="space-y-2">
-                      <Label className="text-xs">إحداثيات المطعم (Latitude & Longitude)</Label>
+                      <Label className="text-xs">إحداثيات المكتبة (Latitude & Longitude)</Label>
                       <div className="flex gap-2">
                         <Input
                           placeholder="Latitude"
@@ -1746,7 +1808,7 @@ export default function HR() {
                         className="w-full gap-1.5 text-xs h-8"
                       >
                         <MapPin className="w-3.5 h-3.5 text-primary" />
-                        حفظ الموقع الحالي للمطعم تلقائياً
+                        حفظ الموقع الحالي للمكتبة تلقائياً
                       </Button>
                     </div>
 
@@ -1763,7 +1825,7 @@ export default function HR() {
                         onValueChange={([val]) => updateHrSettings({ geofence_radius: val })}
                       />
                       <p className="text-[11px] text-muted-foreground">
-                        نوصي بقيمة بين 50 إلى 150 متراً لتغطية مساحة المطعم بدقة
+                        نوصي بقيمة بين 50 إلى 150 متراً لتغطية مساحة المكتبة بدقة
                       </p>
                     </div>
                   </div>
@@ -1840,39 +1902,113 @@ export default function HR() {
               أدخل بيانات الموظف ورقم PIN السري الخاص به لتسجيل الحضور
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-3 py-2">
-            <div className="space-y-1">
-              <Label className="text-xs">الاسم الكامل *</Label>
-              <Input
-                placeholder="مثال: أحمد محمد علي"
-                value={newEmployee.name}
-                onChange={(e) => setNewEmployee({ ...newEmployee, name: e.target.value })}
-              />
+          <div className="space-y-3.5 py-2">
+            {/* Photo & Live Avatar Preview */}
+            <div className="flex items-center gap-3 p-3 bg-muted/20 border border-border rounded-xl">
+              <Avatar className="w-16 h-16 border-2 border-primary/20 shrink-0 bg-background shadow-sm">
+                {newEmployee.photo_url && (
+                  <AvatarImage src={newEmployee.photo_url} alt="معاينة" className="object-cover" />
+                )}
+                <AvatarFallback className="bg-primary/10 text-primary font-bold text-xl">
+                  {newEmployee.name?.charAt(0) || <ImageIcon className="w-6 h-6 opacity-40" />}
+                </AvatarFallback>
+              </Avatar>
+              <div className="flex-1 space-y-1">
+                <Label className="text-xs font-semibold">رابط الصورة الشخصية (Direct Image URL)</Label>
+                <Input
+                  placeholder="https://example.com/photo.jpg"
+                  value={newEmployee.photo_url}
+                  onChange={(e) => setNewEmployee({ ...newEmployee, photo_url: e.target.value })}
+                  dir="ltr"
+                  className="h-9 text-xs font-mono"
+                />
+              </div>
             </div>
+
+            {/* Name & Role */}
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1">
-                <Label className="text-xs">رقم الهاتف *</Label>
+                <Label className="text-xs">الاسم الكامل *</Label>
                 <Input
-                  placeholder="01XXXXXXXXX"
-                  value={newEmployee.phone}
-                  onChange={(e) => setNewEmployee({ ...newEmployee, phone: e.target.value })}
-                  dir="ltr"
+                  placeholder="مثال: أحمد محمد علي"
+                  value={newEmployee.name}
+                  onChange={(e) => setNewEmployee({ ...newEmployee, name: e.target.value })}
                 />
               </div>
               <div className="space-y-1">
                 <Label className="text-xs">المسمى الوظيفي *</Label>
                 <Input
-                  placeholder="مثال: كاشير، شيف"
+                  placeholder="مثال: كاشير، أمين مكتبة"
                   value={newEmployee.role}
                   onChange={(e) => setNewEmployee({ ...newEmployee, role: e.target.value })}
                 />
               </div>
             </div>
+
+            {/* National ID & Phone */}
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1">
-                <Label className="text-xs">القسم</Label>
+                <Label className="text-xs flex items-center gap-1">
+                  <CreditCard className="w-3.5 h-3.5 text-muted-foreground" />
+                  رقم البطاقة / الرقم القومي
+                </Label>
                 <Input
-                  placeholder="مثال: المطبخ، الصالة"
+                  placeholder="الرقم القومي (14 رقم)"
+                  value={newEmployee.national_id}
+                  onChange={(e) => setNewEmployee({ ...newEmployee, national_id: e.target.value })}
+                  dir="ltr"
+                  className="font-mono text-xs"
+                />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs flex items-center gap-1">
+                  <Phone className="w-3.5 h-3.5 text-muted-foreground" />
+                  رقم الهاتف الأساسي *
+                </Label>
+                <Input
+                  placeholder="01XXXXXXXXX"
+                  value={newEmployee.phone}
+                  onChange={(e) => setNewEmployee({ ...newEmployee, phone: e.target.value })}
+                  dir="ltr"
+                  className="font-mono text-xs"
+                />
+              </div>
+            </div>
+
+            {/* Address & Emergency Phone */}
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <Label className="text-xs flex items-center gap-1">
+                  <MapPin className="w-3.5 h-3.5 text-muted-foreground" />
+                  العنوان بالتفصيل
+                </Label>
+                <Input
+                  placeholder="المدينة، الشارع، رقم العقار"
+                  value={newEmployee.address}
+                  onChange={(e) => setNewEmployee({ ...newEmployee, address: e.target.value })}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs flex items-center gap-1">
+                  <Phone className="w-3.5 h-3.5 text-rose-500" />
+                  هاتف الطوارئ / صلة القرابة
+                </Label>
+                <Input
+                  placeholder="رقم الطوارئ"
+                  value={newEmployee.emergency_contact}
+                  onChange={(e) => setNewEmployee({ ...newEmployee, emergency_contact: e.target.value })}
+                  dir="ltr"
+                  className="font-mono text-xs"
+                />
+              </div>
+            </div>
+
+            {/* Department & Base Salary */}
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <Label className="text-xs">القسم / الإدارة</Label>
+                <Input
+                  placeholder="مثال: المبيعات، المستودع"
                   value={newEmployee.department}
                   onChange={(e) => setNewEmployee({ ...newEmployee, department: e.target.value })}
                 />
@@ -1887,6 +2023,8 @@ export default function HR() {
                 />
               </div>
             </div>
+
+            {/* Shift & Employment Type */}
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1">
                 <Label className="text-xs">الوردية الافتراضية</Label>
@@ -1916,6 +2054,50 @@ export default function HR() {
                   <option value="daily">يومية</option>
                 </select>
               </div>
+            </div>
+
+            {/* Email & Hire Date */}
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <Label className="text-xs flex items-center gap-1">
+                  <Mail className="w-3.5 h-3.5 text-muted-foreground" />
+                  البريد الإلكتروني
+                </Label>
+                <Input
+                  type="email"
+                  placeholder="name@example.com"
+                  value={newEmployee.email}
+                  onChange={(e) => setNewEmployee({ ...newEmployee, email: e.target.value })}
+                  dir="ltr"
+                  className="text-xs"
+                />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs flex items-center gap-1">
+                  <Calendar className="w-3.5 h-3.5 text-muted-foreground" />
+                  تاريخ بدء العمل
+                </Label>
+                <Input
+                  type="date"
+                  value={newEmployee.hire_date}
+                  onChange={(e) => setNewEmployee({ ...newEmployee, hire_date: e.target.value })}
+                  className="text-xs"
+                />
+              </div>
+            </div>
+
+            {/* Notes */}
+            <div className="space-y-1">
+              <Label className="text-xs flex items-center gap-1">
+                <FileText className="w-3.5 h-3.5 text-muted-foreground" />
+                ملاحظات وتفاصيل إضافية
+              </Label>
+              <Input
+                placeholder="أي ملاحظات أو شروط أو تفاصيل تخص الموظف..."
+                value={newEmployee.notes}
+                onChange={(e) => setNewEmployee({ ...newEmployee, notes: e.target.value })}
+                className="text-xs"
+              />
             </div>
 
             {/* PIN Input */}
@@ -1958,36 +2140,110 @@ export default function HR() {
             <DialogTitle>تعديل بيانات الموظف</DialogTitle>
           </DialogHeader>
           {editingEmployee && (
-            <div className="space-y-3 py-2">
-              <div className="space-y-1">
-                <Label className="text-xs">الاسم الكامل</Label>
-                <Input
-                  value={editingEmployee.name}
-                  onChange={(e) => setEditingEmployee({ ...editingEmployee, name: e.target.value })}
-                />
+            <div className="space-y-3.5 py-2">
+              {/* Photo & Live Avatar Preview */}
+              <div className="flex items-center gap-3 p-3 bg-muted/20 border border-border rounded-xl">
+                <Avatar className="w-16 h-16 border-2 border-primary/20 shrink-0 bg-background shadow-sm">
+                  {editingEmployee.photo_url && (
+                    <AvatarImage src={editingEmployee.photo_url} alt="معاينة" className="object-cover" />
+                  )}
+                  <AvatarFallback className="bg-primary/10 text-primary font-bold text-xl">
+                    {editingEmployee.name?.charAt(0) || <ImageIcon className="w-6 h-6 opacity-40" />}
+                  </AvatarFallback>
+                </Avatar>
+                <div className="flex-1 space-y-1">
+                  <Label className="text-xs font-semibold">رابط الصورة الشخصية (Direct Image URL)</Label>
+                  <Input
+                    placeholder="https://example.com/photo.jpg"
+                    value={editingEmployee.photo_url || ''}
+                    onChange={(e) => setEditingEmployee({ ...editingEmployee, photo_url: e.target.value })}
+                    dir="ltr"
+                    className="h-9 text-xs font-mono"
+                  />
+                </div>
               </div>
+
+              {/* Name & Role */}
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1">
-                  <Label className="text-xs">رقم الهاتف</Label>
+                  <Label className="text-xs">الاسم الكامل *</Label>
                   <Input
-                    value={editingEmployee.phone}
-                    onChange={(e) => setEditingEmployee({ ...editingEmployee, phone: e.target.value })}
-                    dir="ltr"
+                    value={editingEmployee.name || ''}
+                    onChange={(e) => setEditingEmployee({ ...editingEmployee, name: e.target.value })}
                   />
                 </div>
                 <div className="space-y-1">
-                  <Label className="text-xs">المسمى الوظيفي</Label>
+                  <Label className="text-xs">المسمى الوظيفي *</Label>
                   <Input
-                    value={editingEmployee.role}
+                    value={editingEmployee.role || ''}
                     onChange={(e) => setEditingEmployee({ ...editingEmployee, role: e.target.value })}
                   />
                 </div>
               </div>
+
+              {/* National ID & Phone */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <Label className="text-xs flex items-center gap-1">
+                    <CreditCard className="w-3.5 h-3.5 text-muted-foreground" />
+                    رقم البطاقة / الرقم القومي
+                  </Label>
+                  <Input
+                    placeholder="الرقم القومي (14 رقم)"
+                    value={editingEmployee.national_id || ''}
+                    onChange={(e) => setEditingEmployee({ ...editingEmployee, national_id: e.target.value })}
+                    dir="ltr"
+                    className="font-mono text-xs"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs flex items-center gap-1">
+                    <Phone className="w-3.5 h-3.5 text-muted-foreground" />
+                    رقم الهاتف الأساسي *
+                  </Label>
+                  <Input
+                    value={editingEmployee.phone || ''}
+                    onChange={(e) => setEditingEmployee({ ...editingEmployee, phone: e.target.value })}
+                    dir="ltr"
+                    className="font-mono text-xs"
+                  />
+                </div>
+              </div>
+
+              {/* Address & Emergency Phone */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <Label className="text-xs flex items-center gap-1">
+                    <MapPin className="w-3.5 h-3.5 text-muted-foreground" />
+                    العنوان بالتفصيل
+                  </Label>
+                  <Input
+                    placeholder="المدينة، الشارع، رقم العقار"
+                    value={editingEmployee.address || ''}
+                    onChange={(e) => setEditingEmployee({ ...editingEmployee, address: e.target.value })}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs flex items-center gap-1">
+                    <Phone className="w-3.5 h-3.5 text-rose-500" />
+                    هاتف الطوارئ / صلة القرابة
+                  </Label>
+                  <Input
+                    placeholder="رقم الطوارئ"
+                    value={editingEmployee.emergency_contact || ''}
+                    onChange={(e) => setEditingEmployee({ ...editingEmployee, emergency_contact: e.target.value })}
+                    dir="ltr"
+                    className="font-mono text-xs"
+                  />
+                </div>
+              </div>
+
+              {/* Department & Base Salary */}
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1">
                   <Label className="text-xs">القسم</Label>
                   <Input
-                    value={editingEmployee.department}
+                    value={editingEmployee.department || ''}
                     onChange={(e) => setEditingEmployee({ ...editingEmployee, department: e.target.value })}
                   />
                 </div>
@@ -1995,16 +2251,18 @@ export default function HR() {
                   <Label className="text-xs">الراتب الأساسي</Label>
                   <Input
                     type="number"
-                    value={editingEmployee.salary}
+                    value={editingEmployee.salary ?? ''}
                     onChange={(e) => setEditingEmployee({ ...editingEmployee, salary: e.target.value })}
                   />
                 </div>
               </div>
+
+              {/* Status & Shift */}
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1">
                   <Label className="text-xs">حالة الموظف</Label>
                   <select
-                    value={editingEmployee.status}
+                    value={editingEmployee.status || 'active'}
                     onChange={(e) => setEditingEmployee({ ...editingEmployee, status: e.target.value })}
                     className="w-full h-10 rounded-md border border-input bg-background px-3 text-xs"
                   >
@@ -2016,18 +2274,62 @@ export default function HR() {
                 <div className="space-y-1">
                   <Label className="text-xs">الوردية</Label>
                   <select
-                    value={editingEmployee.shiftId || ''}
-                    onChange={(e) => setEditingEmployee({ ...editingEmployee, shiftId: e.target.value })}
+                    value={editingEmployee.shiftId || editingEmployee.default_shift_id || ''}
+                    onChange={(e) => setEditingEmployee({ ...editingEmployee, shiftId: e.target.value, default_shift_id: e.target.value })}
                     className="w-full h-10 rounded-md border border-input bg-background px-3 text-xs"
                   >
                     <option value="">بدون وردية محددة</option>
                     {dbShifts.map((s) => (
                       <option key={s.id} value={s.id}>
-                        {s.name}
+                        {s.name} ({s.startTime} - {s.endTime})
                       </option>
                     ))}
                   </select>
                 </div>
+              </div>
+
+              {/* Email & Hire Date */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <Label className="text-xs flex items-center gap-1">
+                    <Mail className="w-3.5 h-3.5 text-muted-foreground" />
+                    البريد الإلكتروني
+                  </Label>
+                  <Input
+                    type="email"
+                    placeholder="name@example.com"
+                    value={editingEmployee.email || ''}
+                    onChange={(e) => setEditingEmployee({ ...editingEmployee, email: e.target.value })}
+                    dir="ltr"
+                    className="text-xs"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs flex items-center gap-1">
+                    <Calendar className="w-3.5 h-3.5 text-muted-foreground" />
+                    تاريخ بدء العمل
+                  </Label>
+                  <Input
+                    type="date"
+                    value={editingEmployee.hire_date || ''}
+                    onChange={(e) => setEditingEmployee({ ...editingEmployee, hire_date: e.target.value })}
+                    className="text-xs"
+                  />
+                </div>
+              </div>
+
+              {/* Notes */}
+              <div className="space-y-1">
+                <Label className="text-xs flex items-center gap-1">
+                  <FileText className="w-3.5 h-3.5 text-muted-foreground" />
+                  ملاحظات وتفاصيل إضافية
+                </Label>
+                <Input
+                  placeholder="أي ملاحظات أو شروط أو تفاصيل تخص الموظف..."
+                  value={editingEmployee.notes || ''}
+                  onChange={(e) => setEditingEmployee({ ...editingEmployee, notes: e.target.value })}
+                  className="text-xs"
+                />
               </div>
             </div>
           )}
@@ -2099,15 +2401,18 @@ export default function HR() {
         <DialogContent className="max-w-2xl max-h-[90dvh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-3">
-              <Avatar className="w-10 h-10 border border-slate-700">
-                <AvatarFallback className="bg-primary/20 text-primary font-bold">
-                  {profileEmployee?.name.charAt(0)}
+              <Avatar className="w-12 h-12 border-2 border-primary/30 shrink-0">
+                {profileEmployee?.photo_url && (
+                  <AvatarImage src={profileEmployee.photo_url} alt={profileEmployee.name} className="object-cover" />
+                )}
+                <AvatarFallback className="bg-primary/20 text-primary font-bold text-lg">
+                  {profileEmployee?.name?.charAt(0)}
                 </AvatarFallback>
               </Avatar>
               <div>
                 <span className="text-lg font-bold">{profileEmployee?.name}</span>
                 <span className="block text-xs text-muted-foreground font-normal">
-                  {profileEmployee?.role} • {profileEmployee?.department}
+                  {profileEmployee?.role} • {profileEmployee?.department || 'بدون قسم'}
                 </span>
               </div>
             </DialogTitle>
@@ -2115,6 +2420,43 @@ export default function HR() {
 
           {profileEmployee && (
             <div className="space-y-4 py-2">
+              {/* Comprehensive Personal Info Card */}
+              <div className="p-3.5 bg-muted/20 border border-border rounded-xl space-y-2 text-xs">
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+                  <div>
+                    <span className="text-[10px] text-muted-foreground block">رقم البطاقة / القومي:</span>
+                    <span className="font-mono font-medium">{profileEmployee.national_id || '—'}</span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-muted-foreground block">الهاتف الأساسي:</span>
+                    <span className="font-mono font-medium" dir="ltr">{profileEmployee.phone || '—'}</span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-muted-foreground block">هاتف الطوارئ:</span>
+                    <span className="font-mono font-medium text-rose-500" dir="ltr">{profileEmployee.emergency_contact || '—'}</span>
+                  </div>
+                  <div className="sm:col-span-2">
+                    <span className="text-[10px] text-muted-foreground block">العنوان:</span>
+                    <span className="font-medium">{profileEmployee.address || '—'}</span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-muted-foreground block">تاريخ التعيين:</span>
+                    <span className="font-mono font-medium">{profileEmployee.hire_date || '—'}</span>
+                  </div>
+                  {profileEmployee.email && (
+                    <div className="sm:col-span-2">
+                      <span className="text-[10px] text-muted-foreground block">البريد الإلكتروني:</span>
+                      <span className="font-mono">{profileEmployee.email}</span>
+                    </div>
+                  )}
+                  {profileEmployee.notes && (
+                    <div className="col-span-full pt-1 border-t border-border/40">
+                      <span className="text-[10px] text-muted-foreground block">ملاحظات:</span>
+                      <p className="text-slate-300 text-[11px] leading-relaxed">{profileEmployee.notes}</p>
+                    </div>
+                  )}
+                </div>
+              </div>
               <Tabs defaultValue="financial" className="w-full">
                 <TabsList className="grid grid-cols-3 bg-slate-900 border border-slate-800 mb-3">
                   <TabsTrigger value="financial" className="text-xs font-bold">

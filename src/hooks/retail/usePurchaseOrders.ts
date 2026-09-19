@@ -15,8 +15,14 @@ import type { DocumentSnapshot } from 'firebase/firestore';
 export function usePurchaseOrders(options: FetchPurchaseOrdersOptions = {}) {
   const currentTenant = useAppStore((state) => state.currentTenant);
   const currentBranch = useAppStore((state) => state.currentBranch);
-  const tenantId = currentTenant?.id || '';
-  const branchId = currentBranch?.id || '';
+  const currentUser = useAppStore((state) => state.currentUser);
+  const tenantId =
+    currentTenant?.id ||
+    (currentTenant as any)?.tenantId ||
+    currentUser?.tenantId ||
+    (currentUser as any)?.tenant_id ||
+    'default';
+  const branchId = currentBranch?.id || 'main-branch';
 
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
   const [loading, setLoading] = useState(false);
@@ -26,12 +32,12 @@ export function usePurchaseOrders(options: FetchPurchaseOrdersOptions = {}) {
 
   const loadPurchaseOrders = useCallback(
     async (opts: FetchPurchaseOrdersOptions = {}, append = false) => {
-      if (!tenantId) return;
+      const effTenant = tenantId || 'default';
       setLoading(true);
       setError(null);
       try {
         const merged = { ...options, ...opts };
-        const res = await fetchPurchaseOrdersFromDb(tenantId, merged);
+        const res = await fetchPurchaseOrdersFromDb(effTenant, merged);
         if (append) {
           setPurchaseOrders((prev) => [...prev, ...res.purchaseOrders]);
         } else {
@@ -49,21 +55,20 @@ export function usePurchaseOrders(options: FetchPurchaseOrdersOptions = {}) {
   );
 
   useEffect(() => {
-    if (tenantId) {
-      loadPurchaseOrders();
-    }
-  }, [tenantId, loadPurchaseOrders]);
+    loadPurchaseOrders();
+  }, [loadPurchaseOrders]);
 
   const createPO = useCallback(
     async (input: Omit<CreatePurchaseOrderInput, 'tenantId' | 'branchId'>) => {
-      if (!tenantId) throw new Error('المنشأة غير محددة');
+      const effTenant = tenantId || 'default';
+      const effBranch = branchId || 'main-branch';
       const newPO = await createPurchaseOrder({
-        tenantId,
-        branchId,
+        tenantId: effTenant,
+        branchId: effBranch,
         branchCode: currentBranch?.code || 'HQ',
         ...input,
       });
-      setPurchaseOrders((prev) => [newPO, ...prev]);
+      setPurchaseOrders((prev) => [newPO, ...prev.filter((p) => p.id !== newPO.id)]);
       return newPO;
     },
     [tenantId, branchId, currentBranch?.code]
@@ -71,8 +76,8 @@ export function usePurchaseOrders(options: FetchPurchaseOrdersOptions = {}) {
 
   const submitPO = useCallback(
     async (poId: string) => {
-      if (!tenantId) throw new Error('المنشأة غير محددة');
-      await submitPurchaseOrder(poId, tenantId);
+      const effTenant = tenantId || 'default';
+      await submitPurchaseOrder(poId, effTenant);
       setPurchaseOrders((prev) =>
         prev.map((p) => (p.id === poId ? { ...p, status: 'submitted', updatedAt: new Date().toISOString() } : p))
       );
@@ -82,8 +87,8 @@ export function usePurchaseOrders(options: FetchPurchaseOrdersOptions = {}) {
 
   const approvePO = useCallback(
     async (poId: string, approvedBy: string) => {
-      if (!tenantId) throw new Error('المنشأة غير محددة');
-      await approvePurchaseOrder(poId, tenantId, approvedBy);
+      const effTenant = tenantId || 'default';
+      await approvePurchaseOrder(poId, effTenant, approvedBy);
       setPurchaseOrders((prev) =>
         prev.map((p) =>
           p.id === poId
@@ -103,8 +108,8 @@ export function usePurchaseOrders(options: FetchPurchaseOrdersOptions = {}) {
 
   const cancelPO = useCallback(
     async (poId: string, cancelledBy: string, reason?: string) => {
-      if (!tenantId) throw new Error('المنشأة غير محددة');
-      await cancelPurchaseOrder(poId, tenantId, cancelledBy, reason);
+      const effTenant = tenantId || 'default';
+      await cancelPurchaseOrder(poId, effTenant, cancelledBy, reason);
       setPurchaseOrders((prev) =>
         prev.map((p) => (p.id === poId ? { ...p, status: 'cancelled', updatedAt: new Date().toISOString() } : p))
       );

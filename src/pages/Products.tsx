@@ -39,6 +39,7 @@ import {
   Layers,
   BookOpen,
   ArrowUpDown,
+  Camera,
 } from 'lucide-react';
 import { useProducts } from '@/hooks/retail/useProducts';
 import { useCategories } from '@/hooks/retail/useCategories';
@@ -49,6 +50,7 @@ import { ProductFormDialog } from '@/components/retail/ProductFormDialog';
 import { ProductDetailsDrawer } from '@/components/retail/ProductDetailsDrawer';
 import { BarcodePrintDialog } from '@/components/retail/BarcodePrintDialog';
 import { BarcodeScanDialog } from '@/components/retail/BarcodeScanDialog';
+import { MobileScannerModal } from '@/components/retail/pos/MobileScannerModal';
 import { CategoryManageDialog } from '@/components/retail/CategoryManageDialog';
 import { BrandManageDialog } from '@/components/retail/BrandManageDialog';
 import { useTenantBranch } from '@/hooks/useDatabase';
@@ -103,6 +105,7 @@ export default function ProductsPage() {
   const [printTargetVariant, setPrintTargetVariant] = useState<ProductVariant | null>(null);
 
   const [scanOpen, setScanOpen] = useState(false);
+  const [cameraScannerOpen, setCameraScannerOpen] = useState(false);
   const [categoryModalOpen, setCategoryModalOpen] = useState(false);
   const [brandModalOpen, setBrandModalOpen] = useState(false);
   const [prefilledBarcode, setPrefilledBarcode] = useState<string | undefined>(undefined);
@@ -181,6 +184,18 @@ export default function ProductsPage() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="gap-1.5 text-xs font-bold text-emerald-600 border-emerald-500/30 hover:bg-emerald-500/10"
+              onClick={() => setCameraScannerOpen(true)}
+              title="مسح باركود صنف باستخدام كاميرا الهاتف أو الحاسوب"
+            >
+              <Camera className="w-4 h-4" />
+              مسح بالكاميرا
+            </Button>
+
             <Button
               type="button"
               variant="outline"
@@ -615,6 +630,39 @@ export default function ProductsPage() {
         <BrandManageDialog
           open={brandModalOpen}
           onOpenChange={setBrandModalOpen}
+        />
+
+        {/* Mobile Camera Barcode Scanner */}
+        <MobileScannerModal
+          open={cameraScannerOpen}
+          onOpenChange={setCameraScannerOpen}
+          mode="lookup"
+          title="مسح باركود صنف بالكاميرا"
+          subtitle="وجه الكاميرا نحو باركود الصنف للبحث عنه أو إضافته..."
+          availableProducts={products}
+          onScan={async (scannedCode) => {
+            const code = scannedCode.trim().toLowerCase();
+            const matched = products.find(
+              (p) =>
+                p.barcode?.toLowerCase() === code ||
+                p.sku?.toLowerCase() === code ||
+                p.variants?.some((v) => v.barcode?.toLowerCase() === code || v.sku?.toLowerCase() === code)
+            );
+
+            setCameraScannerOpen(false);
+            if (matched) {
+              setSelectedProduct(matched);
+              setDetailsOpen(true);
+              toast.success(`تم العثور على: ${matched.name}`);
+              return { success: true, product: matched };
+            } else {
+              setEditingProduct(null);
+              setPrefilledBarcode(scannedCode.trim());
+              setFormOpen(true);
+              toast.info(`صنف جديد: جاري فتح نموذج الإضافة بالباركود ${scannedCode.trim()}`);
+              return { success: false, error: 'صنف غير مسجل، تم فتح نموذج الإضافة' };
+            }
+          }}
         />
       </div>
     </MainLayout>

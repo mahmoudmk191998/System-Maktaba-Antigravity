@@ -748,13 +748,13 @@ export const ReturnModal: React.FC<ReturnModalProps> = ({
 
             {/* Exchange Section (Only in Exchange Mode) */}
             {mode === 'exchange' && (
-              <div className="border border-blue-200 bg-blue-50/30 rounded-xl p-3 space-y-3">
+              <div className="border border-blue-200 dark:border-slate-800 bg-blue-50/50 dark:bg-slate-900/80 rounded-xl p-3 space-y-3">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-blue-900 flex items-center gap-1.5">
-                    <RefreshCw className="w-4 h-4 text-blue-600" />
+                  <span className="text-xs font-bold text-blue-900 dark:text-blue-300 flex items-center gap-1.5">
+                    <RefreshCw className="w-4 h-4 text-blue-600 dark:text-blue-400" />
                     <span>سلة المنتجات البديلة (الاستبدال)</span>
                   </span>
-                  <span className="text-xs font-bold text-blue-800">
+                  <span className="text-xs font-bold text-blue-800 dark:text-blue-300">
                     إجمالي المنتجات الجديدة: {number(exchangeTotals.newItemsTotal)} ج.م
                   </span>
                 </div>
@@ -766,12 +766,12 @@ export const ReturnModal: React.FC<ReturnModalProps> = ({
                     value={catalogSearch}
                     onChange={(e) => setCatalogSearch(e.target.value)}
                     placeholder="ابحث بالاسم أو الباركود لإضافة صنف بديل للعميل..."
-                    className="pr-9 h-8 text-xs bg-white"
+                    className="pr-9 h-8 text-xs bg-background text-foreground dark:bg-slate-950 dark:border-slate-800"
                   />
 
                   {/* Dropdown search results */}
                   {catalogSearch.trim() && (
-                    <div className="absolute z-10 w-full mt-1 bg-white border border-border rounded-lg shadow-lg max-h-48 overflow-y-auto divide-y divide-border">
+                    <div className="absolute z-10 w-full mt-1 bg-popover text-popover-foreground dark:bg-slate-900 dark:text-slate-100 border border-border dark:border-slate-800 rounded-lg shadow-lg max-h-48 overflow-y-auto divide-y divide-border dark:divide-slate-800">
                       {products
                         .filter(
                           (p) =>
@@ -784,15 +784,15 @@ export const ReturnModal: React.FC<ReturnModalProps> = ({
                           <div
                             key={p.id}
                             onClick={() => handleAddToExchange(p)}
-                            className="p-2 text-xs flex justify-between items-center hover:bg-muted/50 cursor-pointer"
+                            className="p-2 text-xs flex justify-between items-center hover:bg-muted/50 dark:hover:bg-slate-800/60 cursor-pointer"
                           >
                             <div>
-                              <div className="font-bold text-foreground">{p.name}</div>
-                              <div className="text-[10px] text-muted-foreground font-mono">
+                              <div className="font-bold text-foreground dark:text-slate-100">{p.name}</div>
+                              <div className="text-[10px] text-muted-foreground dark:text-slate-400 font-mono">
                                 SKU: {p.sku} | السعر: {number(p.retailPrice || 0)} ج.م
                               </div>
                             </div>
-                            <Button size="sm" variant="ghost" className="h-7 text-xs gap-1 text-blue-600">
+                            <Button size="sm" variant="ghost" className="h-7 text-xs gap-1 text-blue-600 dark:text-blue-400">
                               <Plus className="w-3 h-3" />
                               إضافة
                             </Button>
@@ -804,12 +804,12 @@ export const ReturnModal: React.FC<ReturnModalProps> = ({
 
                 {/* Exchange Cart Items */}
                 {exchangeCart.length > 0 ? (
-                  <div className="border border-border rounded-lg bg-white overflow-hidden divide-y divide-border text-xs">
+                  <div className="border border-border dark:border-slate-800 rounded-lg bg-card dark:bg-slate-950 text-card-foreground dark:text-slate-100 overflow-hidden divide-y divide-border dark:divide-slate-800 text-xs">
                     {exchangeCart.map((item, idx) => (
-                      <div key={idx} className="p-2.5 flex items-center justify-between">
+                      <div key={idx} className="p-2.5 flex items-center justify-between bg-card dark:bg-slate-950">
                         <div>
-                          <span className="font-bold">{item.productName}</span>
-                          <div className="text-[10px] text-muted-foreground font-mono">
+                          <span className="font-bold text-foreground dark:text-slate-100">{item.productName}</span>
+                          <div className="text-[10px] text-muted-foreground dark:text-slate-400 font-mono">
                             {item.sku} | {number(item.unitPrice)} ج.م للوحدة
                           </div>
                         </div>
@@ -818,7 +818,7 @@ export const ReturnModal: React.FC<ReturnModalProps> = ({
                             <Button
                               size="sm"
                               variant="outline"
-                              className="h-6 w-6 p-0"
+                              className="h-6 w-6 p-0 dark:border-slate-700 dark:bg-slate-900"
                               onClick={() =>
                                 setExchangeCart((prev) =>
                                   prev.map((i, iIdx) =>
@@ -829,11 +829,11 @@ export const ReturnModal: React.FC<ReturnModalProps> = ({
                             >
                               <Minus className="w-3 h-3" />
                             </Button>
-                            <span className="font-bold w-6 text-center">{item.quantity}</span>
+                            <span className="font-bold w-6 text-center text-foreground dark:text-slate-100">{item.quantity}</span>
                             <Button
                               size="sm"
                               variant="outline"
-                              className="h-6 w-6 p-0"
+                              className="h-6 w-6 p-0 dark:border-slate-700 dark:bg-slate-900"
                               onClick={() =>
                                 setExchangeCart((prev) =>
                                   prev.map((i, iIdx) =>
@@ -845,13 +845,13 @@ export const ReturnModal: React.FC<ReturnModalProps> = ({
                               <Plus className="w-3 h-3" />
                             </Button>
                           </div>
-                          <span className="font-bold w-16 text-left">
+                          <span className="font-bold w-16 text-left text-foreground dark:text-slate-100">
                             {number(item.unitPrice * item.quantity)} ج.م
                           </span>
                           <Button
                             size="sm"
                             variant="ghost"
-                            className="h-6 w-6 p-0 text-destructive"
+                            className="h-6 w-6 p-0 text-destructive hover:bg-destructive/10"
                             onClick={() => setExchangeCart((prev) => prev.filter((_, iIdx) => iIdx !== idx))}
                           >
                             <Trash2 className="w-3.5 h-3.5" />
@@ -861,7 +861,7 @@ export const ReturnModal: React.FC<ReturnModalProps> = ({
                     ))}
                   </div>
                 ) : (
-                  <div className="p-4 text-center text-xs text-muted-foreground border border-dashed rounded-lg bg-white/50">
+                  <div className="p-4 text-center text-xs text-muted-foreground border border-dashed border-border dark:border-slate-800 rounded-lg bg-muted/30 dark:bg-slate-950/60">
                     لم تقم بإضافة أي أصناف جديدة للاستبدال بعد. ابحث في الصندوق أعلاه.
                   </div>
                 )}

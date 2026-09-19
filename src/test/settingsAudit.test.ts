@@ -5,7 +5,7 @@ import { formatCurrency, formatNumber, formatDate, toArabicNumerals } from '@/li
 describe('Settings Audit & Functional Verification Suite', () => {
   beforeEach(() => {
     useAppStore.setState({
-      currentTenant: { id: 'tenant_1', name: 'مطعم الكرم الأصلي', nameEn: 'Al Karam', taxNumber: '123456789' },
+      currentTenant: { id: 'tenant_1', name: 'مكتبة الألوان الحديثة', nameEn: 'Alwan Library', taxNumber: '123456789' },
       currentBranch: { 
         id: 'branch_1', 
         tenantId: 'tenant_1', 
@@ -28,7 +28,7 @@ describe('Settings Audit & Functional Verification Suite', () => {
         printKitchenTicket: true,
         openDrawerPassword: '',
         receiptWelcomeMessage: 'شكراً لزيارتكم',
-        invoiceCompanyName: 'مطعم الكرم الأصلي',
+        invoiceCompanyName: 'مكتبة الألوان الحديثة',
         invoiceAddress: 'شارع النصر، المعادي',
         invoicePhone: '01000000000',
         invoiceTaxNumber: '123456789',
@@ -52,20 +52,20 @@ describe('Settings Audit & Functional Verification Suite', () => {
 
   it('1. Tenant information updates store state accurately', () => {
     const { setCurrentTenant, currentTenant } = useAppStore.getState();
-    expect(currentTenant?.name).toBe('مطعم الكرم الأصلي');
-    expect(currentTenant?.nameEn).toBe('Al Karam');
+    expect(currentTenant?.name).toBe('مكتبة الألوان الحديثة');
+    expect(currentTenant?.nameEn).toBe('Alwan Library');
     expect(currentTenant?.taxNumber).toBe('123456789');
 
     setCurrentTenant({
       id: 'tenant_1',
-      name: 'سلسلة مطاعم الكرم العالمية',
-      nameEn: 'Al Karam Global',
+      name: 'سلسلة مكتبات الألوان المركزية',
+      nameEn: 'Alwan Central Libraries',
       taxNumber: '987654321'
     });
 
     const updated = useAppStore.getState().currentTenant;
-    expect(updated?.name).toBe('سلسلة مطاعم الكرم العالمية');
-    expect(updated?.nameEn).toBe('Al Karam Global');
+    expect(updated?.name).toBe('سلسلة مكتبات الألوان المركزية');
+    expect(updated?.nameEn).toBe('Alwan Central Libraries');
     expect(updated?.taxNumber).toBe('987654321');
   });
 
@@ -122,7 +122,7 @@ describe('Settings Audit & Functional Verification Suite', () => {
   it('6. POS receipt custom branding settings propagate to store', () => {
     const { updateSettings } = useAppStore.getState();
     updateSettings({
-      invoiceCompanyName: 'مطعم النيل الذهبي',
+      invoiceCompanyName: 'مكتبة النيل الثقافية',
       invoiceAddress: 'الزمالك، القاهرة',
       invoicePhone: '01222222222',
       invoiceTaxNumber: '555444333',
@@ -130,7 +130,7 @@ describe('Settings Audit & Functional Verification Suite', () => {
     });
 
     const state = useAppStore.getState().settings;
-    expect(state.invoiceCompanyName).toBe('مطعم النيل الذهبي');
+    expect(state.invoiceCompanyName).toBe('مكتبة النيل الثقافية');
     expect(state.invoiceAddress).toBe('الزمالك، القاهرة');
     expect(state.invoicePhone).toBe('01222222222');
     expect(state.invoiceTaxNumber).toBe('555444333');

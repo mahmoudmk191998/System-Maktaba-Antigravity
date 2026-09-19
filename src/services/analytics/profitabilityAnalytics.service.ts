@@ -10,6 +10,8 @@ import { Sale, SaleReturn, Product } from '../../types/retail.types';
 import { DateRange, parseToDate } from './reportingTimezone';
 import { fetchSalesPeriodData } from './salesAnalytics.service';
 import { getExpenses } from '../expenses';
+import { fetchProductsCatalog } from './inventoryAnalytics.service';
+import { fetchCategoriesFromDb } from '../categories/categories.service';
 
 export interface ProductProfitabilityRecord {
   productId: string;
@@ -80,21 +82,49 @@ export async function generateProfitabilityReport(
   // Load product catalog if not provided
   let catalog = catalogMap;
   if (!catalog) {
-    catalog = new Map<string, Product>();
-    try {
-      const prodRef = collection(db, 'products');
-      const prodSnap = await getDocs(query(prodRef, where('tenantId', '==', tenantId)));
-      prodSnap.forEach((doc) => {
-        catalog!.set(doc.id, { id: doc.id, ...doc.data() } as Product);
+    catalog = await fetchProductsCatalog(tenantId);
+  }
+
+  // Load categories map to resolve raw category IDs to registered human-readable names
+  const categoryNameMap = new Map<string, string>();
+  try {
+    const cats = await fetchCategoriesFromDb(tenantId);
+    cats.forEach((c) => {
+      if (c.id && c.name) categoryNameMap.set(c.id, c.name);
+      if (c.name) categoryNameMap.set(c.name, c.name);
+    });
+
+    if (categoryNameMap.size === 0) {
+      const catSnap = await getDocs(collection(db, 'categories'));
+      catSnap.forEach((doc) => {
+        const d = doc.data();
+        const catName = d.name || d.nameAr || d.title || d.nameEn;
+        if (catName) {
+          categoryNameMap.set(doc.id, catName);
+          categoryNameMap.set(catName, catName);
+        }
       });
-    } catch (err) {
-      try {
-        const prodSnap = await getDocs(query(collection(db, 'products'), where('tenant_id', '==', tenantId)));
-        prodSnap.forEach((doc) => {
-          catalog!.set(doc.id, { id: doc.id, ...doc.data() } as Product);
-        });
-      } catch {}
     }
+  } catch (err) {
+    console.warn('Failed to load categories map in profitabilityAnalytics:', err);
+  }
+
+  // Load branch names map
+  const branchNameMap = new Map<string, string>();
+  try {
+    let bSnap = await getDocs(query(collection(db, 'branches'), where('tenantId', '==', tenantId)));
+    if (bSnap.empty) {
+      bSnap = await getDocs(query(collection(db, 'branches'), where('tenant_id', '==', tenantId)));
+    }
+    if (bSnap.empty) {
+      bSnap = await getDocs(query(collection(db, 'branches')));
+    }
+    bSnap.forEach((doc) => {
+      const d = doc.data();
+      branchNameMap.set(doc.id, d.name || d.branchName || doc.id);
+    });
+  } catch (err) {
+    console.warn('Failed to load branches map in profitabilityAnalytics:', err);
   }
 
   // Map to hold product level sales and snapshot COGS
@@ -134,8 +164,8 @@ export async function generateProfitabilityReport(
     totalDiscountsGiven += sDiscount;
 
     // Cashier tracking
-    const cId = sale.cashierId || 'unassigned';
-    const cName = sale.cashierNameSnapshot || 'كاشير';
+    const cId = sale.cashierId || (sale as any).cashier_id || (sale as any).created_by || 'unassigned';
+    const cName = sale.cashierNameSnapshot || (sale as any).cashier_name || (sale as any).cashierName || 'كاشير مسجل';
     const cRec = cashierDiscountMap.get(cId) || { name: cName, discounts: 0, count: 0 };
     cRec.discounts += sDiscount;
     cRec.count += 1;
@@ -156,10 +186,37 @@ export async function generateProfitabilityReport(
       saleNetRevenueTotal += lineTotal;
 
       const prod = catalog.get(pid);
+      const registeredName =
+        prod?.name ||
+        (prod as any)?.nameAr ||
+        (prod as any)?.title ||
+        item.productNameSnapshot ||
+        item.productName ||
+        item.name ||
+        'كتاب / صنف مسجل';
+
+      // Resolve category ID to registered name, never leave as alphanumeric ID
+      const rawCategory =
+        (prod as any)?.categoryName ||
+        (prod as any)?.category_name ||
+        prod?.category ||
+        (prod as any)?.categoryId ||
+        (prod as any)?.category_id ||
+        item.categorySnapshot ||
+        'عام';
+
+      let resolvedCategory = categoryNameMap.get(rawCategory) || rawCategory;
+      if (categoryNameMap.has(resolvedCategory)) {
+        resolvedCategory = categoryNameMap.get(resolvedCategory)!;
+      }
+      if (!resolvedCategory || resolvedCategory.trim() === '' || resolvedCategory === 'undefined') {
+        resolvedCategory = 'عام';
+      }
+
       const cur = productMap.get(pid) || {
-        sku: item.skuSnapshot || prod?.sku || pid,
-        name: item.productNameSnapshot || prod?.name || 'Unknown',
-        category: item.categorySnapshot || prod?.category || 'General',
+        sku: prod?.sku || (prod as any)?.barcode || item.skuSnapshot || pid,
+        name: registeredName,
+        category: resolvedCategory,
         unitsSold: 0,
         grossRevenue: 0,
         discounts: 0,
@@ -207,7 +264,17 @@ export async function generateProfitabilityReport(
       const amt = item.refundAmount || (item as any).lineTotal || 0;
       const rCost = item.costReversed || (qty * (item.unitCostSnapshot ?? 0));
 
-      const rRec = returnedProductMap.get(pid) || { qty: 0, amount: 0, name: item.productNameSnapshot || 'Product' };
+      const prod = catalog.get(pid);
+      const retProdName =
+        prod?.name ||
+        (prod as any)?.nameAr ||
+        (prod as any)?.title ||
+        item.productNameSnapshot ||
+        item.productName ||
+        item.name ||
+        'كتاب / صنف مسجل';
+
+      const rRec = returnedProductMap.get(pid) || { qty: 0, amount: 0, name: retProdName };
       rRec.qty += qty;
       rRec.amount += amt;
       returnedProductMap.set(pid, rRec);
@@ -371,7 +438,7 @@ export async function generateProfitabilityReport(
     const contribPct = b.netSales > 0 ? Number(((contrib / b.netSales) * 100).toFixed(2)) : 0;
     return {
       branchId: bid,
-      branchName: bid === 'default' ? 'الفرع الرئيسي' : `فرع (${bid})`,
+      branchName: branchNameMap.get(bid) || (bid === 'default' ? 'الفرع الرئيسي' : `فرع (${bid})`),
       netSales: Number(b.netSales.toFixed(2)),
       cogs: Number(b.cogs.toFixed(2)),
       grossProfit: Number(b.grossProfit.toFixed(2)),

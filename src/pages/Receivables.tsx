@@ -90,50 +90,50 @@ export const Receivables: React.FC = () => {
       <div className="space-y-6 max-w-7xl mx-auto" dir="rtl">
 
       {/* KPI Overview Cards */}
-      <div className="grid grid-cols-4 gap-4 text-xs">
-        <Card className="border-l-4 border-l-amber-500 shadow-sm">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 text-xs">
+        <Card className="border-l-4 border-l-amber-500 shadow-sm border-border bg-card text-card-foreground">
           <CardContent className="p-4">
-            <div className="text-slate-500 font-medium">إجمالي الديون المستحقة</div>
-            <div className="text-2xl font-bold text-amber-700 mt-1">
+            <div className="text-muted-foreground font-medium">إجمالي الديون المستحقة</div>
+            <div className="text-2xl font-bold text-amber-600 dark:text-amber-400 mt-1">
               {formatCurrency(agingSummary.totalOutstanding)}
             </div>
-            <div className="text-[11px] text-slate-400 mt-1">{agingSummary.totalReceivablesCount} فاتورة مفتوحة</div>
+            <div className="text-[11px] text-muted-foreground mt-1">{agingSummary.totalReceivablesCount} فاتورة مفتوحة</div>
           </CardContent>
         </Card>
 
-        <Card className="border-l-4 border-l-rose-600 shadow-sm">
+        <Card className="border-l-4 border-l-rose-600 shadow-sm border-border bg-card text-card-foreground">
           <CardContent className="p-4">
-            <div className="text-slate-500 font-medium">ديون متأخرة السداد (Overdue)</div>
-            <div className="text-2xl font-bold text-rose-700 mt-1">
+            <div className="text-muted-foreground font-medium">ديون متأخرة السداد (Overdue)</div>
+            <div className="text-2xl font-bold text-rose-600 dark:text-rose-400 mt-1">
               {formatCurrency(agingSummary.days1to30 + agingSummary.days31to60 + agingSummary.days61to90 + agingSummary.days90Plus)}
             </div>
-            <div className="text-[11px] text-rose-500 mt-1">{agingSummary.overdueCount} فاتورة تجاوزت تاريخ الاستحقاق</div>
+            <div className="text-[11px] text-rose-500 dark:text-rose-400 mt-1">{agingSummary.overdueCount} فاتورة تجاوزت تاريخ الاستحقاق</div>
           </CardContent>
         </Card>
 
-        <Card className="border-l-4 border-l-emerald-500 shadow-sm">
+        <Card className="border-l-4 border-l-emerald-500 shadow-sm border-border bg-card text-card-foreground">
           <CardContent className="p-4">
-            <div className="text-slate-500 font-medium">ديون جارية (ضمن الأجل)</div>
-            <div className="text-2xl font-bold text-emerald-700 mt-1">
+            <div className="text-muted-foreground font-medium">ديون جارية (ضمن الأجل)</div>
+            <div className="text-2xl font-bold text-emerald-600 dark:text-emerald-400 mt-1">
               {formatCurrency(agingSummary.current)}
             </div>
-            <div className="text-[11px] text-emerald-600 mt-1">لم تتجاوز فترة الائتمان المحددة</div>
+            <div className="text-[11px] text-emerald-600 dark:text-emerald-400 mt-1">لم تتجاوز فترة الائتمان المحددة</div>
           </CardContent>
         </Card>
 
-        <Card className="border-l-4 border-l-indigo-500 shadow-sm">
+        <Card className="border-l-4 border-l-indigo-500 shadow-sm border-border bg-card text-card-foreground">
           <CardContent className="p-4">
-            <div className="text-slate-500 font-medium">العملاء المدينون للمكتبة</div>
-            <div className="text-2xl font-bold text-indigo-700 mt-1">
+            <div className="text-muted-foreground font-medium">العملاء المدينون للمكتبة</div>
+            <div className="text-2xl font-bold text-indigo-600 dark:text-indigo-400 mt-1">
               {totalDebtCustomersCount} عميل
             </div>
-            <div className="text-[11px] text-slate-400 mt-1">من إجمالي {customers.length} عميل مسجل</div>
+            <div className="text-[11px] text-muted-foreground mt-1">من إجمالي {customers.length} عميل مسجل</div>
           </CardContent>
         </Card>
       </div>
 
       {/* Aging Buckets Banner */}
-      <Card className="shadow-sm border-slate-200">
+      <Card className="shadow-sm border-border bg-card text-card-foreground">
         <CardHeader className="pb-2">
           <CardTitle className="text-sm font-bold flex items-center gap-2">
             <Clock className="w-4 h-4 text-primary" />
@@ -141,34 +141,34 @@ export const Receivables: React.FC = () => {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-5 gap-3 text-center text-xs">
-            <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg">
-              <span className="text-slate-500 block">جارية (ضمن المدة)</span>
-              <span className="text-base font-bold text-emerald-800 mt-1 block">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 text-center text-xs">
+            <div className="p-3 bg-emerald-500/10 border border-emerald-500/30 rounded-lg">
+              <span className="text-muted-foreground block text-[11px]">جارية (ضمن المدة)</span>
+              <span className="text-base font-bold text-emerald-700 dark:text-emerald-400 mt-1 block font-mono">
                 {formatCurrency(agingSummary.current)}
               </span>
             </div>
-            <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg">
-              <span className="text-slate-500 block">1 - 30 يوماً</span>
-              <span className="text-base font-bold text-amber-800 mt-1 block">
+            <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg">
+              <span className="text-muted-foreground block text-[11px]">1 - 30 يوماً</span>
+              <span className="text-base font-bold text-amber-700 dark:text-amber-400 mt-1 block font-mono">
                 {formatCurrency(agingSummary.days1to30)}
               </span>
             </div>
-            <div className="p-3 bg-orange-50 border border-orange-200 rounded-lg">
-              <span className="text-slate-500 block">31 - 60 يوماً</span>
-              <span className="text-base font-bold text-orange-800 mt-1 block">
+            <div className="p-3 bg-orange-500/10 border border-orange-500/30 rounded-lg">
+              <span className="text-muted-foreground block text-[11px]">31 - 60 يوماً</span>
+              <span className="text-base font-bold text-orange-700 dark:text-orange-400 mt-1 block font-mono">
                 {formatCurrency(agingSummary.days31to60)}
               </span>
             </div>
-            <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
-              <span className="text-slate-500 block">61 - 90 يوماً</span>
-              <span className="text-base font-bold text-red-800 mt-1 block">
+            <div className="p-3 bg-red-500/10 border border-red-500/30 rounded-lg">
+              <span className="text-muted-foreground block text-[11px]">61 - 90 يوماً</span>
+              <span className="text-base font-bold text-red-700 dark:text-red-400 mt-1 block font-mono">
                 {formatCurrency(agingSummary.days61to90)}
               </span>
             </div>
-            <div className="p-3 bg-rose-50 border border-rose-200 rounded-lg">
-              <span className="text-slate-500 block">أكثر من 90 يوماً</span>
-              <span className="text-base font-bold text-rose-900 mt-1 block">
+            <div className="p-3 bg-rose-500/10 border border-rose-500/30 rounded-lg">
+              <span className="text-muted-foreground block text-[11px]">أكثر من 90 يوماً</span>
+              <span className="text-base font-bold text-rose-700 dark:text-rose-400 mt-1 block font-mono">
                 {formatCurrency(agingSummary.days90Plus)}
               </span>
             </div>
@@ -177,17 +177,17 @@ export const Receivables: React.FC = () => {
       </Card>
 
       {/* Receivables Table Section */}
-      <Card className="shadow-sm">
-        <CardHeader className="pb-3 border-b">
-          <div className="flex justify-between items-center">
-            <div className="flex items-center gap-3">
-              <div className="relative w-72">
-                <Search className="w-3.5 h-3.5 absolute right-3 top-2.5 text-slate-400" />
+      <Card className="shadow-sm border-border bg-card text-card-foreground">
+        <CardHeader className="pb-3 border-b border-border">
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+            <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
+              <div className="relative w-full sm:w-72">
+                <Search className="w-3.5 h-3.5 absolute right-3 top-2.5 text-muted-foreground" />
                 <Input
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   placeholder="بحث بالفاتورة أو اسم العميل..."
-                  className="pr-8 h-8 text-xs"
+                  className="pr-8 h-8 text-xs bg-background border-input"
                 />
               </div>
               <div className="flex gap-1.5 text-xs">
@@ -203,7 +203,7 @@ export const Receivables: React.FC = () => {
                   size="sm"
                   variant={statusFilter === 'overdue' ? 'default' : 'outline'}
                   onClick={() => setStatusFilter('overdue')}
-                  className="h-8 text-xs text-rose-600 border-rose-200"
+                  className="h-8 text-xs text-rose-600 dark:text-rose-400 border-rose-200 dark:border-rose-900/50"
                 >
                   المتأخرات ({agingSummary.overdueCount})
                 </Button>
@@ -222,30 +222,30 @@ export const Receivables: React.FC = () => {
         <CardContent className="p-0">
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
-              <thead className="bg-slate-50 text-slate-600 border-b">
+              <thead className="bg-muted/60 dark:bg-muted/30 text-muted-foreground border-b border-border">
                 <tr>
-                  <th className="py-2.5 px-4 text-right">رقم الفاتورة</th>
-                  <th className="py-2.5 px-4 text-right">العميل</th>
-                  <th className="py-2.5 px-4 text-right">تاريخ الإصدار</th>
-                  <th className="py-2.5 px-4 text-right">تاريخ الاستحقاق</th>
-                  <th className="py-2.5 px-4 text-left">أصل المبلغ</th>
-                  <th className="py-2.5 px-4 text-left">المسدد</th>
-                  <th className="py-2.5 px-4 text-left">المتبقي المطلوب</th>
-                  <th className="py-2.5 px-4 text-center">الحالة</th>
-                  <th className="py-2.5 px-4 text-center">إجراءات</th>
+                  <th className="py-2.5 px-4 text-right font-medium">رقم الفاتورة</th>
+                  <th className="py-2.5 px-4 text-right font-medium">العميل</th>
+                  <th className="py-2.5 px-4 text-right font-medium">تاريخ الإصدار</th>
+                  <th className="py-2.5 px-4 text-right font-medium">تاريخ الاستحقاق</th>
+                  <th className="py-2.5 px-4 text-left font-medium">أصل المبلغ</th>
+                  <th className="py-2.5 px-4 text-left font-medium">المسدد</th>
+                  <th className="py-2.5 px-4 text-left font-medium">المتبقي المطلوب</th>
+                  <th className="py-2.5 px-4 text-center font-medium">الحالة</th>
+                  <th className="py-2.5 px-4 text-center font-medium">إجراءات</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
+              <tbody className="divide-y divide-border">
                 {loading ? (
-                  <tr><td colSpan={9} className="text-center py-8 text-slate-400">جارٍ تحميل المستحقات...</td></tr>
+                  <tr><td colSpan={9} className="text-center py-8 text-muted-foreground">جارٍ تحميل المستحقات...</td></tr>
                 ) : filteredReceivables.length === 0 ? (
-                  <tr><td colSpan={9} className="text-center py-8 text-slate-400">لا توجد فواتير آجلة مطابقة للشروط</td></tr>
+                  <tr><td colSpan={9} className="text-center py-8 text-muted-foreground">لا توجد فواتير آجلة مطابقة للشروط</td></tr>
                 ) : (
                   filteredReceivables.map((rec) => {
                     const isPastDue = new Date(rec.dueDate).getTime() < Date.now();
                     return (
-                      <tr key={rec.id} className="hover:bg-slate-50/80">
-                        <td className="py-3 px-4 font-mono font-bold text-slate-800">{rec.invoiceNumber}</td>
+                      <tr key={rec.id} className="hover:bg-muted/40 transition-colors">
+                        <td className="py-3 px-4 font-mono font-bold text-foreground">{rec.invoiceNumber}</td>
                         <td className="py-3 px-4">
                           <span
                             onClick={() => handleOpenProfile(rec.customerId)}
@@ -254,29 +254,29 @@ export const Receivables: React.FC = () => {
                             {rec.customerNameSnapshot}
                           </span>
                         </td>
-                        <td className="py-3 px-4 text-slate-500 font-mono">{rec.issueDate}</td>
+                        <td className="py-3 px-4 text-muted-foreground font-mono">{rec.issueDate}</td>
                         <td className="py-3 px-4 font-mono">
-                          <span className={isPastDue ? 'text-rose-600 font-bold' : 'text-slate-600'}>
+                          <span className={isPastDue ? 'text-rose-600 dark:text-rose-400 font-bold' : 'text-foreground'}>
                             {rec.dueDate}
                           </span>
                         </td>
-                        <td className="py-3 px-4 text-left font-mono">{formatCurrency(rec.originalAmount)}</td>
-                        <td className="py-3 px-4 text-left font-mono text-emerald-700">{formatCurrency(rec.paidAmount)}</td>
-                        <td className="py-3 px-4 text-left font-mono font-bold text-amber-700">{formatCurrency(rec.remainingAmount)}</td>
+                        <td className="py-3 px-4 text-left font-mono text-foreground">{formatCurrency(rec.originalAmount)}</td>
+                        <td className="py-3 px-4 text-left font-mono text-emerald-600 dark:text-emerald-400">{formatCurrency(rec.paidAmount)}</td>
+                        <td className="py-3 px-4 text-left font-mono font-bold text-amber-600 dark:text-amber-400">{formatCurrency(rec.remainingAmount)}</td>
                         <td className="py-3 px-4 text-center">
                           {isPastDue ? (
-                            <Badge variant="outline" className="bg-rose-50 text-rose-700 border-rose-200">متأخرة</Badge>
+                            <Badge variant="outline" className="bg-rose-500/10 text-rose-700 dark:text-rose-300 border-rose-500/30">متأخرة</Badge>
                           ) : rec.status === 'partially_paid' ? (
-                            <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200">سداد جزئي</Badge>
+                            <Badge variant="outline" className="bg-amber-500/10 text-amber-700 dark:text-amber-300 border-amber-500/30">سداد جزئي</Badge>
                           ) : (
-                            <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">مفتوحة</Badge>
+                            <Badge variant="outline" className="bg-blue-500/10 text-blue-700 dark:text-blue-300 border-blue-500/30">مفتوحة</Badge>
                           )}
                         </td>
                         <td className="py-3 px-4 text-center">
                           <Button
                             size="sm"
                             onClick={() => handleOpenPayment(rec.customerId)}
-                            className="h-7 px-3 text-xs bg-emerald-600 hover:bg-emerald-700 gap-1.5"
+                            className="h-7 px-3 text-xs bg-emerald-600 hover:bg-emerald-700 text-white gap-1.5"
                           >
                             <CreditCard className="w-3 h-3" />
                             تحصيل

@@ -1,21 +1,29 @@
 import { db } from '@/lib/firebase';
-import { collection, doc, query, where, getDocs, addDoc, updateDoc, deleteDoc, orderBy } from 'firebase/firestore';
+import { collection, doc, query, where, getDocs, getDoc, addDoc, updateDoc, deleteDoc, orderBy, limit as fsLimit } from 'firebase/firestore';
 import type { Expense } from '@/types/expenses';
 import { notifyLargeExpense } from './notifications.service';
+import { applyExpenseToStats } from './analytics/aggregatedStats.service';
+import { firestoreLogger } from '@/lib/firestoreLogger';
 
 const COLLECTION_NAME = 'expenses';
 
-export const getExpenses = async (tenantId?: string, branchId?: string, startDate?: string, endDate?: string) => {
+export const getExpenses = async (tenantId?: string, branchId?: string, startDate?: string, endDate?: string, limitCount = 50) => {
   try {
     const expensesRef = collection(db, COLLECTION_NAME);
     let constraints: any[] = [];
     
     if (tenantId) constraints.push(where('tenantId', '==', tenantId));
-    if (branchId) constraints.push(where('branchId', '==', branchId));
+    if (branchId && branchId !== 'all') constraints.push(where('branchId', '==', branchId));
+
+    if (limitCount && limitCount > 0) {
+      constraints.push(fsLimit(limitCount));
+    }
 
     let q = constraints.length > 0 ? query(expensesRef, ...constraints) : query(expensesRef);
 
     const snapshot = await getDocs(q);
+    firestoreLogger.logOperation('getExpenses', COLLECTION_NAME, 'getDocs', snapshot.docs.length);
+
     let expenses = snapshot.docs.map(doc => ({
       id: doc.id,
       ...doc.data()
@@ -50,6 +58,9 @@ export const addExpense = async (expenseData: Omit<Expense, 'id' | 'createdAt'>)
       amount: numAmount,
       createdAt: new Date().toISOString()
     });
+
+    // Update Aggregated Daily & Monthly Stats
+    await applyExpenseToStats(expenseData.tenantId, expenseData.date || new Date(), numAmount, false);
 
     if (numAmount >= 5000) {
       notifyLargeExpense(
@@ -87,6 +98,15 @@ export const updateExpense = async (id: string, updates: Partial<Expense>) => {
 export const deleteExpense = async (id: string) => {
   try {
     const docRef = doc(db, COLLECTION_NAME, id);
+    const snap = await getDoc(docRef);
+    if (snap.exists()) {
+      const data = snap.data() as Expense;
+      const amt = Number(data.amount || 0);
+      const tId = data.tenantId;
+      if (tId && amt > 0) {
+        await applyExpenseToStats(tId, data.date || data.createdAt, amt, true);
+      }
+    }
     await deleteDoc(docRef);
   } catch (error) {
     console.error('Error deleting expense:', error);

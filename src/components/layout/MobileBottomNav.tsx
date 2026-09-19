@@ -2,11 +2,11 @@ import { useState, useMemo } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, ShoppingCart, Package, Users, Compass,
-  Search, X, Sun, Moon, LogOut, Receipt, Percent, ChefHat,
-  Factory, UtensilsCrossed, Trash2, Truck, CalendarDays,
-  PhoneCall, Bike, Clock, UserCog, BarChart3, Calculator,
+  Search, X, Sun, Moon, LogOut, Receipt, Percent,
+  Trash2, Truck, Clock, UserCog, BarChart3, Calculator,
   Settings, Shield, Wrench, Puzzle, FileText, BookOpen,
-  TrendingUp, Database, RotateCcw, CreditCard
+  TrendingUp, Database, RotateCcw, CreditCard, CheckSquare,
+  FileSpreadsheet, Activity
 } from 'lucide-react';
 import { useUserPermissions } from '@/hooks/usePermissions';
 import { useTheme } from '@/hooks/useTheme';
@@ -27,44 +27,41 @@ export interface NavModule {
 
 export const allAppModules: NavModule[] = [
   // المبيعات والعملاء
-  { path: '/pos', label: 'نقاط البيع', icon: ShoppingCart, perms: ['pos.view'], category: 'المبيعات والعملاء' },
+  { path: '/pos', label: 'نقاط البيع (POS)', icon: ShoppingCart, perms: ['pos.view'], category: 'المبيعات والعملاء' },
   { path: '/orders-history', label: 'سجل فواتير المبيعات', icon: Receipt, perms: ['pos.view', 'sales.view'], category: 'المبيعات والعملاء' },
   { path: '/returns', label: 'مرتجعات واستبدال المبيعات', icon: RotateCcw, perms: ['returns.view', 'sales.view', 'pos.view'], category: 'المبيعات والعملاء' },
-  { path: '/customers', label: 'العملاء', icon: Users, perms: ['customers.view'], category: 'المبيعات والعملاء' },
+  { path: '/customers', label: 'العملاء والاشتراكات', icon: Users, perms: ['customers.view'], category: 'المبيعات والعملاء' },
   { path: '/receivables', label: 'الآجل والمديونيات', icon: CreditCard, perms: ['customers.view'], category: 'المبيعات والعملاء' },
-  { path: '/promotions', label: 'العروض والخصم', icon: Percent, perms: ['promotions.view'], category: 'المبيعات والعملاء' },
+  { path: '/promotions', label: 'العروض والخصومات', icon: Percent, perms: ['promotions.view'], category: 'المبيعات والعملاء' },
 
-  // المطبخ والإنتاج
-  { path: '/kitchen', label: 'شاشة المطبخ', icon: ChefHat, perms: ['kitchen.view'], category: 'المطبخ والإنتاج' },
-  { path: '/production', label: 'الإنتاج والتحضير', icon: Factory, perms: ['production.view'], category: 'المطبخ والإنتاج' },
-  { path: '/menu', label: 'قائمة الطعام', icon: UtensilsCrossed, perms: ['menu.view'], category: 'المطبخ والإنتاج' },
+  // المنتجات والكتالوج
+  { path: '/products', label: 'فهرس المنتجات والكتب', icon: BookOpen, perms: ['products.view', 'menu.view'], category: 'المنتجات والكتالوج' },
 
-  // المنتجات والمخزون
-  { path: '/products', label: 'المنتجات والكتب', icon: BookOpen, perms: ['products.view', 'menu.view'], category: 'المنتجات والمخزون' },
-  { path: '/inventory', label: 'المخزون', icon: Package, perms: ['inventory.view'], category: 'المخزون والتوريد' },
-  { path: '/purchasing', label: 'المشتريات', icon: Truck, perms: ['purchasing.view'], category: 'المخزون والتوريد' },
+  // المخزون والتوريد
+  { path: '/inventory', label: 'إدارة المخزون', icon: Package, perms: ['inventory.view'], category: 'المخزون والتوريد' },
+  { path: '/purchasing', label: 'المشتريات والتوريد', icon: Truck, perms: ['purchasing.view'], category: 'المخزون والتوريد' },
   { path: '/suppliers', label: 'الموردين والناشرين', icon: Users, perms: ['suppliers.view'], category: 'المخزون والتوريد' },
   { path: '/waste', label: 'الهالك والتوالف', icon: Trash2, perms: ['inventory.waste'], category: 'المخزون والتوريد' },
 
-  // العمليات والتشغيل
-  { path: '/tables', label: 'الطاولات', icon: CalendarDays, perms: ['tables.view'], category: 'العمليات والتشغيل' },
-  { path: '/delivery', label: 'التوصيل', icon: Bike, perms: ['delivery.view'], category: 'العمليات والتشغيل' },
-  { path: '/callcenter', label: 'الاتصالات', icon: PhoneCall, perms: ['callcenter.view'], category: 'العمليات والتشغيل' },
-  { path: '/shifts', label: 'الورديات', icon: Clock, perms: ['hr.manage_shifts'], category: 'العمليات والتشغيل' },
-  { path: '/hr', label: 'الموظفين', icon: UserCog, perms: ['hr.view_employees'], category: 'العمليات والتشغيل' },
+  // الموارد البشرية والحوكمة
+  { path: '/shifts', label: 'إدارة الورديات', icon: Clock, perms: ['hr.manage_shifts'], category: 'الموارد البشرية والحوكمة' },
+  { path: '/hr', label: 'الموارد البشرية والموظفين', icon: UserCog, perms: ['hr.view_employees'], category: 'الموارد البشرية والحوكمة' },
+  { path: '/approvals', label: 'مركز الموافقات', icon: CheckSquare, perms: ['approvals.view', 'governance.view'], category: 'الموارد البشرية والحوكمة' },
+  { path: '/datacenter', label: 'مركز البيانات والاستيراد', icon: FileSpreadsheet, perms: ['datacenter.view', 'settings.manage'], category: 'الموارد البشرية والحوكمة' },
+  { path: '/system-health', label: 'سلامة النظام والصيانة', icon: Activity, perms: ['system_health.view', 'settings.manage', 'accounting.view'], category: 'الموارد البشرية والحوكمة' },
 
   // المالية والتقارير
   { path: '/executive', label: 'اللوحة المالية والإغلاق', icon: TrendingUp, perms: ['financial_dashboard.view', 'reports.view', 'accounting.view'], category: 'المالية والتقارير' },
-  { path: '/expenses', label: 'المصروفات', icon: Receipt, perms: ['expenses.view'], category: 'المالية والتقارير' },
-  { path: '/accounting', label: 'الحسابات', icon: Calculator, perms: ['accounting.view'], category: 'المالية والتقارير' },
-  { path: '/reports', label: 'التقارير', icon: BarChart3, perms: ['reports.view'], category: 'المالية والتقارير' },
+  { path: '/reports', label: 'التقارير والتحليلات', icon: BarChart3, perms: ['reports.view'], category: 'المالية والتقارير' },
+  { path: '/accounting', label: 'الحسابات العامة', icon: Calculator, perms: ['accounting.view'], category: 'المالية والتقارير' },
+  { path: '/expenses', label: 'المصروفات اليومية', icon: Receipt, perms: ['expenses.view'], category: 'المالية والتقارير' },
 
-  // النظام والإعدادات
-  { path: '/settings', label: 'الإعدادات', icon: Settings, perms: ['settings.view'], category: 'النظام والإدارة' },
+  // النظام والإدارة
+  { path: '/settings', label: 'الإعدادات العامة', icon: Settings, perms: ['settings.view'], category: 'النظام والإدارة' },
   { path: '/backup', label: 'النسخ الاحتياطي والتعافي', icon: Database, perms: ['backup.view', 'settings.manage'], category: 'النظام والإدارة' },
-  { path: '/maintenance', label: 'الصيانة', icon: Wrench, perms: ['maintenance.view'], category: 'النظام والإدارة' },
-  { path: '/permissions', label: 'الصلاحيات', icon: Shield, perms: ['permissions.manage'], category: 'النظام والإدارة' },
-  { path: '/integrations', label: 'التكاملات', icon: Puzzle, perms: ['integrations.view'], category: 'النظام والإدارة' },
+  { path: '/permissions', label: 'إدارة الصلاحيات', icon: Shield, perms: ['permissions.manage'], category: 'النظام والإدارة' },
+  { path: '/maintenance', label: 'الأصول والصيانة', icon: Wrench, perms: ['maintenance.view'], category: 'النظام والإدارة' },
+  { path: '/integrations', label: 'مركز التكاملات', icon: Puzzle, perms: ['integrations.view'], category: 'النظام والإدارة' },
   { path: '/audit', label: 'سجل التدقيق', icon: FileText, perms: ['audit.view'], category: 'النظام والإدارة' },
   { path: '/docs', label: 'دليل النظام', icon: BookOpen, perms: ['dashboard.view'], category: 'النظام والإدارة' },
 ];
@@ -82,10 +79,10 @@ export function MobileBottomNav() {
 
   // Active status helpers for primary 4 items
   const isHomeActive = pathname === '/';
-  const isPosActive = pathname.startsWith('/pos') || pathname.startsWith('/orders-history') || pathname.startsWith('/returns') || pathname.startsWith('/sales') || pathname.startsWith('/receivables');
-  const isInventoryActive = pathname.startsWith('/inventory') || pathname.startsWith('/purchasing') || pathname.startsWith('/suppliers') || pathname.startsWith('/waste') || pathname.startsWith('/products');
-  const isHrActive = pathname.startsWith('/hr') || pathname.startsWith('/shifts');
-  const isMoreActive = !isHomeActive && !isPosActive && !isInventoryActive && !isHrActive;
+  const isPosActive = pathname.startsWith('/pos');
+  const isProductsActive = pathname.startsWith('/products');
+  const isInventoryActive = pathname.startsWith('/inventory') || pathname.startsWith('/purchasing') || pathname.startsWith('/suppliers') || pathname.startsWith('/waste');
+  const isMoreActive = !isHomeActive && !isPosActive && !isProductsActive && !isInventoryActive;
 
   // Filter allowed modules
   const allowedModules = useMemo(() => {
@@ -153,7 +150,7 @@ export function MobileBottomNav() {
             <span className="text-[10px] sm:text-[11px] mt-1 font-semibold leading-none tracking-tight">الرئيسية</span>
           </Link>
 
-          {/* 2. نقطة البيع والطلبات */}
+          {/* 2. نقاط البيع */}
           <Link
             to="/pos"
             className={cn(
@@ -169,10 +166,29 @@ export function MobileBottomNav() {
                 <span className="absolute -bottom-1 w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
               )}
             </div>
-            <span className="text-[10px] sm:text-[11px] mt-1 font-semibold leading-none tracking-tight">الطلبات</span>
+            <span className="text-[10px] sm:text-[11px] mt-1 font-semibold leading-none tracking-tight">نقاط البيع</span>
           </Link>
 
-          {/* 3. المخزون والمشتريات */}
+          {/* 3. الكتب والمنتجات */}
+          <Link
+            to="/products"
+            className={cn(
+              "flex flex-col items-center justify-center flex-1 h-full py-1 text-center transition-all duration-200 active:scale-90",
+              isProductsActive
+                ? "text-primary font-bold"
+                : "text-muted-foreground hover:text-foreground"
+            )}
+          >
+            <div className="relative flex items-center justify-center">
+              <BookOpen className={cn("w-5 h-5 transition-transform", isProductsActive && "scale-110 drop-shadow-sm")} />
+              {isProductsActive && (
+                <span className="absolute -bottom-1 w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
+              )}
+            </div>
+            <span className="text-[10px] sm:text-[11px] mt-1 font-semibold leading-none tracking-tight">الكتب</span>
+          </Link>
+
+          {/* 4. المخزون */}
           <Link
             to="/inventory"
             className={cn(
@@ -189,25 +205,6 @@ export function MobileBottomNav() {
               )}
             </div>
             <span className="text-[10px] sm:text-[11px] mt-1 font-semibold leading-none tracking-tight">المخزون</span>
-          </Link>
-
-          {/* 4. الموظفين */}
-          <Link
-            to="/hr"
-            className={cn(
-              "flex flex-col items-center justify-center flex-1 h-full py-1 text-center transition-all duration-200 active:scale-90",
-              isHrActive
-                ? "text-primary font-bold"
-                : "text-muted-foreground hover:text-foreground"
-            )}
-          >
-            <div className="relative flex items-center justify-center">
-              <Users className={cn("w-5 h-5 transition-transform", isHrActive && "scale-110 drop-shadow-sm")} />
-              {isHrActive && (
-                <span className="absolute -bottom-1 w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
-              )}
-            </div>
-            <span className="text-[10px] sm:text-[11px] mt-1 font-semibold leading-none tracking-tight">الموظفين</span>
           </Link>
 
           {/* 5. المزيد (Opens Native Bottom Sheet) */}
@@ -247,10 +244,10 @@ export function MobileBottomNav() {
             <div className="flex items-center justify-between">
               <div>
                 <SheetTitle className="text-lg font-black text-foreground tracking-tight">
-                  أقسام وخدمات النظام
+                  أقسام وخدمات المكتبة
                 </SheetTitle>
                 <SheetDescription className="text-xs text-muted-foreground mt-0.5">
-                  تصفح سريع لجميع وحدات إدارة المطعم
+                  تصفح سريع لجميع وحدات إدارة المكتبة والقرطاسية
                 </SheetDescription>
               </div>
               <Button

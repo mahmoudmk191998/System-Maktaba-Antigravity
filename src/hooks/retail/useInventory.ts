@@ -11,6 +11,7 @@ import {
   applyStockMovement,
   type FetchStockBalancesOptions,
 } from '@/services/inventory/retailInventory.service';
+import { recordDamageOrLoss } from '@/services/inventory/damageLoss.service';
 import type { StockBalance, InventoryLocation } from '@/types/retail.types';
 import { collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
@@ -165,7 +166,8 @@ export function useInventory() {
     quantity: number,
     direction: 'in' | 'out',
     reason: string,
-    unitCost?: number
+    unitCost?: number,
+    productNameSnapshot?: string
   ) => {
     if (!tenantId || !selectedLocationId) return { success: false, error: 'الموقع غير محدد' };
     const movementType = direction === 'in' ? 'stock_adjustment_in' : 'stock_adjustment_out';
@@ -180,8 +182,36 @@ export function useInventory() {
       unitCost,
       employeeId: user?.uid,
       reason,
+      notes: productNameSnapshot ? `[${productNameSnapshot}]` : undefined,
     });
     if (res.success) {
+      if (
+        direction === 'out' &&
+        (reason.includes('damaged') ||
+          reason.includes('lost') ||
+          reason.includes('تالف') ||
+          reason.includes('مفقود') ||
+          reason.includes('عيب'))
+      ) {
+        const damageType = reason.includes('lost') || reason.includes('مفقود') ? 'lost' : 'damaged';
+        try {
+          await recordDamageOrLoss({
+            tenantId,
+            locationId: selectedLocationId,
+            productId,
+            variantId,
+            productNameSnapshot,
+            quantity,
+            unitCost: unitCost || 0,
+            type: damageType,
+            reason: reason,
+            employeeId: user?.displayName || user?.email || user?.uid || 'المسؤول',
+            skipStockMovement: true, // Movement is already recorded atomically above by applyStockMovement!
+          });
+        } catch (e) {
+          console.warn('Auto recordDamageOrLoss failed during stock adjustment:', e);
+        }
+      }
       await loadBalances();
     }
     return res;

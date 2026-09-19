@@ -300,15 +300,15 @@ describe('Payroll Engine Test Suite', () => {
 
   it('Scenario 29.2: Correctly calculates overtime when overtime_enabled is true', () => {
     const emp = {
-      id: 'emp_chef',
-      name: 'شيف',
+      id: 'emp_librarian',
+      name: 'أمين مكتبة',
       salary: 9000, // 300 daily, 37.5 hourly
     };
 
     // 1 attended day with 12 hours worked (4 hours overtime)
     const attendanceRecords = [
       {
-        employeeId: 'emp_chef',
+        employeeId: 'emp_librarian',
         date: '2026-09-10',
         status: 'present',
         hours: 12,

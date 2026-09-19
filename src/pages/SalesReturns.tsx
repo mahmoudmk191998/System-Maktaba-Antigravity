@@ -49,6 +49,7 @@ export default function SalesReturns() {
 
   // Filters state
   const [searchQuery, setSearchQuery] = useState('');
+  const [filterType, setFilterType] = useState<'all' | 'returns' | 'exchanges'>('all');
   const [filterMethod, setFilterMethod] = useState<string>('all');
   const [filterStatus, setFilterStatus] = useState<string>('all');
 
@@ -68,24 +69,34 @@ export default function SalesReturns() {
         !q ||
         ret.returnNumber.toLowerCase().includes(q) ||
         ret.invoiceNumberSnapshot.toLowerCase().includes(q) ||
+        (ret.replacementInvoiceNumber && ret.replacementInvoiceNumber.toLowerCase().includes(q)) ||
         (ret.processedBy && ret.processedBy.toLowerCase().includes(q)) ||
         (ret.customerNameSnapshot && ret.customerNameSnapshot.toLowerCase().includes(q));
+
+      const matchesType =
+        filterType === 'all' ||
+        (filterType === 'exchanges' && ret.isExchange) ||
+        (filterType === 'returns' && !ret.isExchange);
 
       const matchesMethod = filterMethod === 'all' || ret.refundMethod === filterMethod;
       const matchesStatus = filterStatus === 'all' || ret.status === filterStatus;
 
-      return matchesQuery && matchesMethod && matchesStatus;
+      return matchesQuery && matchesType && matchesMethod && matchesStatus;
     });
-  }, [returns, searchQuery, filterMethod, filterStatus]);
+  }, [returns, searchQuery, filterType, filterMethod, filterStatus]);
 
   // KPI calculations
   const kpis = useMemo(() => {
     let totalRefundAmount = 0;
+    let exchangesCount = 0;
     let restockedCount = 0;
     let damagedCount = 0;
 
     returns.forEach((ret) => {
       if (ret.status !== 'cancelled') {
+        if (ret.isExchange) {
+          exchangesCount += 1;
+        }
         totalRefundAmount += ret.refundAmount || ret.totalRefundAmount || 0;
         ret.items?.forEach((item) => {
           if (item.restock || item.restockToInventory) {
@@ -99,6 +110,7 @@ export default function SalesReturns() {
 
     return {
       count: returns.length,
+      exchangesCount,
       totalRefundAmount,
       restockedCount,
       damagedCount,
@@ -127,7 +139,7 @@ export default function SalesReturns() {
             className="gap-2 bg-primary font-bold text-xs sm:text-sm shadow-sm"
           >
             <Search className="w-4 h-4" />
-            <span>بحث في فواتير المبيعات</span>
+            <span>سجل فواتير المبيعات</span>
           </Button>
           <Button
             variant="outline"
@@ -151,8 +163,19 @@ export default function SalesReturns() {
             <RotateCcw className="w-5 h-5" />
           </div>
           <div>
-            <span className="text-xs text-muted-foreground block">إجمالي عمليات المرتجع</span>
+            <span className="text-xs text-muted-foreground block">إجمالي العمليات</span>
             <span className="text-xl font-black text-foreground">{number(kpis.count)}</span>
+          </div>
+        </div>
+
+        {/* Exchanges Count */}
+        <div className="p-4 rounded-2xl bg-card border border-border shadow-sm flex items-center gap-3">
+          <div className="p-3 rounded-xl bg-indigo-500/10 text-indigo-600">
+            <RefreshCw className="w-5 h-5" />
+          </div>
+          <div>
+            <span className="text-xs text-muted-foreground block">عمليات الاستبدال</span>
+            <span className="text-xl font-black text-indigo-600">{number(kpis.exchangesCount)}</span>
           </div>
         </div>
 
@@ -173,19 +196,8 @@ export default function SalesReturns() {
             <Package className="w-5 h-5" />
           </div>
           <div>
-            <span className="text-xs text-muted-foreground block">قطع أُعيدت للمخزن (سليمة)</span>
+            <span className="text-xs text-muted-foreground block">قطع أُعيدت للمخزن</span>
             <span className="text-xl font-black text-emerald-600">{number(kpis.restockedCount)}</span>
-          </div>
-        </div>
-
-        {/* Damaged Non-restock Items */}
-        <div className="p-4 rounded-2xl bg-card border border-border shadow-sm flex items-center gap-3">
-          <div className="p-3 rounded-xl bg-red-500/10 text-red-600">
-            <AlertOctagon className="w-5 h-5" />
-          </div>
-          <div>
-            <span className="text-xs text-muted-foreground block">قطع توالف وهالك (غير مضافة)</span>
-            <span className="text-xl font-black text-red-600">{number(kpis.damagedCount)}</span>
           </div>
         </div>
       </div>
@@ -193,34 +205,65 @@ export default function SalesReturns() {
       {/* Filter and Search Bar */}
       <div className="p-3 sm:p-4 rounded-2xl bg-card border border-border shadow-sm flex flex-col md:flex-row gap-3 items-center justify-between">
         {/* Search input */}
-        <div className="relative w-full md:w-96">
+        <div className="relative w-full md:w-80">
           <Search className="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
           <Input
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="ابحث برقم المرتجع، الفاتورة الأصلية، العميل، الكاشير..."
+            placeholder="ابحث برقم المرتجع، الفاتورة الأصلية أو البديلة..."
             className="pr-9 text-xs h-9"
           />
         </div>
 
-        {/* Select Dropdowns */}
+        {/* Select Dropdowns & Type Filter */}
         <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
+          {/* Type Toggle Buttons */}
+          <div className="flex items-center bg-muted/60 p-0.5 rounded-lg border border-border">
+            <Button
+              size="sm"
+              variant={filterType === 'all' ? 'default' : 'ghost'}
+              className="h-8 text-xs px-2.5"
+              onClick={() => setFilterType('all')}
+            >
+              الكل ({returns.length})
+            </Button>
+            <Button
+              size="sm"
+              variant={filterType === 'returns' ? 'default' : 'ghost'}
+              className="h-8 text-xs px-2.5 gap-1 text-amber-600 dark:text-amber-400"
+              onClick={() => setFilterType('returns')}
+            >
+              <RotateCcw className="w-3 h-3" />
+              مرتجع
+            </Button>
+            <Button
+              size="sm"
+              variant={filterType === 'exchanges' ? 'default' : 'ghost'}
+              className="h-8 text-xs px-2.5 gap-1 text-indigo-600 dark:text-indigo-400"
+              onClick={() => setFilterType('exchanges')}
+            >
+              <RefreshCw className="w-3 h-3" />
+              استبدال ({kpis.exchangesCount})
+            </Button>
+          </div>
+
           <Select value={filterMethod} onValueChange={setFilterMethod}>
-            <SelectTrigger className="h-9 text-xs w-36">
+            <SelectTrigger className="h-9 text-xs w-32">
               <SelectValue placeholder="طريقة الرد" />
             </SelectTrigger>
             <SelectContent dir="rtl">
-              <SelectItem value="all">كل طرق الرد</SelectItem>
+              <SelectItem value="all">كل الطرق</SelectItem>
               <SelectItem value="cash">نقداً (Cash)</SelectItem>
               <SelectItem value="card">بطاقة (Card)</SelectItem>
               <SelectItem value="wallet">محفظة إلكترونية</SelectItem>
               <SelectItem value="instapay">إنستاباي</SelectItem>
+              <SelectItem value="exchange">استبدال بضاعة</SelectItem>
               <SelectItem value="other">أخرى</SelectItem>
             </SelectContent>
           </Select>
 
           <Select value={filterStatus} onValueChange={setFilterStatus}>
-            <SelectTrigger className="h-9 text-xs w-32">
+            <SelectTrigger className="h-9 text-xs w-28">
               <SelectValue placeholder="الحالة" />
             </SelectTrigger>
             <SelectContent dir="rtl">
@@ -239,7 +282,7 @@ export default function SalesReturns() {
             <div className="p-4 rounded-full bg-muted/60 w-16 h-16 mx-auto flex items-center justify-center">
               <RotateCcw className="w-8 h-8 text-muted-foreground/60" />
             </div>
-            <div className="text-sm font-bold text-foreground">لا توجد عمليات مرتجع مسجلة</div>
+            <div className="text-sm font-bold text-foreground">لا توجد عمليات مرتجع أو استبدال مسجلة</div>
             <p className="text-xs text-muted-foreground max-w-sm mx-auto">
               يمكنك عمل مرتجع أو استبدال لفاتورة بيع عبر فتح شاشة فواتير المبيعات واختيار الفاتورة المطلوبة.
             </p>
@@ -249,13 +292,13 @@ export default function SalesReturns() {
             <table className="w-full text-right text-xs">
               <thead className="bg-muted/50 border-b border-border text-muted-foreground font-bold select-none">
                 <tr>
-                  <th className="p-3.5">رقم المرتجع</th>
-                  <th className="p-3.5">الفاتورة الأصلية</th>
+                  <th className="p-3.5">العملية والرقم</th>
+                  <th className="p-3.5">الفاتورة الأصلية / البديلة</th>
                   <th className="p-3.5">التاريخ والوقت</th>
                   <th className="p-3.5">المسؤول</th>
                   <th className="p-3.5 text-center">الأصناف</th>
-                  <th className="p-3.5">طريقة الرد</th>
-                  <th className="p-3.5 text-left">المبلغ المسترد</th>
+                  <th className="p-3.5">طريقة التسوية</th>
+                  <th className="p-3.5 text-left">المبلغ / الفرق</th>
                   <th className="p-3.5 text-center">الحالة</th>
                   <th className="p-3.5 text-center">الإجراءات</th>
                 </tr>
@@ -263,18 +306,45 @@ export default function SalesReturns() {
               <tbody className="divide-y divide-border">
                 {filteredReturns.map((ret) => {
                   const itemsCount = ret.items?.reduce((s, i) => s + (i.quantity || 1), 0) || 0;
+                  const isExchange = Boolean(ret.isExchange);
+                  const diff = Number(ret.difference || 0);
+
                   return (
                     <tr
                       key={ret.id}
                       onClick={() => handleOpenDetails(ret)}
                       className="hover:bg-muted/40 cursor-pointer transition-colors"
                     >
-                      <td className="p-3.5 font-bold font-mono text-foreground flex items-center gap-1.5">
-                        <RotateCcw className="w-3.5 h-3.5 text-amber-600" />
-                        <span>{ret.returnNumber}</span>
+                      <td className="p-3.5 font-bold font-mono text-foreground whitespace-nowrap">
+                        <div className="flex items-center gap-1.5">
+                          {isExchange ? (
+                            <Badge variant="outline" className="bg-indigo-500/10 text-indigo-600 border-indigo-500/30 text-[10px] gap-1 px-1.5 py-0">
+                              <RefreshCw className="w-2.5 h-2.5" />
+                              استبدال
+                            </Badge>
+                          ) : (
+                            <Badge variant="outline" className="bg-amber-500/10 text-amber-600 border-amber-500/30 text-[10px] gap-1 px-1.5 py-0">
+                              <RotateCcw className="w-2.5 h-2.5" />
+                              مرتجع
+                            </Badge>
+                          )}
+                          <span>{ret.returnNumber}</span>
+                        </div>
                       </td>
-                      <td className="p-3.5 font-mono text-muted-foreground">{ret.invoiceNumberSnapshot}</td>
-                      <td className="p-3.5 text-muted-foreground">
+
+                      <td className="p-3.5 font-mono text-xs whitespace-nowrap">
+                        <div className="flex flex-col gap-0.5">
+                          <span className="text-muted-foreground">{ret.invoiceNumberSnapshot}</span>
+                          {isExchange && ret.replacementInvoiceNumber && (
+                            <span className="text-indigo-600 dark:text-indigo-400 font-bold flex items-center gap-1 text-[11px]">
+                              <span>← بديلة:</span>
+                              <span>{ret.replacementInvoiceNumber}</span>
+                            </span>
+                          )}
+                        </div>
+                      </td>
+
+                      <td className="p-3.5 text-muted-foreground whitespace-nowrap">
                         {new Date(ret.createdAt).toLocaleString('ar-EG', {
                           year: 'numeric',
                           month: 'short',
@@ -283,11 +353,15 @@ export default function SalesReturns() {
                           minute: '2-digit',
                         })}
                       </td>
+
                       <td className="p-3.5">{ret.processedBy || 'كاشير'}</td>
                       <td className="p-3.5 text-center font-bold">{itemsCount}</td>
-                      <td className="p-3.5">
+
+                      <td className="p-3.5 whitespace-nowrap">
                         <Badge variant="outline" className="text-[10px]">
-                          {ret.refundMethod === 'cash'
+                          {isExchange
+                            ? 'استبدال بضاعة'
+                            : ret.refundMethod === 'cash'
                             ? 'نقداً (Cash)'
                             : ret.refundMethod === 'card'
                             ? 'بطاقة بنكية'
@@ -296,9 +370,30 @@ export default function SalesReturns() {
                             : ret.refundMethod}
                         </Badge>
                       </td>
-                      <td className="p-3.5 text-left font-bold text-destructive">
-                        {number(ret.refundAmount || ret.totalRefundAmount || 0)} ج.م
+
+                      {/* Refunded or Difference settled */}
+                      <td className="p-3.5 text-left font-bold font-mono whitespace-nowrap">
+                        {isExchange ? (
+                          diff > 0 ? (
+                            <span className="text-emerald-600 dark:text-emerald-400 font-bold">
+                              فرق مدفوع: +{number(diff)} ج.م
+                            </span>
+                          ) : diff < 0 ? (
+                            <span className="text-destructive font-bold">
+                              مسترد للعميل: {number(Math.abs(diff))} ج.م
+                            </span>
+                          ) : (
+                            <span className="text-muted-foreground">
+                              متكافئ (0 ج.م)
+                            </span>
+                          )
+                        ) : (
+                          <span className="text-destructive font-bold">
+                            -{number(ret.refundAmount || ret.totalRefundAmount || 0)} ج.م
+                          </span>
+                        )}
                       </td>
+
                       <td className="p-3.5 text-center">
                         <Badge
                           variant="outline"
@@ -311,6 +406,7 @@ export default function SalesReturns() {
                           {ret.status === 'completed' ? 'مكتمل' : 'ملغى'}
                         </Badge>
                       </td>
+
                       <td className="p-3.5 text-center" onClick={(e) => e.stopPropagation()}>
                         <div className="flex items-center justify-center gap-1.5">
                           <Button

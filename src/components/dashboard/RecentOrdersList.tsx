@@ -73,7 +73,7 @@ export function RecentOrdersList({ orders }: RecentOrdersListProps) {
                 </span>
                 {order.tableNumber && (
                   <span className="text-sm text-muted-foreground">
-                    • طاولة {order.tableNumber}
+                    • طاولة/مقعد {order.tableNumber}
                   </span>
                 )}
                 {order.customerName && (

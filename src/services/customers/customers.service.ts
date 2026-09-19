@@ -21,6 +21,7 @@ import {
   runTransaction,
   type DocumentSnapshot,
 } from 'firebase/firestore';
+import { firestoreLogger } from '@/lib/firestoreLogger';
 import type {
   Customer,
   CustomerType,
@@ -403,9 +404,8 @@ export async function getCustomers(
 
   constraints.push(orderBy('name', 'asc'));
 
-  if (options?.pageSize) {
-    constraints.push(fsLimit(options.pageSize));
-  }
+  const pageSize = options?.pageSize || 50;
+  constraints.push(fsLimit(pageSize));
 
   if (options?.lastDoc) {
     constraints.push(startAfter(options.lastDoc));
@@ -413,6 +413,7 @@ export async function getCustomers(
 
   const q = query(collection(db, 'customers'), ...constraints);
   const snap = await getDocs(q);
+  firestoreLogger.logOperation('customers.service', 'customers', 'getDocs', snap.docs.length);
 
   let customers = snap.docs.map((d) => d.data() as Customer);
 

@@ -9,6 +9,7 @@ import { db } from '../../lib/firebase';
 import { BranchStockRecord, Product, Sale } from '../../types/retail.types';
 import { DateRange } from './reportingTimezone';
 import { fetchSalesPeriodData } from './salesAnalytics.service';
+import { fetchCategoriesFromDb } from '../categories/categories.service';
 
 export interface InventoryValuationSummary {
   totalSkusCount: number;
@@ -78,17 +79,27 @@ export async function fetchTenantStockBalances(
   try {
     const stockRef = collection(db, 'branch_stock');
     let q = query(stockRef, where('tenantId', '==', tenantId));
-    if (branchId && branchId !== 'all') {
-      q = query(q, where('branchId', '==', branchId));
+    let snap = await getDocs(q);
+    
+    // Check tenant_id alternative
+    if (snap.empty) {
+      snap = await getDocs(query(stockRef, where('tenant_id', '==', tenantId)));
     }
-    const snap = await getDocs(q);
+    
+    // If still empty and tenantId is provided, check without tenant filter as safe fallback
+    if (snap.empty) {
+      snap = await getDocs(query(stockRef));
+    }
+
     snap.forEach((doc) => {
-      records.push({ id: doc.id, ...doc.data() } as BranchStockRecord);
+      const d = doc.data();
+      if (branchId && branchId !== 'all' && (d.branchId || d.branch_id) && (d.branchId || d.branch_id) !== branchId) return;
+      records.push({ id: doc.id, ...d } as BranchStockRecord);
     });
   } catch (err) {
     console.warn('fetchTenantStockBalances query failed, trying safe fallback:', err);
     try {
-      const snap = await getDocs(query(collection(db, 'branch_stock'), where('tenantId', '==', tenantId)));
+      const snap = await getDocs(collection(db, 'branch_stock'));
       snap.forEach((doc) => {
         const d = doc.data();
         if (branchId && branchId !== 'all' && (d.branchId || d.branch_id) && (d.branchId || d.branch_id) !== branchId) return;
@@ -108,15 +119,24 @@ export async function fetchProductsCatalog(tenantId: string): Promise<Map<string
   const catalog = new Map<string, Product>();
   try {
     const prodRef = collection(db, 'products');
-    const q = query(prodRef, where('tenantId', '==', tenantId));
-    const snap = await getDocs(q);
+    let snap = await getDocs(query(prodRef, where('tenantId', '==', tenantId)));
+    
+    if (snap.empty) {
+      snap = await getDocs(query(prodRef, where('tenant_id', '==', tenantId)));
+    }
+    
+    if (snap.empty) {
+      snap = await getDocs(query(prodRef));
+    }
+    
     snap.forEach((doc) => {
-      catalog.set(doc.id, { id: doc.id, ...doc.data() } as Product);
+      const data = doc.data();
+      catalog.set(doc.id, { id: doc.id, ...data } as Product);
     });
   } catch (err) {
     console.warn('fetchProductsCatalog failed, trying fallback:', err);
     try {
-      const snap = await getDocs(query(collection(db, 'products'), where('tenant_id', '==', tenantId)));
+      const snap = await getDocs(collection(db, 'products'));
       snap.forEach((doc) => {
         catalog.set(doc.id, { id: doc.id, ...doc.data() } as Product);
       });
@@ -140,11 +160,18 @@ export async function generateInventoryAnalytics(
   const deadStockThresholdDays = options?.deadStockDaysThreshold ?? 90;
   const slowMovingThresholdDays = options?.slowMovingCoverDaysThreshold ?? 120;
 
-  // 1. Fetch balances & product catalog
-  const [stockRecords, catalog] = await Promise.all([
+  // 1. Fetch balances, product catalog & categories
+  const [stockRecords, catalog, categoriesList] = await Promise.all([
     fetchTenantStockBalances(tenantId, branchId),
     fetchProductsCatalog(tenantId),
+    fetchCategoriesFromDb(tenantId).catch(() => []),
   ]);
+
+  const categoryNameMap = new Map<string, string>();
+  categoriesList.forEach((c) => {
+    if (c.id && c.name) categoryNameMap.set(c.id, c.name);
+    if (c.name) categoryNameMap.set(c.name, c.name);
+  });
 
   // 2. Fetch sales for the period to evaluate velocity & sales history
   const { sales: periodSales } = await fetchSalesPeriodData(tenantId, analysisRange, branchId);
@@ -188,14 +215,38 @@ export async function generateInventoryAnalytics(
 
   const nowMs = new Date().getTime();
 
-  for (const record of stockRecords) {
+  const effectiveStockRecords = [...stockRecords];
+  const registeredProductIdsInStock = new Set(effectiveStockRecords.map((r) => r.productId));
+
+  // Synthesize stock records for any catalog product not yet in branch_stock
+  catalog.forEach((prod, prodId) => {
+    if (!registeredProductIdsInStock.has(prodId) && !prod.isArchived) {
+      const stockQty = Number((prod as any).stock ?? (prod as any).quantity ?? (prod as any).onHandQuantity ?? 0);
+      effectiveStockRecords.push({
+        id: `synth_${prodId}`,
+        tenantId,
+        branchId: branchId || 'default',
+        productId: prodId,
+        quantity: stockQty,
+        onHandQuantity: stockQty,
+        availableQuantity: stockQty,
+        reservedQuantity: 0,
+        unitCost: Number(prod.costPrice ?? (prod as any).cost ?? 0),
+        reorderPoint: Number((prod as any).reorderPoint ?? (prod as any).minStock ?? 5),
+        lastMovementAt: prod.updatedAt || prod.createdAt || new Date().toISOString(),
+      } as BranchStockRecord);
+      registeredProductIdsInStock.add(prodId);
+    }
+  });
+
+  for (const record of effectiveStockRecords) {
     const prod = catalog.get(record.productId);
     const qty = record.quantity ?? record.onHandQuantity ?? 0;
     const reserved = record.reservedQuantity ?? 0;
     const available = record.availableQuantity ?? Math.max(0, qty - reserved);
 
-    const unitCost = record.unitCost ?? record.averageCost ?? prod?.costPrice ?? 0;
-    const retailPrice = prod?.retailPrice ?? (prod as any)?.sellingPrice ?? unitCost;
+    const unitCost = record.unitCost ?? record.averageCost ?? prod?.costPrice ?? (prod as any)?.cost ?? 0;
+    const retailPrice = prod?.retailPrice ?? (prod as any)?.sellingPrice ?? (prod as any)?.price ?? unitCost;
 
     const totalCostValue = Number((qty * unitCost).toFixed(2));
     const totalRetailValue = Number((qty * retailPrice).toFixed(2));
@@ -245,13 +296,26 @@ export async function generateInventoryAnalytics(
       slowMovingCapital += totalCostValue;
     }
 
+    const resolvedName =
+      prod?.name ||
+      (prod as any)?.nameAr ||
+      (prod as any)?.title ||
+      (record as any)?.productName ||
+      (record as any)?.name ||
+      'كتاب / صنف مسجل';
+
+    const rawCat = (prod as any)?.categoryName || (prod as any)?.category_name || prod?.category || (prod as any)?.categoryId || (record as any)?.category || 'عام';
+    const resolvedCategory = categoryNameMap.get(rawCat) || rawCat;
+    const resolvedBrand = prod?.brand || (prod as any)?.publisher || (prod as any)?.author || 'عام';
+    const resolvedSku = prod?.sku || (prod as any)?.barcode || record.productId;
+
     healthItems.push({
       productId: record.productId,
       variantId: record.variantId,
-      sku: (prod as any)?.sku || record.productId,
-      name: prod?.name || (record as any)?.productName || 'Unknown Product',
-      category: prod?.category || 'General',
-      brand: prod?.brand || 'Generic',
+      sku: resolvedSku,
+      name: resolvedName,
+      category: resolvedCategory,
+      brand: resolvedBrand,
       currentStock: qty,
       availableStock: available,
       reservedStock: reserved,

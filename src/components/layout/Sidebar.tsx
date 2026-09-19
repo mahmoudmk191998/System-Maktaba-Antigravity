@@ -334,6 +334,10 @@ export function Sidebar() {
     };
   }, [activeGroup]);
 
+  if (location.pathname === '/pos') {
+    return null;
+  }
+
   return (
     <AnimatePresence>
       {bottomNavVisible ? (

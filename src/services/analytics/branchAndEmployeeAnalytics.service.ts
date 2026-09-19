@@ -69,25 +69,58 @@ export async function generateBranchAndEmployeeAnalytics(
 
   const fetchSafeBranchesDocs = async () => {
     try {
-      return await getDocs(query(collection(db, 'branches'), where('tenantId', '==', tenantId)));
+      let snap = await getDocs(query(collection(db, 'branches'), where('tenantId', '==', tenantId)));
+      if (snap.empty) {
+        snap = await getDocs(query(collection(db, 'branches'), where('tenant_id', '==', tenantId)));
+      }
+      if (snap.empty) {
+        snap = await getDocs(collection(db, 'branches'));
+      }
+      return snap;
     } catch {
       return { forEach: () => {} };
     }
   };
 
-  const [salesData, transfersSnap, branchesSnap] = await Promise.all([
+  const fetchSafeEmployeesDocs = async () => {
+    try {
+      let snap = await getDocs(query(collection(db, 'employees'), where('tenantId', '==', tenantId)));
+      if (snap.empty) {
+        snap = await getDocs(query(collection(db, 'employees'), where('tenant_id', '==', tenantId)));
+      }
+      if (snap.empty) {
+        snap = await getDocs(collection(db, 'employees'));
+      }
+      return snap;
+    } catch {
+      return { forEach: () => {} };
+    }
+  };
+
+  const [salesData, transfersSnap, branchesSnap, employeesSnap] = await Promise.all([
     fetchSalesPeriodData(tenantId, dateRange),
     fetchSafeTransfersDocs(),
     fetchSafeBranchesDocs(),
+    fetchSafeEmployeesDocs(),
   ]);
 
   const { sales, returns } = salesData;
 
   // Branch names map
   const branchNameMap = new Map<string, string>();
-  branchesSnap.forEach((doc) => {
+  branchesSnap.forEach((doc: any) => {
     const d = doc.data();
     branchNameMap.set(doc.id, d.name || d.branchName || doc.id);
+  });
+
+  // Employee names map
+  const employeeNameMap = new Map<string, string>();
+  employeesSnap.forEach((doc: any) => {
+    const d = doc.data();
+    const name = d.name || d.full_name || d.nameAr || d.displayName;
+    if (name) {
+      employeeNameMap.set(doc.id, name);
+    }
   });
 
   // Branch metrics map
@@ -169,7 +202,7 @@ export async function generateBranchAndEmployeeAnalytics(
 
     // Cashier
     const cId = sale.cashierId || (sale as any).cashier_id || (sale as any).created_by || 'unassigned';
-    const cName = sale.cashierNameSnapshot || (sale as any).cashier_name || 'كاشير';
+    const cName = employeeNameMap.get(cId) || sale.cashierNameSnapshot || (sale as any).cashier_name || (sale as any).userName || 'كاشير مسجل';
     if (!cashierStats.has(cId)) {
       cashierStats.set(cId, {
         name: cName,

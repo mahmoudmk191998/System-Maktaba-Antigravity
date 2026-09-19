@@ -12,6 +12,15 @@ import { Input } from '@/components/ui/input';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from '@/components/ui/dialog';
+import { Progress } from '@/components/ui/progress';
 import { toast } from 'sonner';
 import { db } from '@/lib/firebase';
 import { doc, deleteDoc, addDoc, collection } from 'firebase/firestore';
@@ -40,7 +49,8 @@ import {
   BookOpen,
   ArrowRight,
   ExternalLink,
-  Loader2
+  Loader2,
+  Image as ImageIcon
 } from 'lucide-react';
 
 export default function Settings() {
@@ -74,6 +84,10 @@ export default function Settings() {
   // UI States
   const [isSaving, setIsSaving] = useState(false);
   const [isWiping, setIsWiping] = useState(false);
+  const [showWipeModal, setShowWipeModal] = useState(false);
+  const [wipeConfirmInput, setWipeConfirmInput] = useState('');
+  const [wipeProgressMsg, setWipeProgressMsg] = useState('');
+  const [wipePercent, setWipePercent] = useState(0);
   const [newUnitMode, setNewUnitMode] = useState(false);
   const [newUnit, setNewUnit] = useState({ name: '', abbreviation: '', type: 'count' });
   const [showDrawerPassword, setShowDrawerPassword] = useState(false);
@@ -195,16 +209,40 @@ export default function Settings() {
   };
 
   const handleWipeData = async () => {
-    if (window.confirm('تحذير خطير: هل أنت متأكد من مسح جميع بيانات النظام؟ لا يمكن التراجع عن هذا الإجراء!')) {
-      if (window.confirm('تأكيد نهائي: مسح جميع البيانات؟')) {
-        setIsWiping(true);
-        const success = await wipeAllTenantData(currentBranch?.id);
-        if (success) {
-          toast.success('تم مسح جميع البيانات من قاعدة البيانات. سيتم إعادة تحميل الصفحة.');
-          setTimeout(() => window.location.reload(), 1500);
-        }
+    if (wipeConfirmInput.trim() !== 'مسح' && wipeConfirmInput.trim() !== 'تأكيد' && wipeConfirmInput.trim().toUpperCase() !== 'CONFIRM') {
+      toast.error('يرجى كتابة كلمة "مسح" في الحقل لتأكيد العملية');
+      return;
+    }
+
+    setIsWiping(true);
+    setWipeProgressMsg('جاري بدء مسح البيانات وإعادة التهيئة...');
+    setWipePercent(5);
+
+    try {
+      const success = await wipeAllTenantData(currentBranch?.id, (msg, pct) => {
+        setWipeProgressMsg(msg);
+        setWipePercent(pct);
+      });
+
+      if (success) {
+        setWipePercent(100);
+        setWipeProgressMsg('تم المسح وإعادة التهيئة بنجاح 100%! جاري التحديث...');
+        toast.success('تم مسح جميع البيانات وإعادة تهيئة النظام بنجاح 100%');
+        try {
+          localStorage.removeItem('cached_cart');
+          localStorage.removeItem('cached_pos_state');
+          localStorage.removeItem('held_sales');
+        } catch {}
+        setTimeout(() => {
+          window.location.reload();
+        }, 1500);
+      } else {
         setIsWiping(false);
       }
+    } catch (err: any) {
+      console.error(err);
+      toast.error('حدث خطأ أثناء مسح البيانات: ' + (err?.message || 'خطأ غير متوقع'));
+      setIsWiping(false);
     }
   };
 
@@ -320,7 +358,7 @@ export default function Settings() {
                   <Input 
                     value={tenantName} 
                     onChange={(e) => setTenantName(e.target.value)} 
-                    placeholder="مثال: مطعم الكرم"
+                    placeholder="مثال: مكتبة ألوان الحديثة"
                   />
                 </div>
                 <div className="space-y-2">
@@ -328,7 +366,7 @@ export default function Settings() {
                   <Input 
                     value={tenantNameEn} 
                     onChange={(e) => setTenantNameEn(e.target.value)} 
-                    placeholder="مثال: Al Karam Restaurant"
+                    placeholder="مثال: Alwan Library & Books"
                   />
                 </div>
                 <div className="space-y-2">
@@ -427,9 +465,9 @@ export default function Settings() {
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   <Receipt className="w-5 h-5" />
-                  إعدادات الإيصالات وتذاكر المطبخ
+                  إعدادات فواتير وإيصالات البيع
                 </CardTitle>
-                <CardDescription>التحكم في خيارات الطباعة المباشرة عند تأكيد الطلبات</CardDescription>
+                <CardDescription>التحكم في خيارات الطباعة المباشرة عند تأكيد عمليات البيع</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="flex items-center justify-between">
@@ -445,8 +483,8 @@ export default function Settings() {
                 <Separator />
                 <div className="flex items-center justify-between">
                   <div>
-                    <Label>طباعة تذكرة المطبخ</Label>
-                    <p className="text-sm text-muted-foreground">إرسال تذكرة التحضير لشاشة وطابعة المطبخ</p>
+                    <Label>طباعة نسخة إيصال التحضير/المخزن</Label>
+                    <p className="text-sm text-muted-foreground">طباعة نسخة مخصصة لتجهيز الكتب واستلام الطلبات</p>
                   </div>
                   <Switch 
                     checked={settings.printKitchenTicket}
@@ -459,7 +497,7 @@ export default function Settings() {
                   <Input 
                     value={settings.receiptWelcomeMessage}
                     onChange={(e) => updateSettings({ receiptWelcomeMessage: e.target.value })}
-                    placeholder="شكراً لزيارتكم - نتمنى لكم وجبة شهية"
+                    placeholder="شكراً لزيارتكم - نسعد دائماً بخدمتكم"
                   />
                 </div>
               </CardContent>
@@ -525,11 +563,11 @@ export default function Settings() {
             <CardContent className="space-y-4">
               <div className="grid gap-4 md:grid-cols-2">
                 <div className="space-y-2">
-                  <Label>اسم المؤسسة / المطعم بالفاتورة</Label>
+                  <Label>اسم المؤسسة / المكتبة بالفاتورة</Label>
                   <Input 
                     value={settings.invoiceCompanyName || ''} 
                     onChange={(e) => updateSettings({ invoiceCompanyName: e.target.value })} 
-                    placeholder="اسم المطعم بالفاتورة"
+                    placeholder="اسم المكتبة بالفاتورة"
                   />
                 </div>
                 <div className="space-y-2">
@@ -545,7 +583,7 @@ export default function Settings() {
                   <Input 
                     value={settings.invoiceAddress || ''} 
                     onChange={(e) => updateSettings({ invoiceAddress: e.target.value })} 
-                    placeholder="عنوان المطعم المطبوع"
+                    placeholder="عنوان المكتبة المطبوع"
                   />
                 </div>
                 <div className="space-y-2">
@@ -556,42 +594,83 @@ export default function Settings() {
                     placeholder="الرقم الضريبي المطبوع"
                   />
                 </div>
-                <div className="space-y-2 md:col-span-2">
-                  <Label>شعار الفاتورة (لوجو أبيض وأسود عالي التباين للطابعات الحرارية)</Label>
-                  <div className="flex items-center gap-4">
+                <div className="space-y-3 md:col-span-2 border border-border p-4 rounded-xl bg-card">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <Label className="text-sm font-bold">شعار الفاتورة المطبوعة (لوجو الفاتورة)</Label>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        يمكنك وضع رابط مباشر للصورة من الإنترنت أو رفع ملف صورة من جهازك
+                      </p>
+                    </div>
                     {settings.invoiceLogo && (
-                      <div className="relative w-16 h-16 border rounded-lg overflow-hidden bg-white shrink-0 p-1">
-                        <img src={settings.invoiceLogo} alt="Logo" className="w-full h-full object-contain" />
-                        <button 
-                          type="button"
-                          onClick={() => updateSettings({ invoiceLogo: '' })} 
-                          className="absolute top-0 right-0 bg-destructive text-white rounded-bl-lg p-1 hover:opacity-90"
-                          title="حذف اللوجو"
-                        >
-                          <Trash2 className="w-3 h-3" />
-                        </button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => updateSettings({ invoiceLogo: '' })}
+                        className="text-destructive hover:text-destructive hover:bg-destructive/10 text-xs h-8 gap-1"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        حذف اللوجو
+                      </Button>
+                    )}
+                  </div>
+
+                  <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center">
+                    {settings.invoiceLogo ? (
+                      <div className="relative w-24 h-24 border border-border rounded-xl overflow-hidden bg-white/90 shrink-0 p-1 shadow-sm flex items-center justify-center">
+                        <img 
+                          src={settings.invoiceLogo} 
+                          alt="Invoice Logo" 
+                          className="max-w-full max-h-full object-contain filter grayscale" 
+                          onError={(e) => {
+                            (e.target as HTMLElement).style.display = 'none';
+                          }}
+                        />
+                      </div>
+                    ) : (
+                      <div className="w-24 h-24 border border-dashed border-border rounded-xl flex flex-col items-center justify-center bg-muted/30 text-muted-foreground shrink-0 text-center p-2">
+                        <ImageIcon className="w-7 h-7 mb-1 opacity-50" />
+                        <span className="text-[10px]">بدون شعار</span>
                       </div>
                     )}
-                    <div className="flex-1">
-                      <Input 
-                        type="file" 
-                        accept="image/*"
-                        onChange={(e) => {
-                          const file = e.target.files?.[0];
-                          if (file) {
-                            if (file.size > 1024 * 1024) {
-                              toast.error('حجم الصورة كبير جداً. الحد الأقصى 1 ميجابايت');
-                              return;
+
+                    <div className="flex-1 space-y-3 w-full">
+                      <div className="space-y-1">
+                        <Label className="text-xs text-muted-foreground">رابط مباشر لصورة الشعار (Direct Image Link)</Label>
+                        <Input
+                          type="url"
+                          placeholder="https://example.com/logo.png"
+                          value={settings.invoiceLogo || ''}
+                          onChange={(e) => updateSettings({ invoiceLogo: e.target.value })}
+                          dir="ltr"
+                          className="font-mono text-xs"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <Label className="text-xs text-muted-foreground">أو ارفع ملف صورة من جهازك</Label>
+                        <Input 
+                          type="file" 
+                          accept="image/*"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) {
+                              if (file.size > 1024 * 1024) {
+                                toast.error('حجم الصورة كبير جداً. الحد الأقصى 1 ميجابايت');
+                                return;
+                              }
+                              const reader = new FileReader();
+                              reader.onloadend = () => {
+                                updateSettings({ invoiceLogo: reader.result as string });
+                                toast.success('تم تحميل الشعار بنجاح');
+                              };
+                              reader.readAsDataURL(file);
                             }
-                            const reader = new FileReader();
-                            reader.onloadend = () => {
-                              updateSettings({ invoiceLogo: reader.result as string });
-                              toast.success('تم تحميل الشعار بنجاح');
-                            };
-                            reader.readAsDataURL(file);
-                          }
-                        }} 
-                      />
+                          }}
+                          className="text-xs" 
+                        />
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -744,7 +823,7 @@ export default function Settings() {
                   إدارة الأدوار والصلاحيات (RBAC)
                 </CardTitle>
                 <CardDescription>
-                  التحكم في أدوار وصلاحيات الكاشير، المديرين، المطبخ، وفرق العمل
+                  التحكم في أدوار وصلاحيات الكاشير، المديرين، أمناء المكتبة، وفرق العمل
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
@@ -776,20 +855,118 @@ export default function Settings() {
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="p-4 bg-destructive/10 rounded-lg border border-destructive/20">
-                  <h4 className="font-semibold text-destructive mb-2 text-sm">مسح بيانات المؤسسة</h4>
+                  <h4 className="font-semibold text-destructive mb-2 text-sm">مسح بيانات المؤسسة وإعادة التهيئة</h4>
                   <p className="text-xs text-muted-foreground mb-4">
-                    سيتم حذف الطلبات، العملاء، الأصناف، المخزون، والمصروفات الخاصة بالمؤسسة والفرع مع الإبقاء على حساب الدخول الأساسي.
+                    سيتم حذف الطلبات، الفواتير، العملاء، الأصناف، المخزون، والمصروفات والإحصائيات الخاصة بالمؤسسة والفرع مع الإبقاء على حساب الدخول الأساسي وإعادة تهيئة الوحدات والفرع الرئيسي.
                   </p>
                   <Button 
                     variant="destructive" 
                     className="w-full gap-2"
-                    onClick={handleWipeData}
+                    onClick={() => {
+                      setWipeConfirmInput('');
+                      setWipeProgressMsg('');
+                      setWipePercent(0);
+                      setShowWipeModal(true);
+                    }}
                     disabled={isWiping}
                   >
                     <Trash2 className="w-4 h-4" />
-                    {isWiping ? 'جاري المسح...' : 'مسح البيانات وإعادة التهيئة'}
+                    {isWiping ? 'جاري المسح وإعادة التهيئة...' : 'مسح البيانات وإعادة التهيئة'}
                   </Button>
                 </div>
+
+                <Dialog open={showWipeModal} onOpenChange={(open) => !isWiping && setShowWipeModal(open)}>
+                  <DialogContent className="sm:max-w-[520px]" dir="rtl">
+                    <DialogHeader>
+                      <DialogTitle className="flex items-center gap-2 text-destructive text-lg">
+                        <AlertTriangle className="w-5 h-5 text-destructive" />
+                        تأكيد مسح كافة البيانات وإعادة التهيئة (100%)
+                      </DialogTitle>
+                      <DialogDescription className="text-right text-xs text-muted-foreground pt-1 leading-relaxed">
+                        تحذير شديد الخطورة: هذا الإجراء سيقوم بحذف جميع البيانات التشغيلية والمحاسبية والمخزنية الخاصة بالمؤسسة والفرع بشكل نهائي لا يمكن التراجع عنه.
+                      </DialogDescription>
+                    </DialogHeader>
+
+                    <div className="space-y-3 py-2 text-xs text-right text-muted-foreground">
+                      <div className="bg-destructive/10 p-3 rounded-md border border-destructive/20 text-destructive text-xs space-y-1">
+                        <p className="font-bold">ما الذي سيتم حذفه وتصفيته بالكامل؟</p>
+                        <ul className="list-disc list-inside space-y-0.5">
+                          <li>جميع المنتجات والأصناف، التصنيفات، والماركات</li>
+                          <li>فواتير المبيعات، المرتجعات، وحركات الكاشير</li>
+                          <li>فواتير المشتريات، المصروفات، وأرصدة الموردين</li>
+                          <li>بيانات العملاء، الموردين، والموظفين والحضور والرواتب</li>
+                          <li>حركات المخزون، سجلات الجرد، والباركودات</li>
+                          <li>الإحصائيات اليومية والشهرية وتصفير عداد الفواتير إلى رقم 1</li>
+                        </ul>
+                      </div>
+                      <div className="p-2.5 bg-muted rounded-md text-xs space-y-1">
+                        <p className="font-semibold text-foreground">
+                          ما الذي سيتم الحفاظ عليه وإعادة تهيئته بأمان؟
+                        </p>
+                        <ul className="list-disc list-inside text-muted-foreground space-y-0.5">
+                          <li>الحساب الرئيسي للمؤسسة وبيانات تسجيل الدخول.</li>
+                          <li>الفرع الرئيسي كفرع أساسي مع تصفير عداد فواتيره.</li>
+                          <li>إعادة تهيئة الوحدات القياسية تلقائيًا (قطعة، علبة، كرتونة، دستة، رزمة...).</li>
+                        </ul>
+                      </div>
+                    </div>
+
+                    {isWiping ? (
+                      <div className="space-y-3 py-3">
+                        <div className="flex justify-between text-xs text-muted-foreground font-medium">
+                          <span>{wipeProgressMsg || 'جاري المسح وإعادة التهيئة...'}</span>
+                          <span>{wipePercent}%</span>
+                        </div>
+                        <Progress value={wipePercent} className="h-2.5 w-full" />
+                        <p className="text-center text-xs text-muted-foreground animate-pulse">
+                          يرجى الانتظار وعدم إغلاق الصفحة أو المتصفح حتى اكتمال العملية...
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="space-y-2 py-2">
+                        <Label className="text-xs font-medium text-destructive">
+                          لتأكيد المسح النهائي، اكتب كلمة <span className="font-bold underline text-sm">مسح</span> في الحقل أدناه:
+                        </Label>
+                        <Input 
+                          value={wipeConfirmInput}
+                          onChange={(e) => setWipeConfirmInput(e.target.value)}
+                          placeholder='اكتب "مسح" للتأكيد'
+                          className="text-center font-bold text-destructive border-destructive/50"
+                          dir="rtl"
+                          autoFocus
+                        />
+                      </div>
+                    )}
+
+                    <DialogFooter className="gap-2 sm:gap-0 pt-2">
+                      <Button
+                        variant="outline"
+                        onClick={() => setShowWipeModal(false)}
+                        disabled={isWiping}
+                      >
+                        إلغاء
+                      </Button>
+                      <Button
+                        variant="destructive"
+                        onClick={handleWipeData}
+                        disabled={isWiping || wipeConfirmInput.trim() !== 'مسح'}
+                        className="gap-2"
+                      >
+                        {isWiping ? (
+                          <>
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                            جاري المسح...
+                          </>
+                        ) : (
+                          <>
+                            <Trash2 className="w-4 h-4" />
+                            تأكيد المسح وإعادة التهيئة
+                          </>
+                        )}
+                      </Button>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
               </CardContent>
             </Card>
           </div>

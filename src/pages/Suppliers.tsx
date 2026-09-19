@@ -40,6 +40,8 @@ import {
   CreditCard,
   Briefcase,
   Layers,
+  RotateCcw,
+  ArchiveRestore,
 } from 'lucide-react';
 import type { Supplier, SupplierType } from '@/types/retail.types';
 import { SupplierPaymentModal } from '@/components/retail/purchasing/SupplierPaymentModal';
@@ -74,12 +76,14 @@ export default function Suppliers() {
     addSupplier,
     editSupplier,
     archiveSupplierById,
+    restoreSupplierById,
     paySupplier,
   } = useSuppliers();
 
   // Search & Filters
   const [searchQuery, setSearchQuery] = useState('');
   const [filterType, setFilterType] = useState('all');
+  const [viewMode, setViewMode] = useState<'active' | 'archived'>('active');
 
   // Modals & Drawers
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -201,9 +205,20 @@ export default function Suppliers() {
     if (confirm(`هل أنت متأكد من رغبتك في أرشفة المورد "${supplier.name}"؟ سيبقى ظاهراً في الفواتير القديمة ولن يمكن عمل أوامر شراء جديدة له.`)) {
       try {
         await archiveSupplierById(supplier.id, currentUser?.name || 'مدير النظام');
-        toast.success(`تمت أرشفة المورد ${supplier.name}`);
+        toast.success(`تمت أرشفة المورد ${supplier.name} ونقله إلى الأرشيف`);
       } catch (err: any) {
         toast.error(err.message || 'فشلت أرشفة المورد');
+      }
+    }
+  };
+
+  const handleRestore = async (supplier: Supplier) => {
+    if (confirm(`هل ترغب في استرجاع المورد "${supplier.name}" إلى قائمة الموردين النشطين؟`)) {
+      try {
+        await restoreSupplierById(supplier.id, currentUser?.name || 'مدير النظام');
+        toast.success(`تم استرجاع المورد "${supplier.name}" بنجاح إلى الموردين النشطين`);
+      } catch (err: any) {
+        toast.error(err.message || 'فشل استرجاع المورد');
       }
     }
   };
@@ -211,7 +226,8 @@ export default function Suppliers() {
   // Filtered Suppliers
   const filteredSuppliers = useMemo(() => {
     return suppliers.filter((sup) => {
-      if (sup.archived) return false;
+      if (viewMode === 'active' && sup.archived) return false;
+      if (viewMode === 'archived' && !sup.archived) return false;
       const q = searchQuery.toLowerCase().trim();
       const matchesQuery =
         !q ||
@@ -224,7 +240,7 @@ export default function Suppliers() {
       const matchesType = filterType === 'all' || sup.supplierType === filterType;
       return matchesQuery && matchesType;
     });
-  }, [suppliers, searchQuery, filterType]);
+  }, [suppliers, searchQuery, filterType, viewMode]);
 
   // KPIs
   const kpis = useMemo(() => {
@@ -340,14 +356,61 @@ export default function Suppliers() {
         </div>
       </div>
 
+      {/* Tabs: Active Suppliers vs Archive */}
+      <div className="flex items-center gap-2 border-b border-border">
+        <button
+          onClick={() => setViewMode('active')}
+          className={`pb-3 px-4 text-xs sm:text-sm font-bold border-b-2 transition-all flex items-center gap-2 ${
+            viewMode === 'active'
+              ? 'border-primary text-primary'
+              : 'border-transparent text-muted-foreground hover:text-foreground'
+          }`}
+        >
+          <Building2 className="w-4 h-4" />
+          <span>الموردين النشطين</span>
+          <Badge variant={viewMode === 'active' ? 'default' : 'secondary'} className="text-[10px] px-1.5 py-0 h-4 font-mono">
+            {suppliers.filter((s) => !s.archived).length}
+          </Badge>
+        </button>
+
+        <button
+          onClick={() => setViewMode('archived')}
+          className={`pb-3 px-4 text-xs sm:text-sm font-bold border-b-2 transition-all flex items-center gap-2 ${
+            viewMode === 'archived'
+              ? 'border-primary text-primary'
+              : 'border-transparent text-muted-foreground hover:text-foreground'
+          }`}
+        >
+          <Archive className="w-4 h-4" />
+          <span>الأرشيف (الموردين المؤرشفين)</span>
+          <Badge
+            variant={viewMode === 'archived' ? 'default' : 'secondary'}
+            className="text-[10px] px-1.5 py-0 h-4 font-mono"
+          >
+            {suppliers.filter((s) => s.archived).length}
+          </Badge>
+        </button>
+      </div>
+
       {/* Suppliers Table */}
       <div className="border border-border rounded-2xl overflow-hidden bg-card shadow-sm">
         {filteredSuppliers.length === 0 ? (
           <div className="py-16 text-center text-muted-foreground space-y-3">
             <div className="p-4 rounded-full bg-muted/60 w-16 h-16 mx-auto flex items-center justify-center">
-              <Users className="w-8 h-8 text-muted-foreground/60" />
+              {viewMode === 'archived' ? (
+                <Archive className="w-8 h-8 text-muted-foreground/60" />
+              ) : (
+                <Users className="w-8 h-8 text-muted-foreground/60" />
+              )}
             </div>
-            <div className="text-sm font-bold text-foreground">لا يوجد موردين مطابقين للبحث</div>
+            <div className="text-sm font-bold text-foreground">
+              {viewMode === 'archived' ? 'لا يوجد موردين في الأرشيف حالياً' : 'لا يوجد موردين مطابقين للبحث'}
+            </div>
+            {viewMode === 'archived' && (
+              <p className="text-xs text-muted-foreground">
+                عند أرشفة أي مورد سيظهر هنا ويمكنك استرجاعه إلى قائمة الموردين النشطين في أي وقت.
+              </p>
+            )}
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -375,7 +438,14 @@ export default function Suppliers() {
                         <span>{sup.supplierCode}</span>
                       </td>
                       <td className="p-3.5">
-                        <div className="font-bold text-sm text-foreground">{sup.name}</div>
+                        <div className="font-bold text-sm text-foreground flex items-center gap-2">
+                          <span>{sup.name}</span>
+                          {sup.archived && (
+                            <Badge variant="outline" className="text-[10px] bg-amber-500/10 text-amber-600 border-amber-300">
+                              مؤرشف
+                            </Badge>
+                          )}
+                        </div>
                         {sup.companyName && (
                           <div className="text-[10px] text-muted-foreground">{sup.companyName}</div>
                         )}
@@ -410,51 +480,69 @@ export default function Suppliers() {
                               setLedgerSupplier(sup);
                               setIsLedgerOpen(true);
                             }}
-                            title="عرض كشف الحساب"
+                            title="عرض كشف الحساب والقيود"
                           >
                             <FileText className="w-3.5 h-3.5" />
                             كشف حساب
                           </Button>
 
-                          {/* Payment */}
-                          {canPay && (
-                            <Button
-                              size="sm"
-                              className="h-7 px-2.5 text-xs gap-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold"
-                              onClick={() => {
-                                setPayingSupplier(sup);
-                                setIsPaymentOpen(true);
-                              }}
-                              title="سداد دفعة للمورد"
-                            >
-                              <DollarSign className="w-3.5 h-3.5" />
-                              سداد دفعة
-                            </Button>
+                          {/* Actions for Active Suppliers */}
+                          {viewMode === 'active' && (
+                            <>
+                              {/* Payment */}
+                              {canPay && (
+                                <Button
+                                  size="sm"
+                                  className="h-7 px-2.5 text-xs gap-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold"
+                                  onClick={() => {
+                                    setPayingSupplier(sup);
+                                    setIsPaymentOpen(true);
+                                  }}
+                                  title="سداد دفعة للمورد"
+                                >
+                                  <DollarSign className="w-3.5 h-3.5" />
+                                  سداد دفعة
+                                </Button>
+                              )}
+
+                              {/* Edit */}
+                              {canManage && (
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  className="h-7 w-7 p-0"
+                                  onClick={() => handleOpenEdit(sup)}
+                                  title="تعديل"
+                                >
+                                  <Edit className="w-3.5 h-3.5 text-muted-foreground" />
+                                </Button>
+                              )}
+
+                              {/* Archive */}
+                              {canManage && (
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  className="h-7 w-7 p-0 text-destructive hover:bg-destructive/10"
+                                  onClick={() => handleArchive(sup)}
+                                  title="أرشفة"
+                                >
+                                  <Archive className="w-3.5 h-3.5" />
+                                </Button>
+                              )}
+                            </>
                           )}
 
-                          {/* Edit */}
-                          {canManage && (
+                          {/* Actions for Archived Suppliers */}
+                          {viewMode === 'archived' && canManage && (
                             <Button
                               size="sm"
-                              variant="ghost"
-                              className="h-7 w-7 p-0"
-                              onClick={() => handleOpenEdit(sup)}
-                              title="تعديل"
+                              className="h-7 px-2.5 text-xs gap-1.5 bg-primary hover:bg-primary/90 text-primary-foreground font-bold"
+                              onClick={() => handleRestore(sup)}
+                              title="استرجاع المورد إلى قائمة النشطين"
                             >
-                              <Edit className="w-3.5 h-3.5 text-muted-foreground" />
-                            </Button>
-                          )}
-
-                          {/* Archive */}
-                          {canManage && (
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              className="h-7 w-7 p-0 text-destructive"
-                              onClick={() => handleArchive(sup)}
-                              title="أرشفة"
-                            >
-                              <Archive className="w-3.5 h-3.5" />
+                              <RotateCcw className="w-3.5 h-3.5" />
+                              استرجاع المورد
                             </Button>
                           )}
                         </div>

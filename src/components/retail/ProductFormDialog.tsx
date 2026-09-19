@@ -36,6 +36,7 @@ import {
   Trash2,
   AlertCircle,
   CheckCircle,
+  Camera,
 } from 'lucide-react';
 import type { Product, ProductVariant, ProductType, BookMetadata } from '@/types/retail.types';
 import { useCategories } from '@/hooks/retail/useCategories';
@@ -47,6 +48,7 @@ import { validateProductForm, validateISBN } from '@/services/products/productVa
 import { removeUndefinedFields } from '@/lib/utils';
 import { useAppStore } from '@/lib/store';
 import { toast } from 'sonner';
+import { MobileScannerModal } from '@/components/retail/pos/MobileScannerModal';
 
 interface ProductFormDialogProps {
   open: boolean;
@@ -87,14 +89,17 @@ export function ProductFormDialog({
   const [allowNegativeStock, setAllowNegativeStock] = useState(false);
 
   // Identification
+  // Barcode & Scanner
   const [sku, setSku] = useState('');
   const [barcode, setBarcode] = useState('');
+  const [cameraScannerOpen, setCameraScannerOpen] = useState(false);
+  const [scanningVariantIndex, setScanningVariantIndex] = useState<number | null>(null);
 
-  // Pricing
-  const [purchasePrice, setPurchasePrice] = useState('0');
-  const [sellingPrice, setSellingPrice] = useState('0');
-  const [wholesalePrice, setWholesalePrice] = useState('0');
-  const [minimumSellingPrice, setMinimumSellingPrice] = useState('0');
+  // Pricing (empty string by default so users can type easily without a leading 0)
+  const [purchasePrice, setPurchasePrice] = useState('');
+  const [sellingPrice, setSellingPrice] = useState('');
+  const [wholesalePrice, setWholesalePrice] = useState('');
+  const [minimumSellingPrice, setMinimumSellingPrice] = useState('');
   const [taxRate, setTaxRate] = useState(defaultTaxPercent.toString());
 
   // Inventory limits
@@ -137,10 +142,10 @@ export function ProductFormDialog({
         setAllowNegativeStock(Boolean(product.allowNegativeStock));
         setSku(product.sku || '');
         setBarcode(product.barcode || '');
-        setPurchasePrice((product.purchasePrice ?? 0).toString());
-        setSellingPrice((product.sellingPrice ?? 0).toString());
-        setWholesalePrice((product.wholesalePrice ?? product.sellingPrice ?? 0).toString());
-        setMinimumSellingPrice((product.minimumSellingPrice ?? 0).toString());
+        setPurchasePrice(product.purchasePrice ? product.purchasePrice.toString() : '');
+        setSellingPrice(product.sellingPrice ? product.sellingPrice.toString() : '');
+        setWholesalePrice(product.wholesalePrice ? product.wholesalePrice.toString() : '');
+        setMinimumSellingPrice(product.minimumSellingPrice ? product.minimumSellingPrice.toString() : '');
         const prodTax = product.taxRate !== undefined && product.taxRate !== null
           ? (product.taxRate > 1 ? product.taxRate : product.taxRate * 100)
           : defaultTaxPercent;
@@ -181,10 +186,11 @@ export function ProductFormDialog({
         setSku(generateProductSku('PRD', defaultSeq));
         setBarcode(initialBarcode || generateInternalEan13Barcode(defaultSeq));
 
-        setPurchasePrice('0');
-        setSellingPrice('0');
-        setWholesalePrice('0');
-        setMinimumSellingPrice('0');
+        // Start prices empty for fast input
+        setPurchasePrice('');
+        setSellingPrice('');
+        setWholesalePrice('');
+        setMinimumSellingPrice('');
         setTaxRate(defaultTaxPercent.toString());
         setMinimumStock('5');
         setReorderPoint('10');
@@ -480,23 +486,51 @@ export function ProductFormDialog({
                   <div>
                     <div className="flex justify-between items-center">
                       <Label className="text-xs">الباركود الدولي أو الداخلي</Label>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="h-6 px-1.5 text-[11px] text-primary gap-1"
-                        onClick={() => setBarcode(generateInternalEan13Barcode(Math.floor(10000 + Math.random() * 90000)))}
-                      >
-                        <Sparkles className="w-3 h-3" />
-                        توليد باركود EAN-13
-                      </Button>
+                      <div className="flex items-center gap-1">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-6 px-2 text-[11px] text-emerald-600 border-emerald-500/30 hover:bg-emerald-500/10 gap-1 font-medium"
+                          onClick={() => {
+                            setScanningVariantIndex(null);
+                            setCameraScannerOpen(true);
+                          }}
+                        >
+                          <Camera className="w-3 h-3" />
+                          مسح بالكاميرا
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-6 px-1.5 text-[11px] text-primary gap-1"
+                          onClick={() => setBarcode(generateInternalEan13Barcode(Math.floor(10000 + Math.random() * 90000)))}
+                        >
+                          <Sparkles className="w-3 h-3" />
+                          توليد EAN-13
+                        </Button>
+                      </div>
                     </div>
-                    <Input
-                      value={barcode}
-                      onChange={(e) => setBarcode(e.target.value)}
-                      className="mt-1 font-mono font-bold tracking-wider"
-                      placeholder="622... أو EAN-13"
-                    />
+                    <div className="relative mt-1">
+                      <Input
+                        value={barcode}
+                        onChange={(e) => setBarcode(e.target.value)}
+                        className="font-mono font-bold tracking-wider pl-9"
+                        placeholder="622... أو EAN-13"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setScanningVariantIndex(null);
+                          setCameraScannerOpen(true);
+                        }}
+                        className="absolute left-2.5 top-2.5 text-muted-foreground hover:text-emerald-600 transition-colors"
+                        title="مسح بالكاميرا"
+                      >
+                        <Camera className="w-4 h-4" />
+                      </button>
+                    </div>
                     {barcode && !barcodeCheck.isValid && (
                       <p className="text-[11px] text-destructive mt-1 flex items-center gap-1">
                         <AlertCircle className="w-3 h-3" />
@@ -537,6 +571,8 @@ export function ProductFormDialog({
                       min="0"
                       value={purchasePrice}
                       onChange={(e) => setPurchasePrice(e.target.value)}
+                      onFocus={(e) => { if (e.target.value === '0') e.target.value = ''; else e.target.select(); }}
+                      placeholder="0.00"
                       className="pl-12 font-bold text-base"
                       required
                     />
@@ -553,6 +589,8 @@ export function ProductFormDialog({
                       min="0"
                       value={sellingPrice}
                       onChange={(e) => setSellingPrice(e.target.value)}
+                      onFocus={(e) => { if (e.target.value === '0') e.target.value = ''; else e.target.select(); }}
+                      placeholder="0.00"
                       className="pl-12 font-bold text-base text-primary"
                       required
                     />
@@ -569,6 +607,8 @@ export function ProductFormDialog({
                       min="0"
                       value={wholesalePrice}
                       onChange={(e) => setWholesalePrice(e.target.value)}
+                      onFocus={(e) => { if (e.target.value === '0') e.target.value = ''; else e.target.select(); }}
+                      placeholder="0.00"
                       className="pl-12 font-bold"
                     />
                     <span className="absolute left-3 top-2.5 text-xs text-muted-foreground font-bold">ج.م</span>
@@ -584,6 +624,8 @@ export function ProductFormDialog({
                       min="0"
                       value={minimumSellingPrice}
                       onChange={(e) => setMinimumSellingPrice(e.target.value)}
+                      onFocus={(e) => { if (e.target.value === '0') e.target.value = ''; else e.target.select(); }}
+                      placeholder="0.00"
                       className="pl-12 font-bold"
                     />
                     <span className="absolute left-3 top-2.5 text-xs text-muted-foreground font-bold">ج.م</span>
@@ -605,6 +647,7 @@ export function ProductFormDialog({
                       max="100"
                       value={taxRate}
                       onChange={(e) => setTaxRate(e.target.value)}
+                      onFocus={(e) => { if (e.target.value === '0') e.target.value = ''; else e.target.select(); }}
                       className="pl-10 font-bold"
                       placeholder={defaultTaxPercent.toString()}
                     />
@@ -654,6 +697,7 @@ export function ProductFormDialog({
                     min="0"
                     value={minimumStock}
                     onChange={(e) => setMinimumStock(e.target.value)}
+                    onFocus={(e) => { if (e.target.value === '0') e.target.value = ''; else e.target.select(); }}
                     className="mt-1 font-bold"
                   />
                 </div>
@@ -665,6 +709,7 @@ export function ProductFormDialog({
                     min="0"
                     value={reorderPoint}
                     onChange={(e) => setReorderPoint(e.target.value)}
+                    onFocus={(e) => { if (e.target.value === '0') e.target.value = ''; else e.target.select(); }}
                     className="mt-1 font-bold"
                   />
                 </div>
@@ -874,11 +919,26 @@ export function ProductFormDialog({
                           </div>
 
                           <div>
-                            <Label className="text-[11px]">الباركود المستقل</Label>
+                            <div className="flex items-center justify-between">
+                              <Label className="text-[11px]">الباركود المستقل</Label>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setScanningVariantIndex(index);
+                                  setCameraScannerOpen(true);
+                                }}
+                                className="text-[10px] text-emerald-600 hover:text-emerald-700 flex items-center gap-0.5"
+                                title="مسح باركود المتغير بالكاميرا"
+                              >
+                                <Camera className="w-3 h-3" />
+                                مسح
+                              </button>
+                            </div>
                             <Input
                               value={variant.barcode || ''}
                               onChange={(e) => updateVariantField(index, 'barcode', e.target.value)}
                               className="h-8 text-xs font-mono font-bold mt-0.5"
+                              placeholder="باركود المتغير"
                             />
                           </div>
 
@@ -888,8 +948,10 @@ export function ProductFormDialog({
                               <Input
                                 type="number"
                                 step="0.25"
-                                value={variant.sellingPrice ?? pSell}
-                                onChange={(e) => updateVariantField(index, 'sellingPrice', parseFloat(e.target.value) || 0)}
+                                value={variant.sellingPrice === 0 ? '' : (variant.sellingPrice ?? '')}
+                                onChange={(e) => updateVariantField(index, 'sellingPrice', e.target.value === '' ? 0 : parseFloat(e.target.value))}
+                                onFocus={(e) => { if (e.target.value === '0') e.target.value = ''; else e.target.select(); }}
+                                placeholder={pSell > 0 ? pSell.toString() : '0.00'}
                                 className="h-8 text-xs font-bold mt-0.5"
                               />
                             </div>
@@ -923,6 +985,28 @@ export function ProductFormDialog({
         </form>
       </DialogContent>
     </Dialog>
+
+    {/* Mobile Camera Barcode Scanner */}
+    <MobileScannerModal
+      open={cameraScannerOpen}
+      onOpenChange={setCameraScannerOpen}
+      mode="input"
+      title={scanningVariantIndex !== null ? 'مسح باركود المتغير بالكاميرا' : 'مسح باركود الصنف بالكاميرا'}
+      subtitle="وجه الكاميرا نحو الباركود لقراءته وإدراجه مباشرة..."
+      onScan={async (scannedCode) => {
+        const code = scannedCode.trim();
+        if (scanningVariantIndex !== null) {
+          updateVariantField(scanningVariantIndex, 'barcode', code);
+          toast.success(`تم مسح باركود المتغير: ${code}`);
+        } else {
+          setBarcode(code);
+          toast.success(`تم مسح باركود الصنف: ${code}`);
+        }
+        setCameraScannerOpen(false);
+        return { success: true };
+      }}
+    />
+
     <CategoryManageDialog
       open={categoryModalOpen}
       onOpenChange={setCategoryModalOpen}

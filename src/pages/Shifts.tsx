@@ -1,7 +1,7 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { MainLayout } from '@/components/layout';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Clock, Plus, Edit, Trash2, Search, Eye, Printer, DollarSign, Activity, Users, Wallet, TrendingUp, AlertCircle, Timer, CheckCircle2, ChevronRight, Calendar, ArrowRight } from "lucide-react";
+import { Clock, Plus, Edit, Trash2, Search, Eye, Printer, DollarSign, Activity, Users, Wallet, TrendingUp, AlertCircle, Timer, CheckCircle2, ChevronRight, Calendar, ArrowRight, Package } from "lucide-react";
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -18,6 +18,8 @@ import { useAppStore } from '@/lib/store';
 import { db } from '@/lib/firebase';
 import { collection, query, where, getDocs, addDoc, updateDoc, deleteDoc, doc } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
+import { printShiftReport } from '@/lib/thermalPrinter';
+import { parseToDate } from '@/services/analytics/reportingTimezone';
 
 const LiveShiftTimer = ({ startTime }: { startTime: string }) => {
   const [duration, setDuration] = useState('00:00:00');
@@ -49,7 +51,7 @@ export default function Shifts() {
   const { branchId, tenantId } = useTenantBranch();
   const { employees: dbEmployees } = useHR(tenantId);
   const { toast } = useToast();
-  const { settings } = useAppStore();
+  const { settings, currentBranch } = useAppStore();
 
   const [shifts, setShifts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -323,13 +325,73 @@ export default function Shifts() {
           fetchedOrders.push({
             id: d.id,
             ...data,
+            items: data.items || data.order_items || [],
             total: data.totalAmount ?? data.total ?? data.grandTotal ?? 0,
-            status: data.status || 'completed',
+            status: data.status || data.saleStatus || 'completed',
             order_type: data.orderType || data.order_type || 'takeaway',
             created_at: data.createdAt || data.created_at || new Date().toISOString()
           });
         }
       });
+
+      // Fallback: If no orders found directly by shiftId, search sales within shift time window
+      if (fetchedOrders.length === 0) {
+        try {
+          const shiftStart = parseToDate(shift.start_time || shift.openedAt || shift.createdAt)?.getTime() || 0;
+          const shiftEnd = parseToDate(shift.end_time || shift.closedAt || shift.updatedAt)?.getTime() || Date.now();
+          
+          let salesDocs: any[] = [];
+          if (tenantId) {
+            try {
+              const snap = await getDocs(query(collection(db, 'sales'), where('tenantId', '==', tenantId)));
+              salesDocs.push(...snap.docs);
+            } catch {}
+            if (salesDocs.length === 0) {
+              try {
+                const snap = await getDocs(query(collection(db, 'sales'), where('tenant_id', '==', tenantId)));
+                salesDocs.push(...snap.docs);
+              } catch {}
+            }
+          }
+          if (salesDocs.length === 0) {
+            try {
+              const snap = await getDocs(collection(db, 'sales'));
+              salesDocs.push(...snap.docs);
+            } catch {}
+          }
+
+          const sCashierId = shift.cashierId || shift.cashier_id || shift.userId;
+          const sCashierName = shift.cashierNameSnapshot || shift.cashier_name || shift.cashierName;
+
+          salesDocs.forEach((d) => {
+            if (!seen.has(d.id)) {
+              const data = d.data() as any;
+              const dDate = parseToDate(data.createdAt || data.created_at || data.completedAt || data.timestamp || data.date);
+              if (!dDate) return;
+              const dTime = dDate.getTime();
+              
+              const matchesCashier = !sCashierId || data.cashierId === sCashierId || data.cashierNameSnapshot === sCashierName;
+              const matchesBranch = !shift.branchId && !shift.branch_id || (data.branchId === (shift.branchId || shift.branch_id));
+
+              if (dTime >= shiftStart && dTime <= shiftEnd && (matchesCashier || matchesBranch)) {
+                seen.add(d.id);
+                fetchedOrders.push({
+                  id: d.id,
+                  ...data,
+                  items: data.items || data.order_items || [],
+                  total: data.totalAmount ?? data.total ?? data.grandTotal ?? 0,
+                  status: data.status || data.saleStatus || 'completed',
+                  order_type: data.orderType || data.order_type || 'takeaway',
+                  created_at: dDate.toISOString()
+                });
+              }
+            }
+          });
+        } catch (fbErr) {
+          console.warn('Orders fallback failed:', fbErr);
+        }
+      }
+
       setShiftOrders(fetchedOrders);
 
       // 2. Fetch Expenses for this shift (shiftId or shift_id)
@@ -349,6 +411,44 @@ export default function Shifts() {
           fetchedExpenses.push({ id: d.id, ...d.data() });
         }
       });
+
+      // Fallback: If no expenses found by shiftId, search within shift time window
+      if (fetchedExpenses.length === 0) {
+        try {
+          const shiftStart = parseToDate(shift.start_time || shift.openedAt || shift.createdAt)?.getTime() || 0;
+          const shiftEnd = parseToDate(shift.end_time || shift.closedAt || shift.updatedAt)?.getTime() || Date.now();
+          
+          let expDocs: any[] = [];
+          if (tenantId) {
+            try {
+              const snap = await getDocs(query(collection(db, 'expenses'), where('tenantId', '==', tenantId)));
+              expDocs.push(...snap.docs);
+            } catch {}
+          }
+          if (expDocs.length === 0) {
+            try {
+              const snap = await getDocs(collection(db, 'expenses'));
+              expDocs.push(...snap.docs);
+            } catch {}
+          }
+
+          expDocs.forEach((d) => {
+            if (!expSeen.has(d.id)) {
+              const data = d.data() as any;
+              const eDate = parseToDate(data.date || data.createdAt || data.created_at || data.timestamp);
+              if (!eDate) return;
+              const eTime = eDate.getTime();
+              if (eTime >= shiftStart && eTime <= shiftEnd) {
+                expSeen.add(d.id);
+                fetchedExpenses.push({ id: d.id, ...data });
+              }
+            }
+          });
+        } catch (fbExpErr) {
+          console.warn('Expenses fallback failed:', fbExpErr);
+        }
+      }
+
       setShiftExpenses(fetchedExpenses);
 
     } catch (error) {
@@ -365,105 +465,54 @@ export default function Shifts() {
   const dineinCount = confirmedShiftOrders.filter(o => o.order_type === 'dine_in' || o.type === 'dine_in').length;
   const totalDeliveryFees = confirmedShiftOrders.reduce((sum, o) => sum + (Number(o.delivery_fee) || 0), 0);
 
+  // Aggregated sold items breakdown (الأصناف والكميات المباعة بالوردية)
+  const shiftSoldItems = useMemo(() => {
+    const map = new Map<string, { name: string; quantity: number; total: number }>();
+    confirmedShiftOrders.forEach((o) => {
+      const itemsList = o.items || o.order_items || [];
+      itemsList.forEach((it: any) => {
+        const name = it.productNameSnapshot || it.productName || it.name || 'صنف مسجل';
+        const qty = Number(it.quantity || it.qty || 1);
+        const price = Number(it.unitPrice || it.unitSellingPrice || it.price || 0);
+        const lineTotal = Number(it.lineTotal || it.total || (qty * price));
+        
+        const existing = map.get(name) || { name, quantity: 0, total: 0 };
+        existing.quantity += qty;
+        existing.total += lineTotal;
+        map.set(name, existing);
+      });
+    });
+    return Array.from(map.values()).sort((a, b) => b.quantity - a.quantity);
+  }, [confirmedShiftOrders]);
+
+  const totalUniqueItemsCount = shiftSoldItems.length;
+  const totalUnitsSoldCount = shiftSoldItems.reduce((acc, item) => acc + item.quantity, 0);
+
+  // Employee role lookup
+  const employeeRole = useMemo(() => {
+    if (!viewingShift) return 'كاشير';
+    const cId = viewingShift.cashier_id || viewingShift.cashierId || viewingShift.userId;
+    const cName = viewingShift.cashier_name || viewingShift.cashierName;
+    const emp = dbEmployees?.find((e: any) => (cId && e.id === cId) || (cName && e.name === cName));
+    return emp?.role || viewingShift.cashier_role || viewingShift.role || 'كاشير';
+  }, [viewingShift, dbEmployees]);
+
   // Print Thermal Z-Report
   const handlePrintReport = () => {
     if (!viewingShift) return;
-
-    const w = window.open('', '_blank', 'width=350,height=600');
-    if (!w) {
-      toast({ title: 'خطأ', description: 'تعذر فتح نافذة الطباعة', variant: 'destructive' });
-      return;
-    }
-
-    const employeeName = viewingShift.cashier_name || 'موظف غير محدد';
-    const shiftTotalSales = viewingShift.total_sales != null ? viewingShift.total_sales : ((viewingShift.cash_sales||0) + (viewingShift.card_sales||0) + (viewingShift.wallet_sales||0));
-    const shiftCash = viewingShift.cash_sales || 0;
-    const shiftCard = viewingShift.card_sales || 0;
-    const shiftWallet = viewingShift.wallet_sales || 0;
-    const shiftTotalExpenses = viewingShift.shift_expenses || 0;
-    const expectedCash = viewingShift.expected_cash || 0;
-    const actualCash = viewingShift.actual_cash || 0;
-    const discrepancy = viewingShift.discrepancy || 0;
-    const shortageReason = viewingShift.shortage_reason || '';
-
-    const expensesHTML = shiftExpenses.length > 0
-      ? shiftExpenses.map(e => `<div class="row"><span>${e.description || 'مصروف'}</span><span>${formatCurrency(Number(e.amount))}</span></div>`).join('')
-      : `<div class="row text-center"><span style="color:#666; font-size: 11px;">لا توجد مصروفات</span></div>`;
-
-    w.document.write(`
-      <html dir="rtl">
-        <head>
-          <meta charset="utf-8">
-          <style>
-            @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;700;900&display=swap');
-            * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Cairo', sans-serif; }
-            @page { margin: 0; }
-              body { width: 100%; max-width: 80mm; padding: 2mm; font-size: 12px; color: #000; background: #fff; margin: 0 auto; -webkit-print-color-adjust: exact; }
-            .center { text-align: center; }
-            .logo { max-width: 50mm; max-height: 25mm; object-fit: contain; margin-bottom: 8px; }
-            h1 { font-size: 18px; margin-bottom: 4px; font-weight: 900; }
-            h2 { font-size: 15px; margin-top: 10px; margin-bottom: 5px; font-weight: bold; background: #eee; padding: 2px 5px; border-radius: 4px; border: 1px solid #ccc; text-align: center; }
-            .row { display: flex; justify-content: space-between; padding: 3px 0; border-bottom: 1px dashed #ddd; font-weight: 600;}
-            .row:last-child { border-bottom: none; }
-            .row-bold { display: flex; justify-content: space-between; padding: 5px 0; font-weight: 900; font-size: 14px; border-bottom: 1px solid #000; margin-top: 2px; }
-            .line { border-top: 1px dashed #000; margin: 8px 0; }
-          </style>
-        </head>
-        <body>
-          <div class="center">
-            ${settings?.invoiceLogo ? `<img src="${settings.invoiceLogo}" class="logo" />` : ''}
-            <h1>${settings?.invoiceCompanyName || 'MK'}</h1>
-            <h1 style="border: 2px solid #000; padding: 4px; border-radius: 8px; margin: 8px 0; background: #f9f9f9; font-size: 16px;">تقرير تفصيلي لشيفت المبيعات</h1>
-          </div>
-          
-          <div class="row"><span>وقت الفتح:</span> <span>${viewingShift.start_time ? new Date(viewingShift.start_time).toLocaleString('ar-EG') : '-'}</span></div>
-          <div class="row"><span>وقت الإغلاق:</span> <span>${viewingShift.end_time ? new Date(viewingShift.end_time).toLocaleString('ar-EG') : 'مستمرة'}</span></div>
-          <div class="row"><span>الموظف:</span> <span>${employeeName}</span></div>
-          <div class="row-bold"><span>إجمالي الطلبات المُنفذة:</span> <span>${confirmedShiftOrders.length} طلب</span></div>
-
-          <h2>تفاصيل المبيعات (الدخل)</h2>
-          <div class="row"><span>إجمالي قيمة المبيعات:</span> <span>${formatCurrency(shiftTotalSales)}</span></div>
-          <div class="row"><span>مدفوعات الكاش:</span> <span>${formatCurrency(shiftCash)}</span></div>
-          <div class="row"><span>مدفوعات الشبكة (بطاقة):</span> <span>${formatCurrency(shiftCard)}</span></div>
-          <div class="row"><span>مدفوعات المحفظة:</span> <span>${formatCurrency(shiftWallet)}</span></div>
-
-          <h2>أنواع الطلبات المبيعة</h2>
-          <div class="row"><span>توصيل (دليفري):</span> <span>${deliveryCount}</span></div>
-          <div class="row"><span>استلام (تيك أواي):</span> <span>${takeawayCount}</span></div>
-          <div class="row"><span>محلي (صالة):</span> <span>${dineinCount}</span></div>
-          
-          <h2>المصروفات والسحوبات</h2>
-          ${expensesHTML}
-          <div class="row-bold"><span>إجمالي المصروفات المسحوبة:</span> <span>${formatCurrency(shiftTotalExpenses)}</span></div>
-
-          <h2>تسوية الدرج والعهد</h2>
-          <div class="row"><span>رصيد الدرج الافتتاحي:</span> <span>${formatCurrency(viewingShift.starting_cash || 0)}</span></div>
-          ${totalDeliveryFees > 0 ? `<div class="row"><span>رسوم التوصيل المحصلة:</span> <span>${formatCurrency(totalDeliveryFees)}</span></div>` : ''}
-          <div class="row-bold"><span>النقد المتوقع بالدرج:</span> <span>${formatCurrency(expectedCash)}</span></div>
-          <div class="row" style="margin-top: 5px;"><span>المبلغ الفعلي المُدخل:</span> <span style="font-size: 16px; border: 1px solid #000; padding: 0 4px; border-radius: 4px; font-weight: 900;">${formatCurrency(actualCash)}</span></div>
-          <div class="row-bold"><span style="color: ${discrepancy < 0 ? '#ff0000' : 'inherit'};">العجز / الزيادة:</span> <span style="color: ${discrepancy < 0 ? '#ff0000' : 'inherit'};">${discrepancy > 0 ? '+' : ''}${formatCurrency(discrepancy)}</span></div>
-          ${discrepancy < 0 && shortageReason ? `<div class="row" style="color: #ff0000; border:1px solid #ff0000; padding:4px; margin-top:4px; border-radius:4px; flex-direction: column;">
-            <span style="font-size: 10px;">سُجل عجز بالدرج بسبب:</span> 
-            <span style="font-weight: normal; margin-top: 2px;">${shortageReason}</span>
-          </div>` : ''}
-
-          <div class="line"></div>
-          <div class="center" style="margin-top: 25px; margin-bottom: 20px;">
-            <p style="font-weight: 900; margin-bottom: 30px; font-size: 14px;">توقيع الكاشير المتسلم / المدير المراجع</p>
-            <p style="border-bottom: 1px solid #000; width: 70%; margin: 0 auto;"></p>
-          </div>
-          <div class="center">
-            <p style="margin-top: 10px; font-size: 10px; color: #555;">تم طباعة التقرير بواسطة النظام</p>
-          </div>
-        </body>
-      </html>
-    `);
-    w.document.close();
-
-    setTimeout(() => {
-      w.print();
-      w.close();
-    }, 500);
+    printShiftReport(
+      {
+        ...viewingShift,
+        employee_role: employeeRole,
+        total_unique_items: totalUniqueItemsCount,
+        total_units_sold: totalUnitsSoldCount,
+        sold_items: shiftSoldItems,
+      },
+      confirmedShiftOrders,
+      shiftExpenses,
+      settings,
+      currentBranch?.name || 'مكتبة ألوان التجارية'
+    );
   };
 
   return (
@@ -1058,7 +1107,13 @@ export default function Shifts() {
            <div className="flex flex-col gap-4 sm:gap-6" dir="rtl">
               <div className="text-center">
                 <h1 className="text-xl font-black mb-1">{settings?.invoiceCompanyName || 'MK'}</h1>
-                <p className="text-sm text-muted-foreground">الكاشير: <span className="font-bold text-foreground">{viewingShift?.cashier_name || 'غير محدد'}</span></p>
+                <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground flex-wrap mt-1">
+                  <span>الموظف: <span className="font-bold text-foreground">{viewingShift?.cashier_name || 'غير محدد'}</span></span>
+                  <span>•</span>
+                  <Badge variant="outline" className="bg-primary/10 text-primary border-primary/20 text-xs px-2.5 py-0.5 font-bold">
+                    الدور: {employeeRole}
+                  </Badge>
+                </div>
               </div>
               
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 sm:gap-4">
@@ -1121,6 +1176,49 @@ export default function Shifts() {
                        <span className="bg-slate-50 dark:bg-slate-900/50 text-center text-xs py-2 rounded-lg border">
                           صالة: <b>{dineinCount}</b>
                        </span>
+                    </div>
+                  </div>
+
+                  {/* Detailed Items Sold Breakdown */}
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <h3 className="font-bold text-sm flex items-center gap-2">
+                        <Package className="w-4 h-4 text-primary" /> الأصناف والكميات المباعة ({totalUnitsSoldCount} قطعة)
+                      </h3>
+                      <span className="text-xs bg-primary/10 text-primary font-bold px-2 py-0.5 rounded-full">
+                        {totalUniqueItemsCount} صنف مختلف
+                      </span>
+                    </div>
+
+                    <div className="bg-slate-50 dark:bg-slate-900/50 rounded-xl border border-border/80 overflow-hidden">
+                      {shiftSoldItems.length > 0 ? (
+                        <div className="max-h-52 overflow-y-auto divide-y divide-border/50 text-xs custom-scrollbar">
+                          <div className="bg-muted/70 px-3 py-1.5 flex justify-between text-[11px] font-bold text-muted-foreground sticky top-0 backdrop-blur-sm z-10">
+                            <span>اسم الصنف</span>
+                            <div className="flex gap-4 items-center">
+                              <span className="w-14 text-center">الكمية</span>
+                              <span className="w-20 text-left">الإجمالي</span>
+                            </div>
+                          </div>
+                          {shiftSoldItems.map((it, idx) => (
+                            <div key={idx} className="px-3 py-1.5 flex justify-between items-center hover:bg-muted/30 transition-colors">
+                              <span className="font-medium truncate max-w-[200px]" title={it.name}>{it.name}</span>
+                              <div className="flex items-center gap-4 shrink-0">
+                                <Badge variant="secondary" className="w-14 justify-center text-xs font-mono font-bold">
+                                  {it.quantity} قطعة
+                                </Badge>
+                                <span className="w-20 text-left font-bold text-foreground font-mono">
+                                  {formatCurrency(it.total)}
+                                </span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="text-center py-4 text-muted-foreground text-xs">
+                          لا توجد أصناف مسجلة في فواتير هذه الوردية
+                        </div>
+                      )}
                     </div>
                   </div>
 

@@ -74,7 +74,7 @@ export async function fetchPublicAttendanceInfo(token: string): Promise<PublicAt
 
   let tenantId: string | null = null;
   let branchId: string | null = null;
-  let branchName = 'المطعم';
+  let branchName = 'المكتبة';
   let hrSettings: any = {};
 
   // 1. Check hr_settings collection by attendance_token field
@@ -130,7 +130,7 @@ export async function fetchPublicAttendanceInfo(token: string): Promise<PublicAt
       );
       if (!tSnap.empty) {
         tenantId = tSnap.docs[0].id;
-        branchName = tSnap.docs[0].data().name || 'المطعم';
+        branchName = tSnap.docs[0].data().name || 'المكتبة';
         hrSettings = tSnap.docs[0].data().hr_settings || {};
       }
     } catch (err: any) {
@@ -150,8 +150,8 @@ export async function fetchPublicAttendanceInfo(token: string): Promise<PublicAt
     }
   } catch (_) {}
 
-  // Fetch branch/restaurant display name if still default
-  if (branchName === 'المطعم' && tenantId) {
+  // Fetch branch/library display name if still default
+  if ((branchName === 'المكتبة' || !branchName) && tenantId) {
     try {
       const tDoc = await getDoc(doc(db, 'tenants', tenantId));
       if (tDoc.exists() && tDoc.data().name) {
@@ -273,7 +273,7 @@ export async function submitPublicClock(payload: {
       );
       if (distance > allowedRadius) {
         throw new Error(
-          `يجب أن تكون داخل نطاق المطعم لتسجيل الحضور. المسافة الحالية (${distance}م) تتجاوز النطاق المسموح (${allowedRadius}م)`
+          `يجب أن تكون داخل نطاق المكتبة لتسجيل الحضور. المسافة الحالية (${distance}م) تتجاوز النطاق المسموح (${allowedRadius}م)`
         );
       }
     }

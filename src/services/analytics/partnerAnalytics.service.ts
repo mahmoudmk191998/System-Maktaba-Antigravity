@@ -83,13 +83,39 @@ export async function generatePartnerAnalytics(
   dateRange: DateRange,
   branchId?: string
 ): Promise<PartnerAnalyticsReport> {
-  // Safe query helper to prevent permission-denied or schema mismatches from failing the entire report
+  // Safe query helper with strict tenant filtering to prevent cross-tenant and ghost records
   const safeGetDocs = async (collName: string) => {
     try {
-      return await getDocs(query(collection(db, collName), where('tenantId', '==', tenantId)));
+      if (tenantId) {
+        const snap1 = await getDocs(query(collection(db, collName), where('tenantId', '==', tenantId)));
+        if (!snap1.empty) return snap1;
+        const snap2 = await getDocs(query(collection(db, collName), where('tenant_id', '==', tenantId)));
+        if (!snap2.empty) return snap2;
+      }
+      if (tenantId && tenantId !== 'default') {
+        const snap1 = await getDocs(query(collection(db, collName), where('tenantId', '==', 'default')));
+        if (!snap1.empty) return snap1;
+        const snap2 = await getDocs(query(collection(db, collName), where('tenant_id', '==', 'default')));
+        if (!snap2.empty) return snap2;
+      }
+      // If tenantId is default or fallback needed, filter strictly in-memory
+      const fullSnap = await getDocs(collection(db, collName));
+      const matchingDocs = fullSnap.docs.filter((doc) => {
+        const d = doc.data();
+        const docTenant = d.tenantId || d.tenant_id;
+        if (!tenantId || tenantId === 'default') {
+          return !docTenant || docTenant === 'default';
+        }
+        return !docTenant || docTenant === tenantId || docTenant === 'default';
+      });
+      return {
+        empty: matchingDocs.length === 0,
+        docs: matchingDocs,
+        forEach: (fn: (d: any) => void) => matchingDocs.forEach(fn),
+      };
     } catch (e) {
       console.warn(`Safe fetch failed for collection "${collName}":`, e);
-      return { forEach: () => {}, docs: [] };
+      return { empty: true, docs: [], forEach: () => {} };
     }
   };
 
@@ -112,10 +138,21 @@ export async function generatePartnerAnalytics(
     }
   }
 
-  // Map suppliers (Audit 6: including archived)
+  // Map suppliers strictly belonging to the active tenant and exclude ghost / inactive suppliers
   const suppliersMap = new Map<string, Supplier>();
   supSnap.forEach((doc) => {
-    suppliersMap.set(doc.id, { id: doc.id, ...doc.data() } as Supplier);
+    const d = doc.data() as any;
+    const docTenant = d.tenantId || d.tenant_id;
+    if (tenantId && tenantId !== 'default' && docTenant && docTenant !== tenantId) {
+      return; // Never leak suppliers from other tenants
+    }
+    if (d.archived === true || d.active === false || d.isDeleted === true) {
+      return; // Skip archived or soft-deleted suppliers
+    }
+    if (!d.name && !d.supplierName && !d.companyName) {
+      return; // Skip dummy or ghost documents without name
+    }
+    suppliersMap.set(doc.id, { id: doc.id, ...d } as Supplier);
   });
 
   // Process Supplier POs and Lead Times
@@ -254,7 +291,7 @@ export async function generatePartnerAnalytics(
     suppliers.push({
       supplierId: sid,
       supplierCode: sup.supplierCode || sid,
-      name: sup.name,
+      name: sup.name || (sup as any).supplierName || (sup as any).nameAr || (sup as any).companyName || 'مورد مسجل',
       supplierType: sup.supplierType || 'wholesaler',
       totalOrders: stat.totalOrders,
       totalPurchasesAmount: Number(stat.totalPurchasesAmount.toFixed(2)),
@@ -398,11 +435,19 @@ export async function generatePartnerAnalytics(
 
     const aov = p.frequency > 0 ? Number((p.monetary / p.frequency).toFixed(2)) : 0;
 
+    const cName =
+      p.cust.name ||
+      (p.cust as any).full_name ||
+      (p.cust as any).nameAr ||
+      (p.cust as any).customerName ||
+      'عميل مسجل';
+    const cPhone = p.cust.phone || (p.cust as any).mobile || (p.cust as any).phoneNumber || '-';
+
     return {
       customerId: p.cust.id,
       customerCode: p.cust.customerCode || p.cust.id,
-      name: p.cust.name,
-      phone: p.cust.phone,
+      name: cName,
+      phone: cPhone,
       customerType: p.cust.customerType || 'retail',
       firstOrderDate: p.firstOrder,
       lastOrderDate: p.lastOrder,

@@ -30,6 +30,7 @@ import {
   ArrowDownLeft,
   Filter,
   RefreshCw,
+  Trash2,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -90,6 +91,7 @@ export default function Inventory() {
     refresh: refreshDamage,
     recordDamage,
     recordRecovery,
+    deleteDamage,
   } = useDamageLoss(selectedLocationId);
 
   // Active Tab & Filters
@@ -853,13 +855,13 @@ export default function Inventory() {
               <table className="w-full text-xs text-right">
                 <thead className="bg-muted/60 text-muted-foreground">
                   <tr>
-                    <th className="p-3">الصنف المتضرر</th>
+                    <th className="p-3">اسم الصنف المتضرر</th>
                     <th className="p-3 text-center">النوع</th>
                     <th className="p-3 text-center">الكمية</th>
                     <th className="p-3 text-center">تكلفة التلف</th>
                     <th className="p-3">السبب والواقعة</th>
                     <th className="p-3">التاريخ</th>
-                    <th className="p-3 text-center">إجراء استرداد</th>
+                    <th className="p-3 text-center">الإجراءات</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y">
@@ -876,68 +878,94 @@ export default function Inventory() {
                       </td>
                     </tr>
                   ) : (
-                    damageRecords.map((d) => (
-                      <tr key={d.id} className="hover:bg-muted/20">
-                        <td className="p-3 font-semibold text-foreground">
-                          {d.notes?.split(']')[0]?.replace('[', '') || d.productId}
-                        </td>
-                        <td className="p-3 text-center">
-                          <Badge variant="outline" className="text-rose-600 border-rose-300">
-                            {d.type === 'damaged'
-                              ? 'تالف'
-                              : d.type === 'lost'
-                              ? 'مفقود'
-                              : d.type === 'broken'
-                              ? 'مكسور'
-                              : 'منتهي الصلاحية'}
-                          </Badge>
-                        </td>
-                        <td className="p-3 text-center font-bold text-rose-600">{d.quantity}</td>
-                        <td className="p-3 text-center font-mono font-bold">
-                          {d.totalCostValue.toLocaleString()} ج.م
-                        </td>
-                        <td className="p-3 text-muted-foreground max-w-xs truncate" title={d.reason}>
-                          {d.reason}
-                        </td>
-                        <td className="p-3 text-muted-foreground font-mono">
-                          {new Date(d.createdAt).toLocaleDateString('ar-EG')}
-                        </td>
-                        <td className="p-3 text-center">
-                          {d.type === 'lost' && (
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              className="h-7 text-xs font-bold text-emerald-600 hover:text-emerald-700"
-                              onClick={async () => {
-                                const qtyStr = window.prompt(`أدخل الكمية التي تم استردادها (الحد الأقصى: ${d.quantity}):`, String(d.quantity));
-                                if (!qtyStr) return;
-                                const qty = parseFloat(qtyStr);
-                                if (isNaN(qty) || qty <= 0 || qty > d.quantity) {
-                                  toast.error('كمية غير صالحة');
-                                  return;
-                                }
-                                const res = await recordRecovery(
-                                  d.branchId,
-                                  d.productId,
-                                  d.variantId,
-                                  qty,
-                                  d.unitCost,
-                                  d.id,
-                                  'تم العثور على البضاعة المفقودة'
-                                );
-                                if (res.success) {
-                                  toast.success('تم استرداد البضاعة وإعادتها للمخزون');
-                                } else {
-                                  toast.error(res.error);
-                                }
-                              }}
-                            >
-                              استرداد بعد الفقد
-                            </Button>
-                          )}
-                        </td>
-                      </tr>
-                    ))
+                    damageRecords.map((d) => {
+                      const prod = products.find((p) => p.id === d.productId);
+                      const displayName = d.productNameSnapshot || prod?.name || (d.notes?.startsWith('[') ? d.notes.slice(1, d.notes.indexOf(']')) : '') || d.productId;
+
+                      return (
+                        <tr key={d.id} className="hover:bg-muted/20">
+                          <td className="p-3 font-semibold text-foreground">
+                            {displayName}
+                          </td>
+                          <td className="p-3 text-center">
+                            <Badge variant="outline" className="text-rose-600 border-rose-300">
+                              {d.type === 'damaged'
+                                ? 'تالف'
+                                : d.type === 'lost'
+                                ? 'مفقود'
+                                : d.type === 'broken'
+                                ? 'مكسور'
+                                : 'منتهي الصلاحية'}
+                            </Badge>
+                          </td>
+                          <td className="p-3 text-center font-bold text-rose-600">{d.quantity}</td>
+                          <td className="p-3 text-center font-mono font-bold">
+                            {d.totalCostValue.toLocaleString()} ج.م
+                          </td>
+                          <td className="p-3 text-muted-foreground max-w-xs truncate" title={d.reason}>
+                            {d.reason}
+                          </td>
+                          <td className="p-3 text-muted-foreground font-mono">
+                            {new Date(d.createdAt).toLocaleDateString('ar-EG')}
+                          </td>
+                          <td className="p-3 text-center">
+                            <div className="flex items-center justify-center gap-1">
+                              {d.type === 'lost' && (
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  className="h-7 text-xs font-bold text-emerald-600 hover:text-emerald-700"
+                                  onClick={async () => {
+                                    const qtyStr = window.prompt(`أدخل الكمية التي تم استردادها (الحد الأقصى: ${d.quantity}):`, String(d.quantity));
+                                    if (!qtyStr) return;
+                                    const qty = parseFloat(qtyStr);
+                                    if (isNaN(qty) || qty <= 0 || qty > d.quantity) {
+                                      toast.error('كمية غير صالحة');
+                                      return;
+                                    }
+                                    const res = await recordRecovery(
+                                      d.branchId,
+                                      d.productId,
+                                      d.variantId,
+                                      qty,
+                                      d.unitCost,
+                                      d.id,
+                                      'تم العثور على البضاعة المفقودة'
+                                    );
+                                    if (res.success) {
+                                      toast.success('تم استرداد البضاعة وإعادتها للمخزون');
+                                      await refresh();
+                                    } else {
+                                      toast.error(res.error);
+                                    }
+                                  }}
+                                >
+                                  استرداد بعد الفقد
+                                </Button>
+                              )}
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                                title="حذف السجل وإرجاع الكمية إلى المخزون"
+                                onClick={async () => {
+                                  if (!confirm(`هل تريد بالتأكيد حذف هذا السجل وإعادة كمية (${d.quantity}) من صنف "${displayName}" إلى رصيد المخزون؟`)) return;
+                                  const res = await deleteDamage(d.id, d.productId, d.variantId, d.quantity, d.unitCost);
+                                  if (res.success) {
+                                    toast.success('تم حذف السجل وإعادة الكمية إلى رصيد المخزون بنجاح');
+                                    await refresh();
+                                  } else {
+                                    toast.error(res.error || 'فشل حذف السجل');
+                                  }
+                                }}
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </Button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })
                   )}
                 </tbody>
               </table>
@@ -951,7 +979,13 @@ export default function Inventory() {
           onOpenChange={setIsAdjustmentOpen}
           balanceItem={adjustmentTarget}
           productName={products.find((p) => p.id === adjustmentTarget?.productId)?.name}
-          onAdjust={adjustStock}
+          onAdjust={async (...args) => {
+            const res = await adjustStock(...args);
+            if (res.success) {
+              await Promise.all([refreshMovements(), refreshDamage()]);
+            }
+            return res;
+          }}
         />
 
         <OpeningBalanceDialog

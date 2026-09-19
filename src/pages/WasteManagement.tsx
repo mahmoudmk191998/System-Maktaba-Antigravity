@@ -11,6 +11,8 @@ import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { useTenantBranch, useInventoryItems, useStockMovements } from '@/hooks/useDatabase';
+import { useProducts } from '@/hooks/retail/useProducts';
+import { useDamageLoss } from '@/hooks/retail/useDamageLoss';
 import { useUserPermissions } from '@/hooks/usePermissions';
 import { useToast } from '@/hooks/use-toast';
 import { isToday, isYesterday, isThisWeek, isThisMonth, parseISO } from 'date-fns';
@@ -19,7 +21,9 @@ export default function WasteManagement() {
   const { tenantId, branchId } = useTenantBranch();
   const { hasPermission, isAdmin } = useUserPermissions();
   const { items: inventoryItems } = useInventoryItems(tenantId);
-  const { movements, addMovement, updateMovement, deleteMovement, loading } = useStockMovements(branchId);
+  const { products } = useProducts({ pageSize: 500 });
+  const { movements, addMovement, updateMovement, deleteMovement, loading, refresh: refreshMovements } = useStockMovements(branchId);
+  const { records: damageRecords, recordDamage, refresh: refreshDamage, deleteDamage } = useDamageLoss(branchId || 'main');
   const { toast } = useToast();
 
   const canEdit = isAdmin || hasPermission('inventory.edit');
@@ -39,31 +43,115 @@ export default function WasteManagement() {
   const [reason, setReason] = useState('spoilage');
   const [notes, setNotes] = useState('');
 
+  // Combined records from StockMovements (waste/damage/loss) and DamageLossRecords
+  const combinedRecords = useMemo(() => {
+    const list: any[] = [];
+    const seenIds = new Set<string>();
+
+    // 1. Damage records from damage_loss_records
+    (damageRecords || []).forEach((d) => {
+      seenIds.add(d.id);
+      list.push({
+        id: d.id,
+        item_id: d.productId,
+        productId: d.productId,
+        variantId: d.variantId,
+        productNameSnapshot: d.productNameSnapshot,
+        quantity: -Math.abs(d.quantity),
+        reason: d.reason || (d.type === 'lost' ? 'mistake' : 'spoilage'),
+        rawReason: d.reason || '',
+        created_at: d.createdAt,
+        notes: d.notes || '',
+        unitCost: d.unitCost || 0,
+        isDamageRecord: true,
+      });
+    });
+
+    // 2. Stock movements of type waste, damage, or loss
+    (movements || []).forEach((m: any) => {
+      const type = m.movement_type || m.movementType;
+      if (type === 'waste' || type === 'damage' || type === 'loss') {
+        if (!seenIds.has(m.id)) {
+          seenIds.add(m.id);
+          // Extract product name snapshot from notes if present (e.g. "[Product Name] reason")
+          let extractedName = '';
+          const notesStr = m.notes || '';
+          if (notesStr.startsWith('[')) {
+            const closingBracket = notesStr.indexOf(']');
+            if (closingBracket > 1) {
+              extractedName = notesStr.slice(1, closingBracket);
+            }
+          }
+
+          list.push({
+            id: m.id,
+            item_id: m.item_id || m.productId,
+            productId: m.productId || m.item_id,
+            variantId: m.variantId || m.variant_id,
+            productNameSnapshot: extractedName || undefined,
+            quantity: -Math.abs(Number(m.quantity || 0)),
+            reason: m.reason === 'lost' ? 'mistake' : (m.reason || 'spoilage'),
+            rawReason: m.reason || '',
+            created_at: m.created_at || m.createdAt,
+            notes: m.notes || '',
+            unitCost: m.unit_cost || m.unitCost || 0,
+            _original: m,
+          });
+        }
+      }
+    });
+
+    return list;
+  }, [damageRecords, movements]);
+
+  const getItemInfo = (id: string, snapshotName?: string) => {
+    if (snapshotName && snapshotName.trim().length > 0) {
+      const inv = inventoryItems.find((i: any) => i.id === id);
+      const prod = products.find((p) => p.id === id);
+      const cost = prod?.averageCost || prod?.purchasePrice || Number(inv?.cost_per_unit) || 0;
+      const unit = inv?.unit || 'قطعة';
+      return { name: snapshotName, cost, unit };
+    }
+    const inv = inventoryItems.find((i: any) => i.id === id);
+    if (inv) return { name: inv.name, cost: Number(inv.cost_per_unit) || 0, unit: inv.unit || 'قطعة' };
+    const prod = products.find((p) => p.id === id);
+    if (prod) return { name: prod.name, cost: prod.averageCost || prod.purchasePrice || 0, unit: 'قطعة' };
+    return { name: id, cost: 0, unit: 'قطعة' };
+  };
+
+  const getItemName = (id: string, snapshotName?: string) => getItemInfo(id, snapshotName).name;
+
   const filteredRecords = useMemo(() => {
-    return movements
-      .filter(m => m.movement_type === 'waste')
-      .filter(r => {
-        if (reasonFilter !== 'all' && r.reason !== reasonFilter) return false;
-        
-        if (dateFilter !== 'all') {
-          const date = parseISO(r.created_at);
-          if (dateFilter === 'today' && !isToday(date)) return false;
-          if (dateFilter === 'yesterday' && !isYesterday(date)) return false;
-          if (dateFilter === 'week' && !isThisWeek(date)) return false;
-          if (dateFilter === 'month' && !isThisMonth(date)) return false;
+    return combinedRecords
+      .filter((r) => {
+        if (reasonFilter !== 'all') {
+          if (reasonFilter === 'spoilage' && r.reason !== 'spoilage' && !r.rawReason.includes('تالف') && !r.rawReason.includes('عيب')) return false;
+          if (reasonFilter === 'mistake' && r.reason !== 'mistake' && !r.rawReason.includes('مفقود') && !r.rawReason.includes('فقد')) return false;
+          if (reasonFilter === 'other' && (r.reason === 'spoilage' || r.reason === 'mistake')) return false;
+        }
+
+        if (dateFilter !== 'all' && r.created_at) {
+          try {
+            const date = parseISO(r.created_at);
+            if (dateFilter === 'today' && !isToday(date)) return false;
+            if (dateFilter === 'yesterday' && !isYesterday(date)) return false;
+            if (dateFilter === 'week' && !isThisWeek(date)) return false;
+            if (dateFilter === 'month' && !isThisMonth(date)) return false;
+          } catch {}
         }
 
         if (searchQuery) {
           const s = searchQuery.toLowerCase();
-          const itemName = inventoryItems.find((i: any) => i.id === r.item_id)?.name?.toLowerCase() || '';
+          const itemName = getItemName(r.item_id, r.productNameSnapshot).toLowerCase();
           const recordNotes = (r.notes || '').toLowerCase();
-          return itemName.includes(s) || recordNotes.includes(s);
+          const recordReason = (r.rawReason || '').toLowerCase();
+          return itemName.includes(s) || recordNotes.includes(s) || recordReason.includes(s);
         }
 
         return true;
       })
-      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()); // Sort newest first
-  }, [movements, reasonFilter, dateFilter, searchQuery, inventoryItems]);
+      .sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime());
+  }, [combinedRecords, reasonFilter, dateFilter, searchQuery, inventoryItems, products]);
 
   const stats = useMemo(() => {
     let totalScore = 0;
@@ -71,8 +159,8 @@ export default function WasteManagement() {
     const itemsMap: Record<string, { qty: number; cost: number; name: string }> = {};
 
     filteredRecords.forEach((record) => {
-      const item = inventoryItems.find((i: any) => i.id === record.item_id);
-      const costPerUnit = item ? (Number(item.cost_per_unit) || 0) : 0;
+      const info = getItemInfo(record.item_id, record.productNameSnapshot);
+      const costPerUnit = record.unitCost > 0 ? record.unitCost : info.cost;
       const qty = Math.abs(Number(record.quantity));
       const lineCost = qty * costPerUnit;
 
@@ -80,7 +168,7 @@ export default function WasteManagement() {
       totalQty += qty;
 
       if (!itemsMap[record.item_id]) {
-        itemsMap[record.item_id] = { qty: 0, cost: 0, name: item?.name || 'غير معروف' };
+        itemsMap[record.item_id] = { qty: 0, cost: 0, name: info.name };
       }
       itemsMap[record.item_id].qty += qty;
       itemsMap[record.item_id].cost += lineCost;
@@ -88,7 +176,7 @@ export default function WasteManagement() {
 
     let topWastedItem = null;
     let maxCost = -1;
-    Object.values(itemsMap).forEach(v => {
+    Object.values(itemsMap).forEach((v) => {
       if (v.cost > maxCost) {
         maxCost = v.cost;
         topWastedItem = v;
@@ -98,9 +186,9 @@ export default function WasteManagement() {
     return {
       totalCost: totalScore,
       totalQty,
-      topItem: topWastedItem
+      topItem: topWastedItem,
     };
-  }, [filteredRecords, inventoryItems]);
+  }, [filteredRecords, inventoryItems, products]);
 
   const formatCurrency = (val: number) => new Intl.NumberFormat('ar-EG', { style: 'currency', currency: 'EGP' }).format(val);
 
@@ -108,24 +196,54 @@ export default function WasteManagement() {
     e.preventDefault();
     if (!itemId || !quantity) return;
     setIsSubmitting(true);
-    
-    const qty = Math.abs(Number(quantity)); // Ensure it's positive before negating
-    const success = await addMovement({
-      item_id: itemId,
-      movement_type: 'waste',
-      quantity: -qty, // Negative quantity perfectly reduces inventory generic logic
-      reason,
-      notes,
-    });
 
-    if (success) {
-      toast({ title: 'تمت الإضافة', description: 'تم تسجيل الهالك بنجاح' });
-      setIsAddOpen(false);
-      setItemId(''); setQuantity(''); setNotes('');
-    } else {
-      toast({ title: 'خطأ', description: 'حدث خطأ أثناء التسجيل', variant: 'destructive' });
+    const qty = Math.abs(Number(quantity));
+    if (isNaN(qty) || qty <= 0) {
+      toast({ title: 'خطأ', description: 'يرجى إدخال كمية صحيحة أكبر من صفر', variant: 'destructive' });
+      setIsSubmitting(false);
+      return;
     }
-    setIsSubmitting(false);
+
+    try {
+      const isProduct = products.some((p) => p.id === itemId);
+      let success = false;
+
+      if (isProduct) {
+        const prod = products.find((p) => p.id === itemId);
+        const cost = prod?.averageCost || prod?.purchasePrice || 0;
+        const res = await recordDamage({
+          locationId: branchId || 'main',
+          productId: itemId,
+          quantity: qty,
+          unitCost: cost,
+          type: reason === 'mistake' ? 'lost' : 'damaged',
+          reason: reason === 'spoilage' ? 'تلف / انتهاء صلاحية' : reason === 'mistake' ? 'فقدان أو عجز' : 'هالك عام',
+          notes,
+        });
+        success = res.success;
+      } else {
+        success = await addMovement({
+          item_id: itemId,
+          movement_type: 'waste',
+          quantity: -qty,
+          reason,
+          notes,
+        });
+      }
+
+      if (success) {
+        toast({ title: 'تمت الإضافة', description: 'تم تسجيل الهالك بنجاح وتحديث أرصدة المخزون' });
+        setIsAddOpen(false);
+        setItemId('');
+        setQuantity('');
+        setNotes('');
+        await refreshDamage();
+      } else {
+        toast({ title: 'خطأ', description: 'حدث خطأ أثناء التسجيل', variant: 'destructive' });
+      }
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const handleEditSubmit = async (e: React.FormEvent) => {
@@ -152,15 +270,35 @@ export default function WasteManagement() {
 
   const handleDelete = async (record: any) => {
     if (!confirm('هل أنت متأكد من حذف هذا السجل؟ سيتم إعادة الكمية المخصومة إلى المخزون.')) return;
-    const success = await deleteMovement(record.id, record.item_id, record.quantity);
-    if (success) {
-      toast({ title: 'تم الحذف', description: 'تم حذف السجل واسترجاع الكمية إلى المخزون بنجاح' });
-    } else {
-      toast({ title: 'خطأ', description: 'حدث خطأ أثناء الحذف', variant: 'destructive' });
+    try {
+      if (record.isDamageRecord) {
+        const qtyNum = Math.abs(Number(record.quantity || 0));
+        const res = await deleteDamage(
+          record.id,
+          record.productId || record.item_id,
+          record.variantId,
+          qtyNum,
+          record.unitCost
+        );
+        if (res.success) {
+          toast({ title: 'تم الحذف', description: 'تم حذف السجل واسترجاع الكمية إلى المخزون بنجاح' });
+          await Promise.all([refreshDamage(), refreshMovements?.()]);
+        } else {
+          toast({ title: 'خطأ', description: res.error || 'حدث خطأ أثناء الحذف', variant: 'destructive' });
+        }
+      } else {
+        const success = await deleteMovement(record.id, record.item_id, record.quantity);
+        if (success) {
+          toast({ title: 'تم الحذف', description: 'تم حذف السجل واسترجاع الكمية إلى المخزون بنجاح' });
+          await Promise.all([refreshDamage(), refreshMovements?.()]);
+        } else {
+          toast({ title: 'خطأ', description: 'حدث خطأ أثناء الحذف', variant: 'destructive' });
+        }
+      }
+    } catch (e: any) {
+      toast({ title: 'خطأ', description: e.message || 'فشلت عملية الحذف', variant: 'destructive' });
     }
   };
-
-  const getItemName = (id: string) => inventoryItems.find((i: any) => i.id === id)?.name || 'غير معروف';
 
   const exportToCSV = () => {
     if (filteredRecords.length === 0) {
@@ -172,14 +310,14 @@ export default function WasteManagement() {
     const csvContent = [
       headers.join(','),
       ...filteredRecords.map(r => {
-        const item = inventoryItems.find((i: any) => i.id === r.item_id);
-        const costPerUnit = item ? (Number(item.cost_per_unit) || 0) : 0;
+        const info = getItemInfo(r.item_id, r.productNameSnapshot);
+        const costPerUnit = r.unitCost > 0 ? r.unitCost : info.cost;
         const totalLineCost = costPerUnit * Math.abs(Number(r.quantity));
         const reasonStr = r.reason === 'spoilage' ? 'تلف / انتهاء صلاحية' :
                           r.reason === 'mistake' ? 'خطأ تشغيلي أو سقوط' :
-                          r.reason ? 'أخرى' : 'مسجلة من المخزون العام';
+                          r.rawReason || (r.reason ? 'أخرى' : 'مسجلة من المخزون العام');
         
-        return `"${new Date(r.created_at).toLocaleDateString('ar-EG')}","${item?.name || 'غير معروف'}",${Math.abs(Number(r.quantity))},"${reasonStr}",${totalLineCost.toFixed(2)}`;
+        return `"${new Date(r.created_at || Date.now()).toLocaleDateString('ar-EG')}","${info.name}",${Math.abs(Number(r.quantity))},"${reasonStr}",${totalLineCost.toFixed(2)}`;
       })
     ].join('\n');
 
@@ -367,17 +505,17 @@ export default function WasteManagement() {
                     </TableRow>
                   ) : (
                     filteredRecords.map((record) => {
-                      const item = inventoryItems.find((i: any) => i.id === record.item_id);
-                      const costPerUnit = item ? (Number(item.cost_per_unit) || 0) : 0;
+                      const info = getItemInfo(record.item_id, record.productNameSnapshot);
+                      const costPerUnit = record.unitCost > 0 ? record.unitCost : info.cost;
                       const lineCost = Math.abs(record.quantity) * costPerUnit;
 
                       return (
                         <TableRow key={record.id} className="hover:bg-muted/30 transition-colors">
-                          <TableCell className="text-sm text-muted-foreground whitespace-nowrap">{new Date(record.created_at).toLocaleDateString('ar-EG')}</TableCell>
-                          <TableCell className="font-medium whitespace-nowrap">{item?.name || 'غير معروف'}</TableCell>
+                          <TableCell className="text-sm text-muted-foreground whitespace-nowrap">{new Date(record.created_at || Date.now()).toLocaleDateString('ar-EG')}</TableCell>
+                          <TableCell className="font-medium whitespace-nowrap">{info.name}</TableCell>
                           <TableCell className="font-bold flex items-center gap-1">
                             {Math.abs(record.quantity)}
-                            <span className="text-xs font-normal text-muted-foreground">{item?.unit}</span>
+                            <span className="text-xs font-normal text-muted-foreground">{info.unit}</span>
                           </TableCell>
                           <TableCell>
                             {renderReasonBadge(record.reason)}
@@ -385,7 +523,7 @@ export default function WasteManagement() {
                           <TableCell className="font-semibold text-destructive">{formatCurrency(lineCost)}</TableCell>
                           <TableCell className="text-left">
                             <div className="flex items-center justify-end gap-1">
-                              {canEdit && (
+                              {canEdit && !record.isDamageRecord && (
                                 <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground rounded-full" onClick={() => { setEditingRecord({ ...record, quantity: Math.abs(record.quantity), _original: record }); setIsEditOpen(true); }} title="تعديل">
                                   <Edit className="w-4 h-4" />
                                 </Button>
@@ -422,8 +560,8 @@ export default function WasteManagement() {
                 </div>
               ) : (
                 filteredRecords.map((record) => {
-                  const item = inventoryItems.find((i: any) => i.id === record.item_id);
-                  const costPerUnit = item ? (Number(item.cost_per_unit) || 0) : 0;
+                  const info = getItemInfo(record.item_id, record.productNameSnapshot);
+                  const costPerUnit = record.unitCost > 0 ? record.unitCost : info.cost;
                   const lineCost = Math.abs(record.quantity) * costPerUnit;
 
                   return (
@@ -438,8 +576,8 @@ export default function WasteManagement() {
                             <Package className="w-4 h-4" />
                           </div>
                           <div className="min-w-0 flex-1">
-                            <p className="font-bold text-sm text-foreground truncate">{item?.name || 'غير معروف'}</p>
-                            <p className="text-[11px] text-muted-foreground">{new Date(record.created_at).toLocaleDateString('ar-EG')}</p>
+                            <p className="font-bold text-sm text-foreground truncate">{info.name}</p>
+                            <p className="text-[11px] text-muted-foreground">{new Date(record.created_at || Date.now()).toLocaleDateString('ar-EG')}</p>
                           </div>
                         </div>
                         <div className="flex-shrink-0">
@@ -452,7 +590,7 @@ export default function WasteManagement() {
                         <div className="border-l border-border/60 pl-2">
                           <p className="text-[10px] text-muted-foreground">الكمية المهدرة</p>
                           <p className="text-sm font-black text-foreground mt-0.5">
-                            {Math.abs(record.quantity)} <span className="text-[11px] font-normal text-muted-foreground">{item?.unit}</span>
+                            {Math.abs(record.quantity)} <span className="text-[11px] font-normal text-muted-foreground">{info.unit}</span>
                           </p>
                         </div>
                         <div className="pr-2">
@@ -520,10 +658,25 @@ export default function WasteManagement() {
                 <Label className="text-xs sm:text-sm font-semibold">الصنف *</Label>
                 <Select value={itemId} onValueChange={setItemId} disabled={isSubmitting}>
                   <SelectTrigger className="w-full h-11 text-base sm:text-sm rounded-xl">
-                    <SelectValue placeholder="اختر صنفاً" />
+                    <SelectValue placeholder="اختر صنفاً أو كتاباً" />
                   </SelectTrigger>
                   <SelectContent className="max-h-56">
-                    {inventoryItems.map((i: any) => <SelectItem key={i.id} value={i.id} className="text-sm">{i.name}</SelectItem>)}
+                    {products.length > 0 && (
+                      <div className="px-2 py-1 text-xs font-bold text-muted-foreground bg-muted/40">كتب ومنتجات المتجر</div>
+                    )}
+                    {products.map((p: any) => (
+                      <SelectItem key={p.id} value={p.id} className="text-sm">
+                        {p.name} {p.barcode ? `(${p.barcode})` : ''}
+                      </SelectItem>
+                    ))}
+                    {inventoryItems.length > 0 && (
+                      <div className="px-2 py-1 text-xs font-bold text-muted-foreground bg-muted/40">أصناف المخزون العام</div>
+                    )}
+                    {inventoryItems.map((i: any) => (
+                      <SelectItem key={i.id} value={i.id} className="text-sm">
+                        {i.name}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
@@ -532,12 +685,17 @@ export default function WasteManagement() {
                 <Input 
                   type="number" 
                   step="0.01" 
+                  min="0.01"
                   required 
                   value={quantity} 
                   onChange={e => setQuantity(e.target.value)} 
+                  onFocus={e => {
+                    if (e.target.value === '0') e.target.value = '';
+                    else e.target.select();
+                  }}
                   disabled={isSubmitting} 
                   className="h-11 text-base sm:text-sm rounded-xl"
-                  placeholder="0.00"
+                  placeholder="أدخل الكمية مباشرة"
                 />
               </div>
               <div className="space-y-1.5">
@@ -597,6 +755,10 @@ export default function WasteManagement() {
                     required 
                     value={editingRecord.quantity} 
                     onChange={e => setEditingRecord((f: any) => ({ ...f, quantity: e.target.value }))} 
+                    onFocus={e => {
+                      if (e.target.value === '0') e.target.value = '';
+                      else e.target.select();
+                    }}
                     disabled={isSubmitting} 
                     className="h-11 text-base sm:text-sm rounded-xl"
                   />

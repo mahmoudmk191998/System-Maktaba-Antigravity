@@ -27,7 +27,8 @@ interface StockAdjustmentDialogProps {
     quantity: number,
     direction: 'in' | 'out',
     reason: string,
-    unitCost?: number
+    unitCost?: number,
+    productNameSnapshot?: string
   ) => Promise<{ success: boolean; error?: string }>;
 }
 
@@ -71,7 +72,8 @@ export const StockAdjustmentDialog: React.FC<StockAdjustmentDialogProps> = ({
         qtyNum,
         direction,
         fullReason,
-        currentCost
+        currentCost,
+        productName
       );
 
       if (res.success) {

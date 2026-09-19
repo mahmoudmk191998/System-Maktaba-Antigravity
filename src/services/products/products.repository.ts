@@ -16,12 +16,95 @@ import {
   limit as fsLimit,
   startAfter,
   runTransaction,
+  writeBatch,
   DocumentSnapshot,
 } from 'firebase/firestore';
 import type { Product, ProductVariant } from '@/types/retail.types';
 import { validateProductForm } from './productValidators';
 import { normalizeArabicText } from './products.service';
 import { removeUndefinedFields } from '@/lib/utils';
+import { firestoreLogger } from '@/lib/firestoreLogger';
+
+/**
+ * Computes derived stock status flags to enable O(1) compound queries
+ * (e.g. where('isLowStock', '==', true)) without dynamic field-to-field comparisons.
+ */
+export function computeStockStatus(
+  quantity: number = 0,
+  minStock: number = 0
+): { isLowStock: boolean; stockStatus: 'normal' | 'low' | 'out' } {
+  const qty = Number(quantity || 0);
+  const min = Number(minStock || 0);
+  if (qty <= 0) {
+    return { isLowStock: true, stockStatus: 'out' };
+  }
+  if (qty <= min) {
+    return { isLowStock: true, stockStatus: 'low' };
+  }
+  return { isLowStock: false, stockStatus: 'normal' };
+}
+
+/**
+ * Fast exact barcode search (1 Read).
+ */
+export async function searchProductsByBarcode(
+  tenantId: string,
+  barcode: string
+): Promise<Product[]> {
+  if (!tenantId || !barcode) return [];
+  const clean = barcode.trim();
+  const q = query(
+    collection(db, 'products'),
+    where('tenantId', '==', tenantId),
+    where('barcode', '==', clean),
+    fsLimit(5)
+  );
+  const snap = await getDocs(q);
+  firestoreLogger.logOperation('products.repository.barcode', 'products', 'getDocs', snap.docs.length);
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() } as Product));
+}
+
+/**
+ * Fast exact SKU search (1 Read).
+ */
+export async function searchProductsBySku(
+  tenantId: string,
+  sku: string
+): Promise<Product[]> {
+  if (!tenantId || !sku) return [];
+  const clean = sku.trim().toUpperCase();
+  const q = query(
+    collection(db, 'products'),
+    where('tenantId', '==', tenantId),
+    where('sku', '==', clean),
+    fsLimit(5)
+  );
+  const snap = await getDocs(q);
+  firestoreLogger.logOperation('products.repository.sku', 'products', 'getDocs', snap.docs.length);
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() } as Product));
+}
+
+/**
+ * Prefix name search using bounded range query (Up to maxLimit reads).
+ */
+export async function searchProductsByNamePrefix(
+  tenantId: string,
+  prefix: string,
+  maxLimit: number = 20
+): Promise<Product[]> {
+  if (!tenantId || !prefix.trim()) return [];
+  const term = prefix.trim();
+  const q = query(
+    collection(db, 'products'),
+    where('tenantId', '==', tenantId),
+    where('name', '>=', term),
+    where('name', '<=', term + '\uf8ff'),
+    fsLimit(maxLimit)
+  );
+  const snap = await getDocs(q);
+  firestoreLogger.logOperation('products.repository.prefix', 'products', 'getDocs', snap.docs.length);
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() } as Product));
+}
 
 export interface FetchProductsOptions {
   categoryId?: string;
@@ -77,11 +160,13 @@ export async function fetchProductsFromDb(
     // 1. Query by tenantId (simple query without composite index requirement)
     let q = query(collection(db, 'products'), where('tenantId', '==', tenantId));
     let snap = await getDocs(q);
+    firestoreLogger.logOperation('products.repository.fetch', 'products', 'getDocs', snap.docs.length);
 
     // Fallback: check tenant_id if tenantId returned empty
     if (snap.empty) {
       const qAlt = query(collection(db, 'products'), where('tenant_id', '==', tenantId));
       const snapAlt = await getDocs(qAlt);
+      firestoreLogger.logOperation('products.repository.fetchAlt', 'products', 'getDocs', snapAlt.docs.length);
       if (!snapAlt.empty) {
         snap = snapAlt;
       }
@@ -352,11 +437,18 @@ export async function createProductInDb(
         });
       }
 
-      // 5. Save Product Document (Strips any undefined fields to comply with Firestore specs)
+      // 5. Compute derived low stock flags and Save Product Document
+      const qty = Number(productData.quantity || 0);
+      const minStock = Number(productData.minimumStock || 0);
+      const stockDerived = computeStockStatus(qty, minStock);
+
       const rawProduct: Product = {
         id: productRef.id,
         tenantId,
         ...productData,
+        quantity: qty,
+        isLowStock: stockDerived.isLowStock,
+        stockStatus: stockDerived.stockStatus,
         averageCost: productData.averageCost || productData.purchasePrice || 0,
         archived: false,
         active: productData.active !== undefined ? productData.active : true,
@@ -469,9 +561,16 @@ export async function updateProductInDb(
         });
       }
 
-      // 5. Update Product document (Strips any undefined fields to comply with Firestore specs)
+      // 5. Compute derived low stock flags and Update Product document
+      const qty = Number(merged.quantity !== undefined ? merged.quantity : (existingProduct.quantity || 0));
+      const minStock = Number(merged.minimumStock !== undefined ? merged.minimumStock : (existingProduct.minimumStock || 0));
+      const stockDerived = computeStockStatus(qty, minStock);
+
       const rawProduct: Product = {
         ...merged,
+        quantity: qty,
+        isLowStock: stockDerived.isLowStock,
+        stockStatus: stockDerived.stockStatus,
         updatedAt: now,
         updatedBy: userId || '',
       };
@@ -595,3 +694,89 @@ export async function safeHardDeleteProductInDb(
     return { success: false, error: err?.message || 'فشل في حذف المنتج' };
   }
 }
+
+export interface ProductsStockBackfillResult {
+  totalProductsInDatabase: number;
+  productsScanned: number;
+  productsUpdated: number;
+  productsSkipped: number;
+  lowStockProducts: number;
+  outOfStockProducts: number;
+}
+
+/**
+ * Safely backfills derived stock status fields (isLowStock and stockStatus) for all existing
+ * products in a tenant catalog based on existing quantity and minimumStock.
+ * STRICT GUARANTEE: Does NOT modify product quantity, prices, or any other warehouse records.
+ */
+export async function backfillProductsStockDerivedFields(
+  tenantId: string
+): Promise<ProductsStockBackfillResult> {
+  if (!tenantId) {
+    return {
+      totalProductsInDatabase: 0,
+      productsScanned: 0,
+      productsUpdated: 0,
+      productsSkipped: 0,
+      lowStockProducts: 0,
+      outOfStockProducts: 0,
+    };
+  }
+
+  let snap = await getDocs(query(collection(db, 'products'), where('tenantId', '==', tenantId)));
+  if (snap.empty) {
+    snap = await getDocs(query(collection(db, 'products'), where('tenant_id', '==', tenantId)));
+  }
+
+  let productsScanned = snap.docs.length;
+  let productsUpdated = 0;
+  let lowStockProducts = 0;
+  let outOfStockProducts = 0;
+
+  const BATCH_SIZE = 400;
+  let currentBatch = writeBatch(db);
+  let batchOps = 0;
+
+  for (const docSnap of snap.docs) {
+    const data = docSnap.data() as Product;
+    const qty = Number(data.quantity ?? 0);
+    const minStock = Number(data.minimumStock ?? 0);
+    const derived = computeStockStatus(qty, minStock);
+
+    if (derived.isLowStock) lowStockProducts++;
+    if (derived.stockStatus === 'out') outOfStockProducts++;
+
+    const needsUpdate =
+      data.isLowStock !== derived.isLowStock ||
+      data.stockStatus !== derived.stockStatus;
+
+    if (needsUpdate) {
+      currentBatch.update(docSnap.ref, {
+        isLowStock: derived.isLowStock,
+        stockStatus: derived.stockStatus,
+      });
+      batchOps++;
+      productsUpdated++;
+
+      if (batchOps >= BATCH_SIZE) {
+        await currentBatch.commit();
+        currentBatch = writeBatch(db);
+        batchOps = 0;
+      }
+    }
+  }
+
+  if (batchOps > 0) {
+    await currentBatch.commit();
+  }
+
+  return {
+    totalProductsInDatabase: productsScanned,
+    productsScanned,
+    productsUpdated,
+    productsSkipped: productsScanned - productsUpdated,
+    lowStockProducts,
+    outOfStockProducts,
+  };
+}
+

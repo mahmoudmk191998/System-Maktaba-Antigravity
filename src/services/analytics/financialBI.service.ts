@@ -7,6 +7,8 @@
 
 import { generateBalanceSheet, generateProfitAndLoss, generateTrialBalance } from '../accounting/financialStatements.service';
 import { DateRange } from './reportingTimezone';
+import { fetchSalesPeriodData } from './salesAnalytics.service';
+import { getExpenses } from '../expenses';
 
 export interface FinancialBIMetrics {
   // Balance Sheet derived
@@ -54,15 +56,24 @@ export async function generateFinancialBIMetrics(
 ): Promise<FinancialBIMetrics> {
   // 1. Generate standard financial statements from posted GL lines
   const [bs, pnl, tb] = await Promise.all([
-    generateBalanceSheet(tenantId, dateRange.endDate),
-    generateProfitAndLoss(tenantId, dateRange.startDate, dateRange.endDate),
-    generateTrialBalance(tenantId, dateRange.startDate, dateRange.endDate),
+    generateBalanceSheet(tenantId, dateRange.endDate).catch((err) => {
+      console.warn('generateBalanceSheet fallback:', err);
+      return { totalAssets: 0, totalLiabilities: 0, totalEquity: 0 } as any;
+    }),
+    generateProfitAndLoss(tenantId, dateRange.startDate, dateRange.endDate).catch((err) => {
+      console.warn('generateProfitAndLoss fallback:', err);
+      return { totalRevenue: 0, cogs: 0, grossProfit: 0, totalExpenses: 0, netIncome: 0 } as any;
+    }),
+    generateTrialBalance(tenantId, dateRange.startDate, dateRange.endDate).catch((err) => {
+      console.warn('generateTrialBalance fallback:', err);
+      return { rows: [] } as any;
+    }),
   ]);
 
   // Extract Balance Sheet Balances
-  const totalAssets = bs.totalAssets || 0;
-  const totalLiabilities = bs.totalLiabilities || 0;
-  const totalEquity = bs.totalEquity || 0;
+  let totalAssets = bs.totalAssets || 0;
+  let totalLiabilities = bs.totalLiabilities || 0;
+  let totalEquity = bs.totalEquity || 0;
 
   // Group accounts from Trial Balance for fine-grained liquidity ratios
   let cashAndEquivalents = 0;
@@ -110,11 +121,52 @@ export async function generateFinancialBIMetrics(
   }
 
   // P&L figures
-  const netRevenue = pnl.totalRevenue || 0;
-  const cogsGL = pnl.cogs || 0;
-  const grossProfitGL = pnl.grossProfit || 0;
-  const operatingExpensesGL = pnl.totalExpenses || 0;
-  const netIncomeGL = pnl.netIncome || 0;
+  let netRevenue = pnl.totalRevenue || 0;
+  let cogsGL = pnl.cogs || 0;
+  let grossProfitGL = pnl.grossProfit || 0;
+  let operatingExpensesGL = pnl.totalExpenses || 0;
+  let netIncomeGL = pnl.netIncome || 0;
+
+  // Fallback to operational sales and recorded expenses if GL lines are empty
+  if (netRevenue === 0) {
+    try {
+      const { sales: opSales } = await fetchSalesPeriodData(tenantId, dateRange);
+      let opRev = 0;
+      let opCost = 0;
+      let opCash = 0;
+      for (const s of opSales) {
+        opRev += Number(s.total || 0);
+        opCost += Number(s.costTotal || 0);
+        for (const p of s.paymentMethods || []) {
+          if (p.method === 'cash') opCash += Number(p.amount || 0);
+        }
+      }
+      if (opRev > 0) {
+        netRevenue = opRev;
+        cogsGL = opCost;
+        grossProfitGL = Math.max(0, netRevenue - cogsGL);
+      }
+      if (cashAndEquivalents === 0 && opCash > 0) {
+        cashAndEquivalents = opCash;
+      }
+      const opExpenses = await getExpenses(tenantId).catch(() => []);
+      if (opExpenses && opExpenses.length > 0) {
+        const expSum = opExpenses.reduce((sum: number, ex: any) => sum + Number(ex.amount || 0), 0);
+        operatingExpensesGL = expSum;
+      }
+      netIncomeGL = grossProfitGL - operatingExpensesGL;
+    } catch {}
+  }
+
+  if (currentAssets === 0 && (cashAndEquivalents > 0 || inventoryGLValue > 0 || accountsReceivable > 0)) {
+    currentAssets = cashAndEquivalents + inventoryGLValue + accountsReceivable;
+  }
+  if (totalAssets === 0 && currentAssets > 0) {
+    totalAssets = currentAssets;
+  }
+  if (totalEquity === 0 && totalAssets > 0) {
+    totalEquity = Math.max(0, totalAssets - totalLiabilities);
+  }
 
   // Ratios
   const grossMarginPct = netRevenue > 0 ? Number(((grossProfitGL / netRevenue) * 100).toFixed(2)) : 0;

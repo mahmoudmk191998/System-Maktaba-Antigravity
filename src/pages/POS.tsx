@@ -46,7 +46,18 @@ import {
   Keyboard,
   Info,
   Shield,
+  Camera,
+  QrCode,
+  Maximize2,
+  Minimize2,
+  Home,
+  Sun,
+  Moon,
+  X,
 } from 'lucide-react';
+import { cn } from '@/lib/utils';
+import { useTheme } from '@/hooks/useTheme';
+import { MobileScannerModal } from '@/components/retail/pos/MobileScannerModal';
 import { db } from '@/lib/firebase';
 import { collection, addDoc } from 'firebase/firestore';
 import { useAppStore } from '@/lib/store';
@@ -60,7 +71,7 @@ import { useCustomers } from '@/hooks/retail/useCustomers';
 import { usePOSCart, type POSCartItem } from '@/hooks/retail/usePOSCart';
 import { useCashRegister } from '@/hooks/retail/useCashRegister';
 import { completeSaleTransaction } from '@/services/sales/sales.service';
-import { holdCurrentSale } from '@/services/sales/heldSales.service';
+import { holdCurrentSale, getHeldSalesCount, subscribeToHeldSales } from '@/services/sales/heldSales.service';
 import { QuickPaymentModal } from '@/components/retail/pos/QuickPaymentModal';
 import { ReceiptDialog } from '@/components/retail/pos/ReceiptDialog';
 import { CashRegisterModal } from '@/components/retail/pos/CashRegisterModal';
@@ -114,6 +125,7 @@ export default function POSPage() {
   // Cart Hook
   const {
     items: cartItems,
+    setItems: setCartItems,
     isWholesale,
     setIsWholesale,
     cartDiscount,
@@ -144,6 +156,7 @@ export default function POSPage() {
   const [registerModalOpen, setRegisterModalOpen] = useState(false);
   const [registerModalMode, setRegisterModalMode] = useState<'open' | 'close'>('open');
   const [shortcutsModalOpen, setShortcutsModalOpen] = useState(false);
+  const [cameraScannerOpen, setCameraScannerOpen] = useState(false);
 
   // Cash Drawer Password State
   const [openDrawerPasswordModalOpen, setOpenDrawerPasswordModalOpen] = useState(false);
@@ -165,6 +178,42 @@ export default function POSPage() {
 
   // Barcode search input ref
   const searchInputRef = useRef<HTMLInputElement>(null);
+
+  // Responsive, Theme, Fullscreen & Held count states
+  const { theme, toggleTheme } = useTheme();
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [mobileTab, setMobileTab] = useState<'catalog' | 'cart'>('catalog');
+  const [heldSalesCount, setHeldSalesCount] = useState<number>(0);
+
+  const toggleFullscreen = () => {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen().catch(() => {});
+      setIsFullscreen(true);
+    } else {
+      if (document.exitFullscreen) {
+        document.exitFullscreen().catch(() => {});
+      }
+      setIsFullscreen(false);
+    }
+  };
+
+  const refreshHeldCount = useCallback(async () => {
+    const effTenant = tenantId || 'default-tenant';
+    const effBranch = branchId || 'main';
+    const count = await getHeldSalesCount(effTenant, effBranch);
+    setHeldSalesCount(count);
+  }, [tenantId, branchId]);
+
+  useEffect(() => {
+    const effTenant = tenantId || 'default-tenant';
+    const effBranch = branchId || 'main';
+    const unsubscribe = subscribeToHeldSales(effTenant, effBranch, (sales) => {
+      setHeldSalesCount(sales.length);
+    });
+    return () => {
+      unsubscribe();
+    };
+  }, [tenantId, branchId]);
 
   // Keyboard Wedge Scanner Listener (Detects rapid barcode scans)
   const barcodeBufferRef = useRef<string>('');
@@ -279,13 +328,63 @@ export default function POSPage() {
   }, [cartItems, settings.openDrawerPassword, canManageRegister]);
 
   const handleScanBarcode = async (barcode: string) => {
-    toast.loading(`جاري فحص الباركود: ${barcode}...`, { id: 'barcode_scan' });
-    const res = await addByBarcode(barcode);
+    const raw = (barcode || '').trim();
+    if (!raw) return { success: false, error: 'رمز الباركود فارغ' };
+
+    // 1. Instant in-memory check against products loaded in POS (0ms latency)
+    const rawNoHyphen = raw.replace(/[-\s_]/g, '');
+    const inMemoryMatch = products.find((p) => {
+      const pBar = (p.barcode || '').trim();
+      const pSku = (p.sku || '').trim();
+      if (pBar === raw || (pBar && pBar.replace(/[-\s_]/g, '') === rawNoHyphen)) return true;
+      if (pSku && pSku.toUpperCase() === raw.toUpperCase()) return true;
+      if (p.id === raw) return true;
+      if (p.variants && Array.isArray(p.variants)) {
+        return p.variants.some((v) => {
+          const vBar = (v.barcode || '').trim();
+          const vSku = (v.sku || '').trim();
+          return (
+            (vBar && (vBar === raw || vBar.replace(/[-\s_]/g, '') === rawNoHyphen)) ||
+            (vSku && vSku.toUpperCase() === raw.toUpperCase())
+          );
+        });
+      }
+      return false;
+    });
+
+    if (inMemoryMatch) {
+      if (inMemoryMatch.archived || inMemoryMatch.status === 'archived') {
+        toast.error('هذا الصنف مؤرشف ولا يمكن بيعه');
+        return { success: false, error: 'هذا الصنف مؤرشف ولا يمكن بيعه' };
+      }
+
+      let matchedVariant: ProductVariant | null = null;
+      if (inMemoryMatch.hasVariants && inMemoryMatch.variants) {
+        matchedVariant =
+          inMemoryMatch.variants.find((v) => {
+            const vBar = (v.barcode || '').trim();
+            const vSku = (v.sku || '').trim();
+            return (
+              (vBar && (vBar === raw || vBar.replace(/[-\s_]/g, '') === rawNoHyphen)) ||
+              (vSku && vSku.toUpperCase() === raw.toUpperCase())
+            );
+          }) || null;
+      }
+
+      addToCart(inMemoryMatch, matchedVariant, 1);
+      toast.success(`تمت إضافة ${inMemoryMatch.name} إلى السلة بنجاح`);
+      return { success: true, product: inMemoryMatch, variant: matchedVariant || undefined };
+    }
+
+    // 2. Comprehensive database lookup (handles URLs, JSONs, variants, and indexes)
+    toast.loading(`جاري فحص الرمز: ${raw}...`, { id: 'barcode_scan' });
+    const res = await addByBarcode(raw);
     if (res.success) {
-      toast.success('تمت إضافة الصنف إلى السلة بنجاح', { id: 'barcode_scan' });
+      toast.success(`تمت إضافة ${res.product?.name || 'الصنف'} إلى السلة بنجاح`, { id: 'barcode_scan' });
     } else {
       toast.error(res.error || 'تعذر العثور على الصنف', { id: 'barcode_scan' });
     }
+    return res;
   };
 
   const handleProductCardClick = (product: Product) => {
@@ -382,21 +481,23 @@ export default function POSPage() {
       return;
     }
     const res = await holdCurrentSale({
-      tenantId,
-      branchId,
-      cashierId,
+      tenantId: tenantId || 'default-tenant',
+      branchId: branchId || 'main',
+      cashierId: cashierId || 'كاشير',
       items: cartItems as any,
-      customerSnapshot: selectedCustomer,
+      customerSnapshot: selectedCustomer || null,
       subtotal: totals.subtotal,
       discount: totals.totalDiscount,
-      serviceCharge: totals.totalServiceCharge,
       tax: totals.totalTax,
       total: totals.grandTotal,
+      cartDiscountType,
+      cartDiscountValue,
     });
 
     if (res.success) {
-      toast.success('تم تعليق السلة بنجاح');
+      toast.success('تم تعليق السلة بنجاح في السلات المعلقة');
       clearCart();
+      await refreshHeldCount();
     } else {
       toast.error(res.error || 'تعذر تعليق السلة');
     }
@@ -467,37 +568,57 @@ export default function POSPage() {
 
   return (
     <MainLayout>
-      <div className="h-[calc(100vh-4.5rem)] flex flex-col gap-3 p-1 sm:p-2" dir="rtl">
+      <div className="h-full max-h-[100dvh] overflow-hidden flex flex-col gap-2 sm:gap-2.5 p-2 sm:p-3 bg-background select-none" dir="rtl">
         {/* Top Control Bar */}
-        <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 bg-card/80 backdrop-blur border border-border rounded-2xl shadow-sm">
-          <div className="flex items-center gap-2">
-            <div className="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center text-primary">
-              <BookOpen className="w-5 h-5" />
-            </div>
-            <div>
-              <h1 className="text-base font-extrabold text-foreground flex items-center gap-2">
-                <span>نقطة بيع المكتبة والأدوات المدرسية</span>
-                <Badge variant="outline" className="text-xs bg-muted/60">
-                  {currentBranch?.name || 'الفرع الرئيسي'}
-                </Badge>
-              </h1>
-              <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                <span>الكاشير: <strong>{cashierName}</strong></span>
-                <span>•</span>
-                <span className="flex items-center gap-1 text-emerald-600 font-medium">
-                  <ScanBarcode className="w-3.5 h-3.5" />
-                  القارئ الآلي مفعل
-                </span>
+        <header className="shrink-0 flex flex-wrap items-center justify-between gap-2 px-3 py-2 bg-card/90 border border-border/80 rounded-2xl shadow-sm">
+          {/* Right: Branding, Branch, Cashier info, Scanner indicator, Back to Dashboard */}
+          <div className="flex items-center gap-2.5 min-w-0">
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-9 px-3 gap-1.5 rounded-xl border-border text-foreground hover:bg-muted font-bold text-xs shrink-0"
+              onClick={() => navigate('/')}
+              title="الرجوع إلى لوحة التحكم الرئيسية"
+            >
+              <Home className="w-4 h-4 text-primary" />
+              <span className="hidden sm:inline">الرئيسية</span>
+            </Button>
+
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center text-primary shrink-0 shadow-inner">
+                <BookOpen className="w-5 h-5" />
+              </div>
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="text-sm font-black text-foreground truncate">نقطة البيع (POS)</span>
+                  <Badge variant="outline" className="text-[11px] font-bold py-0 h-5 bg-muted/60 text-muted-foreground border-border shrink-0">
+                    {currentBranch?.name || 'الفرع الرئيسي'}
+                  </Badge>
+                </div>
+                <div className="flex items-center gap-2 text-[11px] text-muted-foreground flex-wrap">
+                  <span className="truncate">الكاشير: <strong className="text-foreground">{cashierName}</strong></span>
+                  <span className="hidden sm:inline opacity-40">•</span>
+                  <span className="hidden sm:inline-flex items-center gap-1 text-emerald-600 font-bold">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                    القارئ الآلي نشط
+                  </span>
+                </div>
               </div>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            {/* Cash Register Shift Button */}
+          {/* Left: Action buttons (Shift, Wholesale, Held Carts with Live Badge, Returns, Camera, Drawer, Shortcuts, Theme, Fullscreen) */}
+          <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap justify-end">
+            {/* Shift Status Button */}
             <Button
               size="sm"
               variant={isShiftOpen ? 'outline' : 'destructive'}
-              className="gap-1.5 font-semibold text-xs h-8"
+              className={cn(
+                "gap-1.5 font-bold text-xs h-9 px-3 rounded-xl transition-all shadow-sm",
+                isShiftOpen 
+                  ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/20" 
+                  : "bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              )}
               onClick={() => {
                 setRegisterModalMode(isShiftOpen ? 'close' : 'open');
                 setRegisterModalOpen(true);
@@ -505,13 +626,14 @@ export default function POSPage() {
             >
               {isShiftOpen ? (
                 <>
-                  <Unlock className="w-3.5 h-3.5 text-emerald-500" />
-                  <span>الوردية مفتوحة</span>
+                  <Unlock className="w-3.5 h-3.5 text-emerald-600" />
+                  <span className="hidden sm:inline">الوردية مفتوحة</span>
+                  <span className="sm:hidden">مفتوحة</span>
                 </>
               ) : (
                 <>
                   <Lock className="w-3.5 h-3.5" />
-                  <span>الوردية مغلقة (اضغط للفتح)</span>
+                  <span>فتح الوردية</span>
                 </>
               )}
             </Button>
@@ -521,35 +643,63 @@ export default function POSPage() {
               <Button
                 size="sm"
                 variant={isWholesale ? 'default' : 'outline'}
-                className={`gap-1.5 text-xs h-8 ${isWholesale ? 'bg-indigo-600 hover:bg-indigo-700 text-white' : ''}`}
+                className={cn(
+                  "gap-1.5 text-xs h-9 px-3 font-bold rounded-xl transition-all",
+                  isWholesale 
+                    ? "bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm shadow-indigo-600/20" 
+                    : "border-border text-foreground hover:bg-muted"
+                )}
                 onClick={() => setIsWholesale(!isWholesale)}
               >
                 <Tag className="w-3.5 h-3.5" />
-                <span>{isWholesale ? 'سعر جملة مفعل' : 'بيع تجزئة قطاعي'}</span>
+                <span>{isWholesale ? 'جملة' : 'قطاعي'}</span>
               </Button>
             )}
 
-            {/* Held Carts Button */}
+            {/* Held Carts Button with DYNAMIC COUNTER BADGE */}
             <Button
               size="sm"
-              variant="outline"
-              className="gap-1.5 text-xs h-8"
+              variant={heldSalesCount > 0 ? "default" : "outline"}
+              className={cn(
+                "relative gap-1.5 font-bold text-xs h-9 px-3 rounded-xl transition-all shadow-sm",
+                heldSalesCount > 0
+                  ? "bg-amber-500 hover:bg-amber-600 text-white border-amber-500 shadow-amber-500/25 ring-2 ring-amber-400/30"
+                  : "border-border text-foreground hover:bg-muted"
+              )}
               onClick={() => setHeldDrawerOpen(true)}
+              title="السلات المعلقة مؤقتاً لخدمة عملاء آخرين"
             >
-              <Clock className="w-3.5 h-3.5 text-amber-500" />
+              <Clock className="w-4 h-4" />
               <span>السلات المعلقة</span>
+              {heldSalesCount > 0 && (
+                <span className="inline-flex items-center justify-center bg-white text-amber-900 font-black text-xs px-1.5 py-0.5 min-w-[20px] h-5 rounded-full shadow-sm animate-pulse mr-1">
+                  {heldSalesCount}
+                </span>
+              )}
             </Button>
 
             {/* Returns & Exchanges Quick Button */}
             <Button
               size="sm"
               variant="outline"
-              className="gap-1.5 text-xs h-8 text-amber-600 hover:text-amber-700 hover:bg-amber-500/10 border-amber-500/30"
+              className="gap-1.5 text-xs h-9 px-3 font-bold rounded-xl border-amber-500/30 text-amber-700 hover:bg-amber-500/10"
               onClick={() => navigate('/returns')}
               title="شاشة مرتجعات واستبدال المبيعات"
             >
               <RotateCcw className="w-3.5 h-3.5" />
-              <span>المرتجعات</span>
+              <span className="hidden sm:inline">المرتجعات</span>
+            </Button>
+
+            {/* Mobile Camera Barcode/QR Scanner Button */}
+            <Button
+              size="sm"
+              variant="outline"
+              className="gap-1.5 text-xs h-9 px-3 font-bold rounded-xl bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/20 border-emerald-500/30 shadow-sm"
+              onClick={() => setCameraScannerOpen(true)}
+              title="مسح باركود أو QR بكاميرا الموبايل"
+            >
+              <Camera className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">الكاميرا</span>
             </Button>
 
             {/* Manual Cash Drawer Open Button */}
@@ -557,61 +707,155 @@ export default function POSPage() {
               <Button
                 size="sm"
                 variant="outline"
-                className="gap-1.5 text-xs h-8 text-green-700 hover:text-green-800 hover:bg-green-500/10 border-green-500/30"
+                className="gap-1.5 text-xs h-9 px-3 font-bold rounded-xl text-green-700 hover:bg-green-500/10 border-green-500/30"
                 onClick={handleOpenCashDrawer}
                 title="فتح درج الكاشير يدوياً (F9)"
               >
                 <Shield className="w-3.5 h-3.5" />
-                <span>فتح الدرج</span>
+                <span className="hidden md:inline">فتح الدرج (F9)</span>
               </Button>
             )}
 
             {/* Shortcuts Guide Button */}
             <Button
               size="sm"
-              variant="ghost"
-              className="h-8 w-8 p-0"
+              variant="outline"
+              className="h-9 w-9 p-0 rounded-xl border-border hover:bg-muted text-muted-foreground"
               onClick={() => setShortcutsModalOpen(true)}
-              title="اختصارات لوحة المفاتيح"
+              title="اختصارات لوحة المفاتيح (F2, F6, F8, F9)"
             >
-              <Keyboard className="w-4 h-4 text-muted-foreground" />
+              <Keyboard className="w-4 h-4" />
+            </Button>
+
+            {/* Fullscreen Toggle */}
+            <Button
+              size="sm"
+              variant="outline"
+              className="hidden md:flex h-9 w-9 p-0 rounded-xl border-border hover:bg-muted text-muted-foreground"
+              onClick={toggleFullscreen}
+              title={isFullscreen ? "تصغير الشاشة" : "ملء الشاشة بالكامل"}
+            >
+              {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+            </Button>
+
+            {/* Theme Toggle */}
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-9 w-9 p-0 rounded-xl border-border hover:bg-muted text-muted-foreground"
+              onClick={toggleTheme}
+              title="تبديل المظهر النهاري / الليلي"
+            >
+              {theme === 'dark' ? <Sun className="w-4 h-4 text-amber-500" /> : <Moon className="w-4 h-4 text-indigo-500" />}
             </Button>
           </div>
+        </header>
+
+        {/* Mobile View Switcher Tabs (Visible only on small screens) */}
+        <div className="lg:hidden shrink-0 grid grid-cols-2 gap-2 bg-card/80 p-1.5 rounded-2xl border border-border/80">
+          <button
+            type="button"
+            className={cn(
+              "flex items-center justify-center gap-2 py-2.5 rounded-xl font-black text-xs transition-all",
+              mobileTab === 'catalog'
+                ? "bg-primary text-primary-foreground shadow-md"
+                : "text-muted-foreground hover:text-foreground"
+            )}
+            onClick={() => setMobileTab('catalog')}
+          >
+            <BookOpen className="w-4 h-4" />
+            <span>المنتجات والبحث ({products.length})</span>
+          </button>
+          <button
+            type="button"
+            className={cn(
+              "flex items-center justify-center gap-2 py-2.5 rounded-xl font-black text-xs transition-all relative",
+              mobileTab === 'cart'
+                ? "bg-primary text-primary-foreground shadow-md"
+                : "text-muted-foreground hover:text-foreground"
+            )}
+            onClick={() => setMobileTab('cart')}
+          >
+            <ShoppingBag className="w-4 h-4" />
+            <span>السلة ({totals.totalItemsCount})</span>
+            {totals.grandTotal > 0 && (
+              <span className="font-mono font-bold text-[11px] bg-white/20 px-1.5 py-0.5 rounded-md mr-1">
+                {number(totals.grandTotal)} ج.م
+              </span>
+            )}
+          </button>
         </div>
 
-        {/* Main Grid: Catalog (Left/Center) + Cart (Right) */}
-        <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-3 min-h-0">
-          {/* Products & Search Section (7 Cols) */}
-          <div className="lg:col-span-7 flex flex-col gap-3 min-h-0 bg-card/60 backdrop-blur border border-border rounded-2xl p-3 shadow-sm">
+        {/* Main Grid: Catalog (7 Cols) + Cart (5 Cols) with FIXED ZERO SCROLL */}
+        <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-12 gap-2 sm:gap-3 overflow-hidden">
+          {/* Catalog Section (7 Cols on desktop) */}
+          <div className={cn(
+            "lg:col-span-7 h-full min-h-0 bg-card/70 backdrop-blur border border-border/80 rounded-2xl p-3 shadow-sm flex flex-col gap-2.5 overflow-hidden",
+            mobileTab === 'catalog' ? "flex" : "hidden lg:flex"
+          )}>
             {/* Search and Category Bar */}
-            <div className="flex flex-col gap-2">
-              <div className="relative">
-                <Search className="w-4 h-4 absolute right-3 top-3 text-muted-foreground" />
-                <Input
-                  ref={searchInputRef}
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="ابحث بالاسم أو الباركود أو SKU أو رقم ISBN أو المؤلف... (F2)"
-                  className="pr-9 h-10 bg-background/80 text-sm font-medium"
-                />
+            <div className="shrink-0 flex flex-col gap-2">
+              <div className="flex items-center gap-2">
+                <div className="relative flex-1">
+                  <Search className="w-4 h-4 absolute right-3.5 top-3.5 text-muted-foreground" />
+                  <Input
+                    ref={searchInputRef}
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="ابحث بالاسم أو الباركود أو SKU أو رقم ISBN... (F2)"
+                    className="pr-10 pl-16 h-11 bg-background/90 text-sm font-semibold rounded-xl border-2 border-border/80 focus:border-primary shadow-sm"
+                  />
+                  {searchQuery && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="absolute left-8 top-1.5 h-8 w-8 p-0 text-muted-foreground hover:text-foreground rounded-lg"
+                      onClick={() => setSearchQuery('')}
+                    >
+                      <X className="w-4 h-4" />
+                    </Button>
+                  )}
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="absolute left-1 top-1.5 h-8 px-2 text-emerald-600 hover:text-emerald-700 hover:bg-emerald-500/10 rounded-lg flex items-center gap-1 font-bold text-xs"
+                    onClick={() => setCameraScannerOpen(true)}
+                    title="مسح بالكاميرا"
+                  >
+                    <Camera className="w-4 h-4" />
+                  </Button>
+                </div>
+
+                <Button
+                  type="button"
+                  size="sm"
+                  className="h-11 px-4 bg-gradient-to-l from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white font-black rounded-xl flex items-center gap-2 shadow-sm text-xs shrink-0"
+                  onClick={() => setCameraScannerOpen(true)}
+                >
+                  <QrCode className="w-4 h-4" />
+                  <span className="hidden sm:inline">مسح بالكاميرا</span>
+                  <span className="sm:hidden">كاميرا</span>
+                </Button>
               </div>
 
               {/* Categories Scrollable Pills */}
-              <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-thin">
+              <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
                 <Button
                   size="sm"
                   variant={selectedCategory === 'all' ? 'default' : 'outline'}
-                  className="rounded-xl text-xs h-7 px-3 flex-shrink-0 font-medium"
+                  className="rounded-xl text-xs h-8 px-3.5 shrink-0 font-bold"
                   onClick={() => setSelectedCategory('all')}
                 >
-                  الكل
+                  الكل ({products.length})
                 </Button>
                 {categories.map((cat) => (
                   <Button
                     key={cat.id}
                     size="sm"
                     variant={selectedCategory === cat.id ? 'default' : 'outline'}
-                    className="rounded-xl text-xs h-7 px-3 flex-shrink-0 font-medium"
+                    className="rounded-xl text-xs h-8 px-3.5 shrink-0 font-bold"
                     onClick={() => setSelectedCategory(cat.id)}
                   >
                     {cat.name}
@@ -620,19 +864,19 @@ export default function POSPage() {
               </div>
             </div>
 
-            {/* Product Cards Grid */}
-            <div className="flex-1 overflow-y-auto min-h-0 pr-1">
+            {/* Product Cards Grid: Scrolls INSIDE its container only */}
+            <div className="flex-1 min-h-0 overflow-y-auto pr-1">
               {productsLoading ? (
-                <div className="flex items-center justify-center h-48 text-muted-foreground text-sm">
+                <div className="flex items-center justify-center h-48 text-muted-foreground text-sm font-semibold">
                   جاري تحميل المنتجات...
                 </div>
               ) : products.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-48 text-muted-foreground text-sm gap-2">
                   <BookOpen className="w-8 h-8 opacity-30" />
-                  <span>لا توجد منتجات مطابقة للبحث</span>
+                  <span className="font-semibold">لا توجد منتجات مطابقة للبحث</span>
                 </div>
               ) : (
-                <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-2.5">
+                <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-2 sm:gap-2.5 pb-2">
                   {products.map((prod) => {
                     const displayPrice = isWholesale
                       ? (prod.wholesalePrice || prod.sellingPrice)
@@ -641,22 +885,22 @@ export default function POSPage() {
                     return (
                       <Card
                         key={prod.id}
-                        className="cursor-pointer hover:border-primary hover:shadow-md transition-all duration-200 bg-card/90 overflow-hidden flex flex-col justify-between"
+                        className="cursor-pointer hover:border-primary/80 hover:shadow-md transition-all duration-200 bg-card/90 border-border/80 overflow-hidden flex flex-col justify-between active:scale-[0.98] rounded-xl group"
                         onClick={() => handleProductCardClick(prod)}
                       >
-                        <CardContent className="p-2.5 space-y-1.5 flex flex-col justify-between h-full">
+                        <CardContent className="p-3 space-y-2 flex flex-col justify-between h-full">
                           <div>
                             <div className="flex justify-between items-start gap-1">
-                              <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
+                              <Badge variant="secondary" className="text-[10px] px-1.5 py-0 font-bold bg-muted">
                                 {prod.type === 'book' ? 'كتاب' : 'أدوات'}
                               </Badge>
                               {prod.hasVariants && (
-                                <Badge variant="outline" className="text-[9px] px-1 bg-indigo-500/10 text-indigo-600 border-indigo-500/20">
+                                <Badge variant="outline" className="text-[9px] px-1 bg-indigo-500/10 text-indigo-600 border-indigo-500/30 font-bold">
                                   متغيرات
                                 </Badge>
                               )}
                             </div>
-                            <h3 className="font-bold text-xs text-foreground line-clamp-2 mt-1">
+                            <h3 className="font-bold text-xs sm:text-sm text-foreground line-clamp-2 mt-1.5 group-hover:text-primary transition-colors">
                               {prod.name}
                             </h3>
                             {prod.author && (
@@ -664,11 +908,11 @@ export default function POSPage() {
                             )}
                           </div>
 
-                          <div className="pt-1 border-t border-border/50 flex items-center justify-between">
-                            <span className="font-mono text-[10px] text-muted-foreground">
+                          <div className="pt-2 border-t border-border/60 flex items-center justify-between">
+                            <span className="font-mono text-[10px] text-muted-foreground truncate max-w-[70px]">
                               {prod.sku}
                             </span>
-                            <span className="font-extrabold text-sm text-primary">
+                            <span className="font-black text-sm sm:text-base text-primary font-mono">
                               {number(displayPrice)} ج.م
                             </span>
                           </div>
@@ -679,21 +923,44 @@ export default function POSPage() {
                 </div>
               )}
             </div>
+
+            {/* Mobile Floating Bottom Bar for Fast Checkout from Catalog */}
+            <div className="lg:hidden shrink-0 pt-2 border-t border-border flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Badge variant="secondary" className="font-black text-xs px-2 py-1 bg-primary/10 text-primary">
+                  {totals.totalItemsCount} قطعة
+                </Badge>
+                <span className="font-black text-base text-foreground font-mono">
+                  {number(totals.grandTotal)} ج.م
+                </span>
+              </div>
+              <Button
+                size="sm"
+                className="h-10 px-4 font-black text-xs gap-1.5 bg-primary text-primary-foreground shadow-md rounded-xl"
+                onClick={() => setMobileTab('cart')}
+              >
+                <ShoppingBag className="w-4 h-4" />
+                <span>عرض السلة والدفع</span>
+              </Button>
+            </div>
           </div>
 
-          {/* Cart Section (5 Cols) */}
-          <div className="lg:col-span-5 flex flex-col gap-3 min-h-0 bg-card/80 backdrop-blur border border-border rounded-2xl p-3 shadow-sm">
+          {/* Cart Section (5 Cols on desktop) */}
+          <div className={cn(
+            "lg:col-span-5 h-full min-h-0 bg-card/85 backdrop-blur border border-border/80 rounded-2xl p-3 shadow-sm flex flex-col gap-2.5 overflow-hidden",
+            mobileTab === 'cart' ? "flex" : "hidden lg:flex"
+          )}>
             {/* Cart Header */}
-            <div className="flex items-center justify-between pb-2 border-b border-border">
+            <div className="shrink-0 flex items-center justify-between pb-2 border-b border-border/80">
               <div className="flex items-center gap-2">
                 <ShoppingBag className="w-5 h-5 text-primary" />
-                <h2 className="font-bold text-sm">سلة المشتريات</h2>
-                <Badge variant="secondary" className="text-xs">
+                <h2 className="font-black text-sm text-foreground">سلة المشتريات</h2>
+                <Badge variant="secondary" className="text-xs font-black px-2 py-0.5 bg-primary/10 text-primary">
                   {totals.totalItemsCount} قطعة
                 </Badge>
               </div>
 
-              {/* Customer Selector */}
+              {/* Customer Selector & Clear Cart */}
               <div className="flex items-center gap-1.5">
                 <Select
                   value={selectedCustomer?.id || 'walkin'}
@@ -709,7 +976,7 @@ export default function POSPage() {
                     }
                   }}
                 >
-                  <SelectTrigger className="h-7 text-xs w-40">
+                  <SelectTrigger className="h-8 text-xs w-36 sm:w-44 font-semibold rounded-xl">
                     <SelectValue placeholder="عميل نقدي" />
                   </SelectTrigger>
                   <SelectContent dir="rtl">
@@ -723,7 +990,7 @@ export default function POSPage() {
                 </Select>
 
                 {selectedCustomer && (
-                  <div className="hidden lg:flex items-center gap-1">
+                  <div className="hidden xl:flex items-center gap-1">
                     {selectedCustomer.creditEnabled && (
                       <Badge variant="outline" className="text-[10px] px-1 h-5 text-amber-700 bg-amber-500/10 border-amber-500/30">
                         سقف: {number(selectedCustomer.creditLimit || 0)} ج.م
@@ -741,94 +1008,100 @@ export default function POSPage() {
                   <Button
                     size="sm"
                     variant="ghost"
-                    className="h-7 w-7 p-0 text-destructive hover:bg-destructive/10"
+                    className="h-8 w-8 p-0 text-destructive hover:bg-destructive/10 rounded-xl"
                     onClick={clearCart}
-                    title="تفريغ السلة"
+                    title="تفريغ السلة بالكامل"
                   >
-                    <RotateCcw className="w-3.5 h-3.5" />
+                    <RotateCcw className="w-4 h-4" />
                   </Button>
                 )}
               </div>
             </div>
 
-            {/* Cart Items List */}
-            <div className="flex-1 overflow-y-auto min-h-0 space-y-2 pr-1">
+            {/* Cart Items List: Scrolls independently */}
+            <div className="flex-1 min-h-0 overflow-y-auto space-y-2 pr-1">
               {cartItems.length === 0 ? (
-                <div className="flex flex-col items-center justify-center h-48 text-muted-foreground text-xs gap-2">
-                  <ShoppingBag className="w-8 h-8 opacity-20" />
-                  <span>السلة فارغة. قم بمسح باركود أو اختيار أصناف.</span>
+                <div className="flex flex-col items-center justify-center h-full min-h-[160px] text-muted-foreground text-xs gap-2 py-8">
+                  <div className="w-12 h-12 rounded-full bg-muted/60 flex items-center justify-center">
+                    <ShoppingBag className="w-6 h-6 opacity-40" />
+                  </div>
+                  <span className="font-bold">السلة فارغة</span>
+                  <span className="text-[11px] text-muted-foreground">امسح باركود بالماسح أو اضغط على صنف لإضافته</span>
                 </div>
               ) : (
                 cartItems.map((item) => (
                   <div
                     key={item.id}
-                    className="p-2.5 bg-muted/30 rounded-xl border border-border/80 flex flex-col gap-1.5 hover:bg-muted/50 transition-colors"
+                    className="p-3 bg-card rounded-xl border border-border/80 flex flex-col gap-2 hover:border-primary/40 transition-colors shadow-sm"
                   >
                     <div className="flex items-start justify-between gap-2">
-                      <div className="flex-1">
-                        <span className="font-bold text-xs text-foreground">{item.productName}</span>
+                      <div className="flex-1 min-w-0">
+                        <span className="font-black text-xs sm:text-sm text-foreground truncate block">{item.productName}</span>
                         {item.variantName && (
-                          <span className="mr-1 text-[11px] text-muted-foreground">({item.variantName})</span>
+                          <span className="text-[11px] text-muted-foreground font-medium">({item.variantName})</span>
                         )}
-                        <div className="text-[10px] text-muted-foreground font-mono">
+                        <div className="text-[10px] text-muted-foreground font-mono mt-0.5">
                           {item.sku} {item.conversionFactor > 1 ? `| عبوة (${item.conversionFactor} قطعة)` : ''}
                         </div>
                       </div>
-                      <div className="text-left">
-                        <div className="font-extrabold text-sm text-foreground">
+                      <div className="text-left shrink-0">
+                        <div className="font-black text-sm sm:text-base text-foreground font-mono">
                           {number(item.lineTotal)} ج.م
                         </div>
                         {item.discountAmount > 0 && (
-                          <div className="text-[10px] text-red-600">خصم: -{item.discountAmount}</div>
+                          <div className="text-[10px] text-red-600 font-bold">خصم: -{item.discountAmount}</div>
                         )}
                       </div>
                     </div>
 
-                    <div className="flex items-center justify-between pt-1 border-t border-border/40">
-                      {/* Quantity Buttons */}
-                      <div className="flex items-center gap-1 bg-background rounded-lg border border-border p-0.5">
+                    <div className="flex items-center justify-between pt-2 border-t border-border/40">
+                      {/* Quantity Buttons - Larger touch-friendly size */}
+                      <div className="flex items-center gap-1 bg-muted/50 rounded-xl border border-border/70 p-1">
                         <Button
                           size="icon"
                           variant="ghost"
-                          className="h-6 w-6 rounded"
+                          className="h-7 w-7 sm:h-8 sm:w-8 rounded-lg font-bold hover:bg-background shadow-xs text-foreground"
                           onClick={() => updateQuantity(item.id, item.quantity - 1)}
+                          aria-label="إنقاص الكمية"
                         >
-                          <Minus className="w-3 h-3" />
+                          <Minus className="w-3.5 h-3.5" />
                         </Button>
-                        <span className="w-8 text-center text-xs font-bold">{item.quantity}</span>
+                        <span className="w-9 text-center text-xs sm:text-sm font-black font-mono">{item.quantity}</span>
                         <Button
                           size="icon"
                           variant="ghost"
-                          className="h-6 w-6 rounded"
+                          className="h-7 w-7 sm:h-8 sm:w-8 rounded-lg font-bold hover:bg-background shadow-xs text-foreground"
                           onClick={() => updateQuantity(item.id, item.quantity + 1)}
+                          aria-label="زيادة الكمية"
                         >
-                          <Plus className="w-3 h-3" />
+                          <Plus className="w-3.5 h-3.5" />
                         </Button>
                       </div>
 
-                      {/* Price / Discount Edit */}
-                      <div className="flex items-center gap-1">
-                        <span className="text-xs font-semibold text-muted-foreground">
+                      {/* Price / Discount Edit & Remove */}
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-xs font-bold text-muted-foreground font-mono">
                           @{number(item.unitSellingPrice)}
                         </span>
                         {(canOverridePrice || canDiscount) && (
                           <Button
                             size="icon"
                             variant="ghost"
-                            className="h-6 w-6 text-muted-foreground hover:text-foreground"
+                            className="h-8 w-8 rounded-xl text-muted-foreground hover:text-foreground hover:bg-muted"
                             onClick={() => handleOpenEditLine(item)}
                             title="تعديل السعر أو الخصم"
                           >
-                            <Edit3 className="w-3 h-3" />
+                            <Edit3 className="w-3.5 h-3.5" />
                           </Button>
                         )}
                         <Button
                           size="icon"
                           variant="ghost"
-                          className="h-6 w-6 text-destructive hover:bg-destructive/10"
+                          className="h-8 w-8 rounded-xl text-destructive hover:bg-destructive/10"
                           onClick={() => removeItem(item.id)}
+                          title="حذف من السلة"
                         >
-                          <Trash2 className="w-3 h-3" />
+                          <Trash2 className="w-3.5 h-3.5" />
                         </Button>
                       </div>
                     </div>
@@ -837,21 +1110,21 @@ export default function POSPage() {
               )}
             </div>
 
-            {/* Totals & Pay Section */}
-            <div className="space-y-2 pt-2 border-t border-border bg-card/40 rounded-xl p-3">
+            {/* Totals & Pay Section: Pinned to bottom of cart */}
+            <div className="shrink-0 space-y-2 pt-2 border-t border-border bg-muted/30 rounded-xl p-3">
               <div className="space-y-1 text-xs">
-                <div className="flex justify-between text-muted-foreground">
+                <div className="flex justify-between text-muted-foreground font-medium">
                   <span>المجموع الفرعي:</span>
-                  <span className="font-semibold">{number(totals.subtotal)} ج.م</span>
+                  <span className="font-bold font-mono">{number(totals.subtotal)} ج.م</span>
                 </div>
 
                 {/* Cart Discount Control Row */}
                 <div className="flex items-center justify-between py-1 border-y border-dashed border-border/70 my-1">
                   <div className="flex items-center gap-1.5">
                     <Tag className="w-3.5 h-3.5 text-primary" />
-                    <span className="font-medium text-foreground">خصم الفاتورة:</span>
+                    <span className="font-bold text-foreground">خصم الفاتورة:</span>
                     {totals.cartDiscount > 0 && (
-                      <Badge variant="secondary" className="text-[10px] px-1 py-0 h-4 bg-primary/10 text-primary border border-primary/20">
+                      <Badge variant="secondary" className="text-[10px] px-1 py-0 h-4 bg-primary/10 text-primary border border-primary/20 font-bold">
                         {cartDiscountType === 'percentage' ? `${cartDiscountValue}%` : 'مبلغ ثابت'}
                       </Badge>
                     )}
@@ -859,12 +1132,12 @@ export default function POSPage() {
                   <div className="flex items-center gap-1">
                     {totals.cartDiscount > 0 ? (
                       <>
-                        <span className="font-bold text-red-600">-{number(totals.cartDiscount)} ج.م</span>
+                        <span className="font-black text-red-600 font-mono">-{number(totals.cartDiscount)} ج.م</span>
                         {canDiscount && (
                           <Button
                             variant="ghost"
                             size="icon"
-                            className="h-5 w-5 text-muted-foreground hover:text-foreground"
+                            className="h-6 w-6 text-muted-foreground hover:text-foreground rounded-lg"
                             onClick={handleOpenDiscountModal}
                             title="تعديل الخصم"
                           >
@@ -874,7 +1147,7 @@ export default function POSPage() {
                         <Button
                           variant="ghost"
                           size="icon"
-                          className="h-5 w-5 text-destructive hover:bg-destructive/10"
+                          className="h-6 w-6 text-destructive hover:bg-destructive/10 rounded-lg"
                           onClick={handleRemoveDiscount}
                           title="إلغاء الخصم"
                         >
@@ -886,7 +1159,7 @@ export default function POSPage() {
                         <Button
                           variant="outline"
                           size="sm"
-                          className="h-6 text-[11px] px-2 gap-1 border-dashed text-primary hover:text-primary hover:bg-primary/10"
+                          className="h-7 text-xs px-2.5 gap-1 border-dashed text-primary hover:text-primary hover:bg-primary/10 rounded-lg font-bold"
                           onClick={handleOpenDiscountModal}
                           disabled={cartItems.length === 0}
                         >
@@ -901,60 +1174,63 @@ export default function POSPage() {
                 {totals.lineDiscounts > 0 && (
                   <div className="flex justify-between text-muted-foreground">
                     <span>خصومات الأصناف الفردية:</span>
-                    <span className="font-semibold text-red-600">-{number(totals.lineDiscounts)} ج.م</span>
+                    <span className="font-bold text-red-600 font-mono">-{number(totals.lineDiscounts)} ج.م</span>
                   </div>
                 )}
 
                 {totals.totalDiscount > 0 && (
-                  <div className="flex justify-between text-red-600 font-bold bg-red-500/10 dark:bg-red-950/20 px-2 py-0.5 rounded">
+                  <div className="flex justify-between text-red-600 font-black bg-red-500/10 dark:bg-red-950/20 px-2 py-0.5 rounded-lg">
                     <span>إجمالي الخصم المطبق:</span>
-                    <span>-{number(totals.totalDiscount)} ج.م</span>
+                    <span className="font-mono">-{number(totals.totalDiscount)} ج.م</span>
                   </div>
                 )}
+
                 {totals.totalServiceCharge > 0 && (
                   <div className="flex justify-between text-muted-foreground">
                     <span>رسوم الخدمة ({totals.serviceChargeRate}%):</span>
-                    <span className="font-semibold">
+                    <span className="font-bold font-mono">
                       {totals.serviceChargeIncluded ? '(شاملة) ' : '+'}{number(totals.totalServiceCharge)} ج.م
                     </span>
                   </div>
                 )}
+
                 {totals.totalTax > 0 && (
                   <div className="flex justify-between text-muted-foreground">
                     <span>ضريبة القيمة المضافة ({totals.taxRate}%):</span>
-                    <span className="font-semibold">
+                    <span className="font-bold font-mono">
                       {totals.taxIncluded ? '(شاملة) ' : '+'}{number(totals.totalTax)} ج.م
                     </span>
                   </div>
                 )}
-                <div className="flex justify-between items-baseline pt-2 border-t border-border">
-                  <span className="text-sm font-bold text-foreground">الإجمالي المطلوب:</span>
-                  <span className="text-2xl font-black text-primary">
+
+                <div className="flex justify-between items-baseline pt-2 border-t border-border/80">
+                  <span className="text-sm sm:text-base font-black text-foreground">الإجمالي المطلوب:</span>
+                  <span className="text-2xl sm:text-3xl font-black text-primary font-mono tracking-tight">
                     {number(totals.grandTotal)} ج.م
                   </span>
                 </div>
               </div>
 
-              {/* Checkout & Hold Action Buttons */}
+              {/* Checkout & Hold Action Buttons - LARGER, CLEARER, EASIER TO PRESS */}
               <div className="grid grid-cols-4 gap-2 pt-1">
                 <Button
                   variant="outline"
-                  className="col-span-1 h-11 text-xs gap-1 font-semibold"
+                  className="col-span-1 h-12 text-xs sm:text-sm gap-1.5 font-bold rounded-xl border-amber-500/40 text-amber-700 hover:bg-amber-500/10"
                   onClick={handleHoldCart}
                   disabled={cartItems.length === 0}
                   title="تعليق السلة (F6)"
                 >
-                  <Clock className="w-4 h-4 text-amber-500" />
+                  <Clock className="w-4 h-4 text-amber-500 shrink-0" />
                   <span>تعليق (F6)</span>
                 </Button>
 
                 <Button
-                  className="col-span-3 h-11 text-base font-extrabold gap-2 bg-emerald-600 hover:bg-emerald-700 text-white shadow-lg shadow-emerald-600/20"
+                  className="col-span-3 h-12 text-base sm:text-lg font-black gap-2 bg-emerald-600 hover:bg-emerald-700 text-white shadow-lg shadow-emerald-600/25 rounded-xl transition-all"
                   onClick={handleOpenPayment}
                   disabled={cartItems.length === 0}
                 >
-                  <CheckCircle2 className="w-5 h-5" />
-                  <span>إتمام البيع والدفع (F8)</span>
+                  <CheckCircle2 className="w-5 h-5 shrink-0" />
+                  <span>دفع وإنهاء الفاتورة (F8)</span>
                 </Button>
               </div>
             </div>
@@ -1012,6 +1288,8 @@ export default function POSPage() {
                   step="any"
                   value={editPriceInput}
                   onChange={(e) => setEditPriceInput(e.target.value)}
+                  onFocus={(e) => { if (e.target.value === '0') e.target.value = ''; else e.target.select(); }}
+                  placeholder="0.00"
                   className="h-9 font-bold"
                 />
               </div>
@@ -1048,7 +1326,8 @@ export default function POSPage() {
                   step="any"
                   value={editDiscountInput}
                   onChange={(e) => setEditDiscountInput(e.target.value)}
-                  placeholder={editDiscountType === 'percentage' ? 'النسبة المئوية للخصم %' : 'مبلغ الخصم بالجنيه'}
+                  onFocus={(e) => { if (e.target.value === '0') e.target.value = ''; else e.target.select(); }}
+                  placeholder={editDiscountType === 'percentage' ? 'النسبة المئوية %' : '0.00'}
                   className="h-9 font-bold"
                 />
               </div>
@@ -1114,10 +1393,10 @@ export default function POSPage() {
                       type="button"
                       variant={discountModalValue === String(pct) ? 'default' : 'outline'}
                       size="sm"
-                      className="h-8 text-xs font-bold"
+                      className="h-7 text-xs font-bold"
                       onClick={() => setDiscountModalValue(String(pct))}
                     >
-                      {pct}%
+                      %{pct}
                     </Button>
                   ))}
                 </div>
@@ -1135,9 +1414,10 @@ export default function POSPage() {
                   min="0"
                   max={discountModalType === 'percentage' ? 100 : totals.subtotal}
                   step="any"
-                  value={discountModalValue}
+                  value={discountModalValue === '0' ? '' : discountModalValue}
                   onChange={(e) => setDiscountModalValue(e.target.value)}
-                  placeholder="0"
+                  onFocus={(e) => { if (e.target.value === '0') e.target.value = ''; else e.target.select(); }}
+                  placeholder="0.00"
                   className="h-11 text-lg font-bold text-center pl-10"
                   autoFocus
                 />
@@ -1223,33 +1503,26 @@ export default function POSPage() {
       {/* Held Sales Drawer */}
       <HeldSalesDrawer
         open={heldDrawerOpen}
-        onOpenChange={setHeldDrawerOpen}
+        onOpenChange={(open) => {
+          setHeldDrawerOpen(open);
+          if (!open) refreshHeldCount();
+        }}
         tenantId={tenantId}
         branchId={branchId}
+        onCountChange={setHeldSalesCount}
         onResumeSale={(held) => {
-          // Resume held sale into active cart
-          clearCart();
-          held.items.forEach((item) => {
-            // Add as cart line
-            addToCart(
-              {
-                id: item.productId,
-                name: item.productNameSnapshot,
-                sellingPrice: item.unitSellingPrice,
-                sku: item.skuSnapshot,
-                barcode: item.barcodeSnapshot,
-                baseUnitId: item.unitId || 'pcs',
-                type: 'standard',
-                tenantId,
-                status: 'active',
-                createdAt: '',
-                updatedAt: '',
-                hasVariants: !!item.variantId,
-              } as any,
-              item.variantId ? ({ id: item.variantId, sku: item.skuSnapshot } as any) : null,
-              item.quantity
-            );
-          });
+          // Restore items directly into active cart
+          if (held.items && Array.isArray(held.items) && held.items.length > 0) {
+            setCartItems(held.items);
+          }
+          if (held.customerSnapshot) {
+            setSelectedCustomer(held.customerSnapshot);
+          }
+          if (held.cartDiscountType && typeof held.cartDiscountValue === 'number' && held.cartDiscountValue > 0) {
+            applyCartDiscount(held.cartDiscountType, held.cartDiscountValue);
+          }
+          refreshHeldCount();
+          toast.success(`تمت استعادة السلة المعلقة (${held.items?.length || 0} أصناف) بنجاح`);
         }}
       />
 
@@ -1353,6 +1626,28 @@ export default function POSPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Mobile Floating Camera Scanner Quick Trigger (Bottom-left corner on mobile screens) */}
+      <div className="fixed bottom-20 left-4 z-40 lg:hidden">
+        <Button
+          type="button"
+          size="lg"
+          className="h-14 w-14 rounded-full bg-gradient-to-tr from-emerald-600 to-teal-500 hover:from-emerald-700 hover:to-teal-600 text-white shadow-[0_8px_25px_rgba(16,185,129,0.5)] border-2 border-white/20 flex items-center justify-center p-0 transition-transform active:scale-95"
+          onClick={() => setCameraScannerOpen(true)}
+          title="مسح باركود أو QR بكاميرا الموبايل"
+        >
+          <Camera className="w-6 h-6" />
+        </Button>
+      </div>
+
+      {/* Mobile Camera Barcode & QR Scanner Dialog */}
+      <MobileScannerModal
+        open={cameraScannerOpen}
+        onOpenChange={setCameraScannerOpen}
+        onScan={handleScanBarcode}
+        cartTotalCount={cartItems.reduce((acc, i) => acc + i.quantity, 0)}
+        availableProducts={products}
+      />
     </MainLayout>
   );
 }

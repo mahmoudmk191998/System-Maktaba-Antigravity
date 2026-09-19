@@ -436,35 +436,43 @@ export async function fetchPurchaseReturnsFromDb(
   tenantId: string,
   options: FetchPurchaseReturnsOptions = {}
 ): Promise<{ returns: PurchaseReturn[]; hasMore: boolean; lastVisible?: DocumentSnapshot }> {
-  if (!tenantId) return { returns: [], hasMore: false };
+  const { goodsReceiptId, supplierId, pageSize = 50 } = options;
 
-  const { goodsReceiptId, supplierId, pageSize = 30, lastVisible } = options;
-  const constraints: any[] = [where('tenantId', '==', tenantId)];
+  try {
+    const rawSnap = await getDocs(collection(db, 'purchase_returns'));
+    let returns: PurchaseReturn[] = rawSnap.docs.map(
+      (d) => ({ id: d.id, ...d.data() } as PurchaseReturn)
+    );
 
-  if (goodsReceiptId) constraints.push(where('goodsReceiptId', '==', goodsReceiptId));
-  if (supplierId) constraints.push(where('supplierId', '==', supplierId));
+    returns = returns.filter((r) => {
+      const docTenant = r.tenantId || (r as any).tenant_id;
+      if (tenantId && tenantId !== 'default' && docTenant && docTenant !== tenantId) {
+        return false;
+      }
+      if (goodsReceiptId && r.goodsReceiptId !== goodsReceiptId) {
+        return false;
+      }
+      if (supplierId && r.supplierId !== supplierId) {
+        return false;
+      }
+      return true;
+    });
 
-  constraints.push(orderBy('createdAt', 'desc'));
-  constraints.push(fsLimit(pageSize + 1));
+    returns.sort((a, b) => {
+      const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      return timeB - timeA;
+    });
 
-  if (lastVisible) {
-    constraints.push(startAfter(lastVisible));
+    const hasMore = returns.length > pageSize;
+    const pagedReturns = returns.slice(0, pageSize);
+
+    return {
+      returns: pagedReturns,
+      hasMore,
+    };
+  } catch (err) {
+    console.error('Error fetching purchase returns from db:', err);
+    return { returns: [], hasMore: false };
   }
-
-  const q = query(collection(db, 'purchase_returns'), ...constraints);
-  const snap = await getDocs(q);
-
-  let docs = snap.docs;
-  const hasMore = docs.length > pageSize;
-  if (hasMore) {
-    docs = docs.slice(0, pageSize);
-  }
-
-  const returns = docs.map((d) => ({ id: d.id, ...d.data() } as PurchaseReturn));
-
-  return {
-    returns,
-    hasMore,
-    lastVisible: docs.length > 0 ? docs[docs.length - 1] : undefined,
-  };
 }

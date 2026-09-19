@@ -161,17 +161,17 @@ export default function TablesReservations() {
   };
 
   return (
-    <MainLayout title="الطاولات والحجوزات" subtitle="إدارة مخطط الطاولات والحجوزات"
+    <MainLayout title="مقاعد وقاعات القراءة والحجوزات" subtitle="إدارة مخطط مقاعد وقاعات القراءة وحجوزات المكتبة"
       actions={
         <div className="flex gap-2">
-          {canManageTables && <Button variant="outline" className="gap-2 text-xs md:text-sm" onClick={() => setShowAddTable(true)}><Plus className="w-4 h-4" />طاولة جديدة</Button>}
+          {canManageTables && <Button variant="outline" className="gap-2 text-xs md:text-sm" onClick={() => setShowAddTable(true)}><Plus className="w-4 h-4" />مقعد / مساحة جديدة</Button>}
           <Button className="gap-2 text-xs md:text-sm" onClick={() => setShowNewReservation(true)}><Plus className="w-4 h-4" />حجز جديد</Button>
         </div>
       }
     >
       <Tabs defaultValue="floor-plan" className="space-y-6">
         <TabsList className="flex-wrap h-auto">
-          <TabsTrigger value="floor-plan" className="gap-2"><LayoutGrid className="w-4 h-4" />مخطط الطاولات</TabsTrigger>
+          <TabsTrigger value="floor-plan" className="gap-2"><LayoutGrid className="w-4 h-4" />مخطط المقاعد والقاعات</TabsTrigger>
           <TabsTrigger value="reservations" className="gap-2"><Calendar className="w-4 h-4" />الحجوزات</TabsTrigger>
         </TabsList>
 

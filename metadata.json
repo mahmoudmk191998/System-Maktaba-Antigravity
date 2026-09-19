@@ -1,0 +1,6 @@
+{
+  "name": "نظام إدارة المكتبة",
+  "description": "نظام ألوان المتكامل لإدارة المكتبات والقرطاسية ونقاط البيع والمخزون",
+  "requestFramePermissions": ["camera", "geolocation"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

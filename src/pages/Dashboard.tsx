@@ -4,7 +4,7 @@ import { useTenantBranch, useDashboardStats } from '@/hooks/useDatabase';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import {
-  DollarSign, ShoppingCart, TrendingUp, Clock, CheckCircle, AlertTriangle, CalendarDays, PlusCircle, CreditCard, Users, Store, Bike, ArrowUpRight, ArrowLeft
+  DollarSign, ShoppingCart, TrendingUp, Clock, CheckCircle, AlertTriangle, CalendarDays, PlusCircle, CreditCard, Users, BookOpen, Truck, ArrowUpRight, ArrowLeft
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { motion } from 'framer-motion';
@@ -34,9 +34,9 @@ export default function Dashboard() {
 
   const kpis = [
     { title: 'مبيعات اليوم', value: currency(stats.todaySales), change: salesChange, changeLabel: 'مقارنة بالأمس', icon: DollarSign, iconColor: 'success' as const },
-    { title: 'عدد الطلبات', value: number(stats.ordersCount), change: ordersChange, changeLabel: 'مقارنة بالأمس', icon: ShoppingCart, iconColor: 'primary' as const },
-    { title: 'متوسط قيمة الطلب', value: currency(stats.averageOrderValue), icon: TrendingUp, iconColor: 'info' as const },
-    { title: 'طلبات مكتملة', value: number(stats.completedOrders), change: completedChange, changeLabel: 'مقارنة بالأمس', icon: CheckCircle, iconColor: 'warning' as const },
+    { title: 'عدد فواتير البيع', value: number(stats.ordersCount), change: ordersChange, changeLabel: 'مقارنة بالأمس', icon: ShoppingCart, iconColor: 'primary' as const },
+    { title: 'متوسط قيمة الفاتورة', value: currency(stats.averageOrderValue), icon: TrendingUp, iconColor: 'info' as const },
+    { title: 'فواتير مكتملة', value: number(stats.completedOrders), change: completedChange, changeLabel: 'مقارنة بالأمس', icon: CheckCircle, iconColor: 'warning' as const },
   ];
 
   const displayName = profile?.full_name || user?.displayName || (user?.email ? user.email.split('@')[0] : 'أهلاً بك');
@@ -46,7 +46,7 @@ export default function Dashboard() {
   const { activeAlerts } = useNotificationsStore();
 
   return (
-    <MainLayout title="لوحة التحكم" subtitle="نظرة عامة على أداء ومؤشرات المطعم">
+    <MainLayout title="لوحة التحكم" subtitle="نظرة عامة على أداء ومؤشرات المكتبة">
       {/* Active High-Priority Alerts Banner */}
       {activeAlerts && activeAlerts.length > 0 && (
         <div className="mb-6 p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 backdrop-blur-md shadow-sm">
@@ -132,7 +132,7 @@ export default function Dashboard() {
               <div className="absolute inset-6 border border-blue-500/20 rounded-full"></div>
               <div className="absolute inset-10 border border-indigo-500/10 rounded-full animate-[spin_15s_linear_infinite_reverse]"></div>
 
-              <Store className="w-12 h-12 text-cyan-400 drop-shadow-[0_0_15px_rgba(34,211,238,0.5)] z-10" />
+              <BookOpen className="w-12 h-12 text-cyan-400 drop-shadow-[0_0_15px_rgba(34,211,238,0.5)] z-10" />
             </div>
           </div>
 
@@ -190,13 +190,13 @@ export default function Dashboard() {
         <Card className="shadow-sm border-border/50 bg-card/50 backdrop-blur-md rounded-3xl overflow-hidden">
           <CardHeader className="pb-2 border-b border-border/30 bg-card/40">
             <CardTitle className="text-lg font-black flex items-center gap-2">
-              <Store className="w-5 h-5 text-indigo-500" />
-              توزيع الطلبات (اليوم)
+              <CreditCard className="w-5 h-5 text-indigo-500" />
+              توزيع فواتير البيع (طرق الدفع)
             </CardTitle>
           </CardHeader>
           <CardContent className="pt-6">
             {!stats.orderDistribution || stats.orderDistribution.length === 0 ? (
-              <div className="h-[300px] flex items-center justify-center text-muted-foreground">لا توجد طلبات اليوم</div>
+              <div className="h-[300px] flex items-center justify-center text-muted-foreground">لا توجد فواتير بيع مسجلة اليوم</div>
             ) : (
               <div className="h-[300px] w-full relative">
                 <ResponsiveContainer width="100%" height="100%">
@@ -216,7 +216,7 @@ export default function Dashboard() {
                       ))}
                     </Pie>
                     <Tooltip
-                      formatter={(value: number) => [number(value) + ' طلب', 'العدد']}
+                      formatter={(value: number) => [number(value) + ' فاتورة', 'العدد']}
                       contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)', fontWeight: 'bold' }}
                     />
                     <Legend verticalAlign="bottom" height={36} wrapperStyle={{ fontWeight: 'bold', fontSize: '13px' }} />
@@ -225,7 +225,7 @@ export default function Dashboard() {
                 {/* Center text for Donut */}
                 <div className="absolute top-[45%] left-1/2 -translate-x-1/2 -translate-y-1/2 text-center pointer-events-none">
                   <p className="text-3xl font-black text-foreground">{number(stats.ordersCount)}</p>
-                  <p className="text-xs text-muted-foreground font-bold">إجمالي الطلبات</p>
+                  <p className="text-xs text-muted-foreground font-bold">إجمالي الفواتير</p>
                 </div>
               </div>
             )}
@@ -239,7 +239,7 @@ export default function Dashboard() {
           <CardHeader className="pb-4 border-b border-border/30 bg-card/40">
             <CardTitle className="text-lg font-black flex items-center gap-2">
               <ArrowUpRight className="w-5 h-5 text-emerald-500" />
-              الأصناف الأكثر مبيعاً
+              الكتب والمنتجات الأكثر مبيعاً
             </CardTitle>
           </CardHeader>
           <CardContent className="pt-4 px-4">
@@ -252,7 +252,7 @@ export default function Dashboard() {
                     <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-400 to-emerald-600 text-white font-black flex items-center justify-center text-lg shadow-md">{index + 1}</div>
                     <div className="flex-1 min-w-0">
                       <p className="font-bold truncate text-foreground">{item.name}</p>
-                      <p className="text-xs text-muted-foreground font-semibold">{number(item.count)} طلب</p>
+                      <p className="text-xs text-muted-foreground font-semibold">{number(item.count)} مباع</p>
                     </div>
                     <p className="font-black text-success text-base">{currency(item.revenue)}</p>
                   </div>
@@ -267,12 +267,12 @@ export default function Dashboard() {
           <CardHeader className="pb-4 border-b border-border/30 bg-card/40">
             <CardTitle className="text-lg font-black flex items-center gap-2">
               <Clock className="w-5 h-5 text-amber-500" />
-              الطلبات الأخيرة
+              أحدث فواتير المبيعات
             </CardTitle>
           </CardHeader>
           <CardContent className="pt-4 px-4">
             {!stats.recentOrders || stats.recentOrders.length === 0 ? (
-              <p className="text-center text-muted-foreground py-8">لا توجد طلبات بعد</p>
+              <p className="text-center text-muted-foreground py-8">لا توجد فواتير بعد</p>
             ) : (
               <div className="space-y-3">
                 {stats.recentOrders.map((order: any) => {
@@ -281,7 +281,7 @@ export default function Dashboard() {
                       case 'completed': return { label: 'مكتمل', className: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' };
                       case 'delivered': return { label: 'تم التسليم', className: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' };
                       case 'ready': return { label: 'جاهز', className: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400' };
-                      case 'preparing': return { label: 'قيد التحضير', className: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400' };
+                      case 'preparing': return { label: 'قيد التجهيز', className: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400' };
                       case 'cancelled': return { label: 'ملغي', className: 'bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400' };
                       case 'pending':
                       default: return { label: 'في الانتظار', className: 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-400' };
@@ -289,16 +289,16 @@ export default function Dashboard() {
                   };
                   const getOrderTypeInfo = (type: string) => {
                     switch (type) {
-                      case 'dine_in': return { icon: Store, text: 'صالة', color: 'text-blue-500' };
-                      case 'delivery': return { icon: Bike, text: 'توصيل', color: 'text-purple-500' };
-                      case 'takeaway': default: return { icon: ShoppingCart, text: 'تيك أواي', color: 'text-emerald-500' };
+                      case 'dine_in': return { icon: BookOpen, text: 'بيع مباشر', color: 'text-blue-500' };
+                      case 'delivery': return { icon: Truck, text: 'شحن وتوصيل', color: 'text-purple-500' };
+                      case 'takeaway': default: return { icon: ShoppingCart, text: 'استلام بالفرع', color: 'text-emerald-500' };
                     }
                   };
                   const statusBadge = getStatusBadge(order.status);
                   const typeInfo = getOrderTypeInfo(order.order_type);
 
                   return (
-                    <div key={order.id} className="flex items-center justify-between p-3.5 bg-card border border-border/50 rounded-2xl hover:border-primary/30 transition-all hover:shadow-md cursor-pointer" onClick={() => navigate('/pos')}>
+                    <div key={order.id} className="flex items-center justify-between p-3.5 bg-card border border-border/50 rounded-2xl hover:border-primary/30 transition-all hover:shadow-md cursor-pointer" onClick={() => navigate('/orders-history')}>
                       <div className="flex items-center gap-3">
                         <div className={`w-10 h-10 rounded-full bg-muted flex items-center justify-center ${typeInfo.color}`}>
                           <typeInfo.icon className="w-5 h-5" />
@@ -332,7 +332,7 @@ export default function Dashboard() {
               <div className="p-2.5 bg-indigo-100 dark:bg-indigo-900/50 text-indigo-600 dark:text-indigo-400 rounded-xl">
                 <CalendarDays className="w-6 h-6" />
               </div>
-              <p className="text-base font-bold text-indigo-900 dark:text-indigo-300">حجوزات اليوم</p>
+              <p className="text-base font-bold text-indigo-900 dark:text-indigo-300">حجوزات واستعارات الكتب</p>
             </div>
             <p className="text-4xl font-black text-indigo-700 dark:text-indigo-400 mt-2">{number(stats.reservationsToday)}</p>
           </div>
@@ -340,13 +340,13 @@ export default function Dashboard() {
           <div className="p-5 bg-gradient-to-br from-amber-500/10 to-amber-600/5 dark:from-amber-500/20 dark:to-amber-600/10 rounded-3xl border border-amber-200/50 dark:border-amber-800/50 text-center flex flex-col items-center justify-center transition-transform hover:scale-[1.03]">
             <Clock className="w-8 h-8 text-amber-500 mb-3" />
             <p className="text-3xl font-black text-amber-700 dark:text-amber-400 mb-1">{number(stats.pendingOrders)}</p>
-            <p className="text-xs font-bold text-amber-900/60 dark:text-amber-300/60 uppercase">قيد الانتظار</p>
+            <p className="text-xs font-bold text-amber-900/60 dark:text-amber-300/60 uppercase">فواتير قيد المعالجة</p>
           </div>
 
           <div className="p-5 bg-gradient-to-br from-red-500/10 to-red-600/5 dark:from-red-500/20 dark:to-red-600/10 rounded-3xl border border-red-200/50 dark:border-red-800/50 text-center flex flex-col items-center justify-center transition-transform hover:scale-[1.03]">
             <AlertTriangle className="w-8 h-8 text-red-500 mb-3" />
             <p className="text-3xl font-black text-red-700 dark:text-red-400 mb-1">{number(stats.lowStockItems)}</p>
-            <p className="text-xs font-bold text-red-900/60 dark:text-red-300/60 uppercase">نواقص المخزون</p>
+            <p className="text-xs font-bold text-red-900/60 dark:text-red-300/60 uppercase">كتب قاربت النفاذ</p>
           </div>
         </div>
       </div>

@@ -104,6 +104,13 @@ export async function startInventoryCountSession(
       updatedAt: now,
     };
 
+    // Save locally
+    try {
+      const raw = localStorage.getItem('pos_inventory_counts');
+      const list = raw ? JSON.parse(raw) : [];
+      localStorage.setItem('pos_inventory_counts', JSON.stringify([session, ...list.filter((s: any) => s.id !== session.id)]));
+    } catch {}
+
     await setDoc(sessionRef, session);
     return { success: true, session };
   } catch (err: any) {
@@ -312,25 +319,66 @@ export async function postInventoryCountSession(
 }
 
 /**
- * Fetches count sessions for a tenant.
+ * Fetches count sessions for a tenant with in-memory filtering and dual-sync.
  */
 export async function fetchCountSessionsFromDb(
   tenantId: string,
   locationId?: string
 ): Promise<InventoryCountSession[]> {
-  if (!tenantId) return [];
-  const constraints: any[] = [where('tenantId', '==', tenantId)];
-  if (locationId) {
-    constraints.push(where('branchId', '==', locationId));
+  const effTenant = tenantId || localStorage.getItem('current_tenant_id') || 'default-tenant';
+  let firestoreSessions: InventoryCountSession[] = [];
+
+  try {
+    const q = query(
+      collection(db, 'inventory_counts'),
+      where('tenantId', '==', effTenant),
+      fsLimit(100)
+    );
+    const snap = await getDocs(q);
+    firestoreSessions = snap.docs.map((d) => ({
+      id: d.id,
+      ...d.data(),
+    })) as InventoryCountSession[];
+
+    if (firestoreSessions.length === 0) {
+      try {
+        const snapAll = await getDocs(query(collection(db, 'inventory_counts'), fsLimit(100)));
+        firestoreSessions = snapAll.docs.map((d) => ({
+          id: d.id,
+          ...d.data(),
+        })) as InventoryCountSession[];
+      } catch {}
+    }
+  } catch (err) {
+    console.warn('Firestore fetchCountSessionsFromDb failed, falling back to local cache:', err);
   }
-  constraints.push(orderBy('createdAt', 'desc'));
-  constraints.push(fsLimit(50));
 
-  const q = query(collection(db, 'inventory_counts'), ...constraints);
-  const snap = await getDocs(q);
+  // Merge with local storage
+  let localSessions: InventoryCountSession[] = [];
+  try {
+    const raw = localStorage.getItem('pos_inventory_counts');
+    if (raw) localSessions = JSON.parse(raw);
+  } catch {}
 
-  return snap.docs.map((d) => ({
-    id: d.id,
-    ...d.data(),
-  })) as InventoryCountSession[];
+  const map = new Map<string, InventoryCountSession>();
+  firestoreSessions.forEach((s) => map.set(s.id, s));
+  localSessions.forEach((s) => {
+    if (!map.has(s.id)) map.set(s.id, s);
+  });
+
+  let sessions = Array.from(map.values());
+
+  if (locationId && locationId !== 'all') {
+    sessions = sessions.filter(
+      (s) => s.branchId === locationId || s.locationId === locationId || s.branchId === 'main'
+    );
+  }
+
+  sessions.sort(
+    (a, b) =>
+      new Date(b.createdAt || b.startedAt || 0).getTime() -
+      new Date(a.createdAt || a.startedAt || 0).getTime()
+  );
+
+  return sessions;
 }

@@ -314,25 +314,30 @@ export const PurchaseOrderModal: React.FC<PurchaseOrderModalProps> = ({
               />
 
               {searchResults.length > 0 && (
-                <div className="absolute z-20 w-full mt-1 bg-white border border-border rounded-xl shadow-xl max-h-48 overflow-y-auto divide-y divide-border">
+                <div className="absolute z-30 w-full mt-1 bg-popover text-popover-foreground border border-border rounded-xl shadow-2xl max-h-56 overflow-y-auto divide-y divide-border">
                   {searchResults.map((p) => (
                     <div
                       key={p.id}
                       onClick={() => handleAddProduct(p)}
-                      className="p-2.5 hover:bg-muted/50 cursor-pointer flex justify-between items-center text-xs"
+                      className="p-2.5 hover:bg-muted/80 cursor-pointer flex justify-between items-center text-xs transition-colors"
                     >
                       <div>
-                        <div className="font-bold text-foreground">{p.name}</div>
-                        <div className="text-[10px] text-muted-foreground font-mono">
+                        <div className="font-bold text-popover-foreground">{p.name}</div>
+                        <div className="text-[10px] text-muted-foreground font-mono mt-0.5">
                           SKU: {p.sku} | تكلفة الشراء: {number(p.purchasePrice || 0)} ج.م
                         </div>
                       </div>
-                      <Button size="sm" variant="ghost" className="h-7 text-xs text-primary gap-1">
+                      <Button size="sm" variant="ghost" className="h-7 text-xs text-primary hover:bg-primary/10 gap-1 font-bold">
                         <Plus className="w-3 h-3" />
                         إضافة
                       </Button>
                     </div>
                   ))}
+                </div>
+              )}
+              {productSearch.trim().length > 1 && searchResults.length === 0 && (
+                <div className="absolute z-30 w-full mt-1 p-3 bg-popover text-popover-foreground border border-border rounded-xl shadow-2xl text-xs text-center text-muted-foreground">
+                  لا توجد أصناف مطابقة للبحث "{productSearch}"
                 </div>
               )}
             </div>

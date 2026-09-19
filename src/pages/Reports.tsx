@@ -1,105 +1,93 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { MainLayout } from '@/components/layout';
 import { useTenantBranch } from '@/hooks/useDatabase';
 import { useAppStore } from '@/lib/store';
 import { useFormatters } from '@/lib/formatters';
-import { useUserPermissions } from '@/hooks/usePermissions';
 import {
   BarChart3,
   TrendingUp,
+  DollarSign,
   Package,
-  AlertTriangle,
+  ShoppingCart,
   Users,
   Building2,
-  DollarSign,
-  Download,
   Calendar,
-  Clock,
-  Eye,
-  EyeOff,
   RefreshCw,
-  Search,
-  ShoppingCart,
-  Truck,
-  Layers,
+  Download,
   ArrowUpRight,
   ArrowDownRight,
-  HelpCircle,
-  FileSpreadsheet,
+  CreditCard,
+  Wallet,
+  Percent,
+  AlertTriangle,
+  Layers,
+  Search,
+  Eye,
+  EyeOff,
   CheckCircle2,
-  Flame,
-  ShieldAlert,
+  Clock,
+  Sparkles,
+  PieChart as PieIcon,
+  Tag
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import {
+  ResponsiveContainer,
   AreaChart,
   Area,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip as RechartsTooltip,
-  ResponsiveContainer,
   BarChart,
   Bar,
+  XAxis,
+  YAxis,
+  Tooltip as RechartsTooltip,
+  CartesianGrid,
   PieChart,
   Pie,
   Cell,
-  Legend,
+  Legend
 } from 'recharts';
 import { toast } from 'sonner';
 
 import {
   DatePreset,
-  ComparisonMode,
   DEFAULT_TIMEZONE,
   getDateRangeFromPreset,
-  getComparisonRange,
+  formatZonedDate,
+  parseToDate
 } from '@/services/analytics/reportingTimezone';
-import {
-  generateSalesAnalytics,
-  SalesAnalyticsReport,
-} from '@/services/analytics/salesAnalytics.service';
-import {
-  generateInventoryAnalytics,
-  InventoryAnalyticsReport,
-} from '@/services/analytics/inventoryAnalytics.service';
-import {
-  generateDemandAndReorderReport,
-  DemandIntelligenceReport,
-} from '@/services/analytics/demandAndReorder.service';
-import {
-  generateProfitabilityReport,
-  ProfitabilityAnalyticsReport,
-} from '@/services/analytics/profitabilityAnalytics.service';
-import {
-  generatePartnerAnalytics,
-  PartnerAnalyticsReport,
-} from '@/services/analytics/partnerAnalytics.service';
-import {
-  generateBranchAndEmployeeAnalytics,
-  BranchAndEmployeeReport,
-} from '@/services/analytics/branchAndEmployeeAnalytics.service';
-import {
-  generateFinancialBIMetrics,
-  FinancialBIMetrics,
-} from '@/services/analytics/financialBI.service';
-import {
-  rebuildDailyAnalyticsForDateRange,
-} from '@/services/analytics/analyticsAggregator.service';
-import {
-  exportSalesTrendCsv,
-  exportInventoryHealthCsv,
-  exportReorderRecommendationsCsv,
-  exportProfitabilityCsv,
-} from '@/services/analytics/exportReports.service';
+import { fetchSalesPeriodData } from '@/services/analytics/salesAnalytics.service';
+import { fetchProductsCatalog, fetchTenantStockBalances } from '@/services/analytics/inventoryAnalytics.service';
+import { getExpenses } from '@/services/expenses';
+import { fetchCategoriesFromDb } from '@/services/categories/categories.service';
+import { db } from '@/lib/firebase';
+import { collection, getDocs, query, where } from 'firebase/firestore';
 
-const CHART_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ec4899', '#8b5cf6', '#06b6d4', '#ef4444', '#f97316'];
+const CHART_PALETTE = ['#3b82f6', '#10b981', '#f59e0b', '#ec4899', '#8b5cf6', '#06b6d4', '#f97316', '#64748b'];
+
+interface SaleProductRow {
+  id: string;
+  name: string;
+  category: string;
+  unitsSold: number;
+  totalRevenue: number;
+  totalCost: number;
+  grossProfit: number;
+  marginPct: number;
+}
+
+interface CashierSummary {
+  id: string;
+  name: string;
+  invoicesCount: number;
+  totalSales: number;
+  totalDiscounts: number;
+  avgTicket: number;
+}
 
 export default function Reports() {
   const currentTenant = useAppStore((state) => state.currentTenant);
@@ -108,18 +96,13 @@ export default function Reports() {
   const tenantId = currentTenant?.id || hookTenantId || 'default';
   const branchId = currentBranch?.id || hookBranchId || '';
   const { currency, number } = useFormatters();
-  const { hasPermission, isAdmin, isOwner } = useUserPermissions();
 
-  // Permissions & Cost Masking
-  const canViewCostsGlobal = isOwner || isAdmin || hasPermission('analytics.view_costs') || hasPermission('reports.sales');
-  const [revealCosts, setRevealCosts] = useState<boolean>(true);
-  const showCosts = canViewCostsGlobal && revealCosts;
-
-  // Active Tab
+  // Primary UI state
   const [activeTab, setActiveTab] = useState<string>('overview');
+  const [loading, setLoading] = useState<boolean>(true);
+  const [revealCosts, setRevealCosts] = useState<boolean>(true);
 
-  // Filter State
-  const [timeZone, setTimeZone] = useState<string>(DEFAULT_TIMEZONE);
+  // Filters (defaults to 'all' to immediately show entire sales invoice history)
   const [datePreset, setDatePreset] = useState<DatePreset>('all');
   const [customStart, setCustomStart] = useState<string>(() => {
     const d = new Date();
@@ -127,1241 +110,1134 @@ export default function Reports() {
     return d.toISOString().split('T')[0];
   });
   const [customEnd, setCustomEnd] = useState<string>(() => new Date().toISOString().split('T')[0]);
-  const [comparisonMode, setComparisonMode] = useState<ComparisonMode>('previous_period');
   const [selectedBranch, setSelectedBranch] = useState<string>('all');
+  const [timeZone, setTimeZone] = useState<string>(DEFAULT_TIMEZONE);
+  const [searchFilter, setSearchFilter] = useState<string>('');
 
-  // Search & Secondary Filters
-  const [searchTerm, setSearchTerm] = useState<string>('');
-  const [reorderSupplierFilter, setReorderSupplierFilter] = useState<string>('all');
-  const [reorderUrgencyFilter, setReorderUrgencyFilter] = useState<string>('all');
+  // Loaded operational datasets
+  const [salesRecords, setSalesRecords] = useState<any[]>([]);
+  const [returnsRecords, setReturnsRecords] = useState<any[]>([]);
+  const [stockRecords, setStockRecords] = useState<any[]>([]);
+  const [productCatalog, setProductCatalog] = useState<Map<string, any>>(new Map());
+  const [categoriesMap, setCategoriesMap] = useState<Map<string, string>>(new Map());
+  const [branchesList, setBranchesList] = useState<{ id: string; name: string }[]>([]);
+  const [expensesTotal, setExpensesTotal] = useState<number>(0);
+  const [expensesList, setExpensesList] = useState<any[]>([]);
 
-  // Data States
-  const [loading, setLoading] = useState<boolean>(true);
-  const [salesReport, setSalesReport] = useState<SalesAnalyticsReport | null>(null);
-  const [inventoryReport, setInventoryReport] = useState<InventoryAnalyticsReport | null>(null);
-  const [demandReport, setDemandReport] = useState<DemandIntelligenceReport | null>(null);
-  const [profitabilityReport, setProfitabilityReport] = useState<ProfitabilityAnalyticsReport | null>(null);
-  const [partnerReport, setPartnerReport] = useState<PartnerAnalyticsReport | null>(null);
-  const [branchReport, setBranchReport] = useState<BranchAndEmployeeReport | null>(null);
-  const [financialBIMetrics, setFinancialBIMetrics] = useState<FinancialBIMetrics | null>(null);
-
-  // Sync / Aggregator State
-  const [isRebuildingAggregates, setIsRebuildingAggregates] = useState<boolean>(false);
-
-  // Compute Active Range
+  // Calculate current date range bounds
   const activeDateRange = useMemo(() => {
     return getDateRangeFromPreset(datePreset, customStart, customEnd, timeZone);
   }, [datePreset, customStart, customEnd, timeZone]);
 
-  const activeComparisonRange = useMemo(() => {
-    return getComparisonRange(activeDateRange, comparisonMode, timeZone);
-  }, [activeDateRange, comparisonMode, timeZone]);
-
-  // Main Data Loader
-  const loadAnalyticsData = async () => {
-    const effectiveTenantId = tenantId || currentTenant?.id || hookTenantId || 'default';
+  // Main loader: pulls all live collections synchronously with zero data leakage
+  const loadReportsData = useCallback(async () => {
     setLoading(true);
     try {
       const bId = selectedBranch === 'all' ? undefined : selectedBranch;
 
-      // Parallelize module generation with Promise.allSettled for fault-isolation
-      const results = await Promise.allSettled([
-        generateSalesAnalytics(effectiveTenantId, activeDateRange, bId, activeComparisonRange.comparison, timeZone),
-        generateInventoryAnalytics(effectiveTenantId, activeDateRange, bId),
-        generateDemandAndReorderReport(effectiveTenantId, bId),
-        generateProfitabilityReport(effectiveTenantId, activeDateRange, bId),
-        generatePartnerAnalytics(effectiveTenantId, activeDateRange, bId),
-        generateBranchAndEmployeeAnalytics(effectiveTenantId, activeDateRange),
-        generateFinancialBIMetrics(effectiveTenantId, activeDateRange),
+      // 1. Fetch sales & returns with full tenant fallbacks
+      const salesPromise = fetchSalesPeriodData(tenantId, activeDateRange, bId, timeZone).catch(() => ({ sales: [], returns: [] }));
+
+      // 2. Fetch stock records & product catalog
+      const stockPromise = fetchTenantStockBalances(tenantId, bId).catch(() => []);
+      const catalogPromise = fetchProductsCatalog(tenantId).catch(() => new Map());
+
+      // 3. Fetch categories
+      const categoriesPromise = fetchCategoriesFromDb(tenantId).catch(() => []);
+
+      // 4. Fetch expenses
+      const expensesPromise = getExpenses(tenantId).catch(() => []);
+
+      // 5. Fetch registered branches
+      const branchesPromise = (async () => {
+        try {
+          let bSnap = await getDocs(query(collection(db, 'branches'), where('tenantId', '==', tenantId)));
+          if (bSnap.empty) {
+            bSnap = await getDocs(query(collection(db, 'branches'), where('tenant_id', '==', tenantId)));
+          }
+          if (bSnap.empty) {
+            bSnap = await getDocs(collection(db, 'branches'));
+          }
+          return bSnap.docs.map((d) => ({ id: d.id, name: d.data().name || 'فرع' }));
+        } catch {
+          return [];
+        }
+      })();
+
+      const [salesData, stockData, catalogData, catData, expData, brData] = await Promise.all([
+        salesPromise,
+        stockPromise,
+        catalogPromise,
+        categoriesPromise,
+        expensesPromise,
+        branchesPromise
       ]);
 
-      const [salesSettled, invSettled, demSettled, profSettled, partSettled, branchSettled, finSettled] = results;
+      setSalesRecords(salesData.sales || []);
+      setReturnsRecords(salesData.returns || []);
+      setStockRecords(stockData || []);
+      setProductCatalog(catalogData || new Map());
 
-      if (salesSettled.status === 'fulfilled') setSalesReport(salesSettled.value);
-      else console.warn('Sales Analytics failed:', salesSettled.reason);
-
-      if (invSettled.status === 'fulfilled') setInventoryReport(invSettled.value);
-      else console.warn('Inventory Analytics failed:', invSettled.reason);
-
-      if (demSettled.status === 'fulfilled') setDemandReport(demSettled.value);
-      else console.warn('Demand Intelligence failed:', demSettled.reason);
-
-      if (profSettled.status === 'fulfilled') setProfitabilityReport(profSettled.value);
-      else console.warn('Profitability Analytics failed:', profSettled.reason);
-
-      if (partSettled.status === 'fulfilled') setPartnerReport(partSettled.value);
-      else console.warn('Partner Analytics failed:', partSettled.reason);
-
-      if (branchSettled.status === 'fulfilled') setBranchReport(branchSettled.value);
-      else console.warn('Branch/Employee Analytics failed:', branchSettled.reason);
-
-      if (finSettled.status === 'fulfilled') setFinancialBIMetrics(finSettled.value);
-      else console.warn('Financial BI Metrics failed:', finSettled.reason);
-
-      const fulfilledCount = results.filter((r) => r.status === 'fulfilled').length;
-      if (fulfilledCount === 0) {
-        toast.error('حدث خطأ أثناء تحميل بيانات التقارير والتحليلات');
+      const cMap = new Map<string, string>();
+      catData.forEach((c: any) => {
+        if (c.id && c.name) cMap.set(c.id, c.name);
+        if (c.name) cMap.set(c.name, c.name);
+      });
+      if (cMap.size === 0) {
+        try {
+          const snapCats = await getDocs(collection(db, 'categories'));
+          snapCats.docs.forEach((d) => {
+            const data = d.data();
+            const name = data.name || data.nameAr || data.title;
+            if (name) {
+              cMap.set(d.id, name);
+              if (data.id) cMap.set(data.id, name);
+            }
+          });
+        } catch {}
       }
+      setCategoriesMap(cMap);
+
+      // Filter expenses for current date range
+      const startMs = new Date(activeDateRange.startIso).getTime();
+      const endMs = new Date(activeDateRange.endIso).getTime();
+      const validExp = (expData || []).filter((ex: any) => {
+        const exDate = parseToDate(ex.date || ex.createdAt);
+        if (!exDate) return true;
+        const ms = exDate.getTime();
+        return ms >= startMs && ms <= endMs;
+      });
+      setExpensesList(validExp);
+      const totalExp = validExp.reduce((sum: number, ex: any) => sum + Number(ex.amount || 0), 0);
+      setExpensesTotal(totalExp);
+
+      setBranchesList(brData);
     } catch (err: any) {
-      console.error('Error loading analytics reports:', err);
+      console.error('Error loading comprehensive reports data:', err);
       toast.error('حدث خطأ أثناء تحميل بيانات التقارير والتحليلات');
     } finally {
       setLoading(false);
     }
-  };
+  }, [tenantId, selectedBranch, activeDateRange, timeZone]);
 
   useEffect(() => {
-    loadAnalyticsData();
-  }, [tenantId, selectedBranch, activeDateRange, comparisonMode, timeZone]);
+    loadReportsData();
+  }, [loadReportsData]);
 
-  // Idempotent Daily Metrics Rebuild Trigger
-  const handleRebuildAggregates = async () => {
-    if (!tenantId) return;
-    setIsRebuildingAggregates(true);
+  // =========================================================================
+  // CORE FINANCIAL & SALES CALCULATIONS (100% REAL-TIME)
+  // =========================================================================
+  const metrics = useMemo(() => {
+    let grossBilled = 0;
+    let discounts = 0;
+    let cogs = 0;
+    let itemsSold = 0;
+    let transactions = salesRecords.length;
+
+    // Daily distribution map
+    const dailyMap = new Map<string, { date: string; sales: number; profit: number; orders: number }>();
+
+    // Payment methods map
+    const payMap = new Map<string, number>();
+
+    // Products sales map
+    const prodMap = new Map<string, SaleProductRow>();
+
+    // Cashier performance map
+    const cashierMap = new Map<string, CashierSummary>();
+
+    salesRecords.forEach((s) => {
+      const sTotal = Number(s.total ?? s.total_amount ?? s.final_amount ?? 0);
+      const sDisc = Number(s.discountTotal ?? s.discount ?? 0);
+      const sSub = Number(s.subtotal ?? (sTotal + sDisc));
+
+      grossBilled += sTotal;
+      discounts += sDisc;
+
+      // Cashier
+      const cId = s.cashierId || s.createdBy || 'cashier_1';
+      const cName = s.cashierNameSnapshot || s.cashierName || 'كاشير';
+      const curCashier = cashierMap.get(cId) || {
+        id: cId,
+        name: cName,
+        invoicesCount: 0,
+        totalSales: 0,
+        totalDiscounts: 0,
+        avgTicket: 0,
+      };
+      curCashier.invoicesCount += 1;
+      curCashier.totalSales += sTotal;
+      curCashier.totalDiscounts += sDisc;
+      cashierMap.set(cId, curCashier);
+
+      // Payments
+      const pMethods = s.paymentMethods || s.payments || [];
+      if (pMethods.length > 0) {
+        pMethods.forEach((p: any) => {
+          const m = p.method === 'card' ? 'بطاقة بنكية' : p.method === 'credit' ? 'آجل' : 'نقدي';
+          payMap.set(m, (payMap.get(m) || 0) + Number(p.amount || 0));
+        });
+      } else {
+        payMap.set('نقدي', (payMap.get('نقدي') || 0) + sTotal);
+      }
+
+      // Items & COGS
+      let saleCost = 0;
+      (s.items || []).forEach((it: any) => {
+        const qty = Number(it.baseQuantity || it.quantity || 1);
+        itemsSold += qty;
+
+        const prod = productCatalog.get(it.productId);
+        const catalogCost = Number(prod?.costPrice ?? prod?.cost ?? 0);
+        const unitCost = Number(it.unitCostSnapshot ?? it.costPriceSnapshot ?? (catalogCost > 0 ? catalogCost : 0));
+        const lineCost = it.totalCost !== undefined ? Number(it.totalCost) : qty * unitCost;
+        saleCost += lineCost;
+
+        // Aggregate Product
+        const pId = it.productId || it.id || 'misc';
+        const pName = it.productNameSnapshot || it.productName || it.name || prod?.name || 'صنف مسجل';
+        // Category resolution: match categoryId with user-registered name
+        const rawCat = prod?.categoryId || prod?.category || it.categorySnapshot || it.categoryName;
+        const pCat = (rawCat && categoriesMap.has(rawCat))
+          ? categoriesMap.get(rawCat)!
+          : (it.categorySnapshot && categoriesMap.has(it.categorySnapshot))
+          ? categoriesMap.get(it.categorySnapshot)!
+          : (categoriesMap.get(prod?.categoryId) || prod?.categoryName || it.categorySnapshot || prod?.category || 'عام');
+        const lineRev = Number(it.lineTotal ?? it.total ?? (qty * Number(it.unitPrice || it.unitSellingPrice || 0)));
+
+        const existingProd = prodMap.get(pId) || {
+          id: pId,
+          name: pName,
+          category: pCat,
+          unitsSold: 0,
+          totalRevenue: 0,
+          totalCost: 0,
+          grossProfit: 0,
+          marginPct: 0,
+        };
+        existingProd.unitsSold += qty;
+        existingProd.totalRevenue += lineRev;
+        existingProd.totalCost += lineCost;
+        existingProd.grossProfit = Math.max(0, existingProd.totalRevenue - existingProd.totalCost);
+        existingProd.marginPct = existingProd.totalRevenue > 0
+          ? Math.round((existingProd.grossProfit / existingProd.totalRevenue) * 100)
+          : 0;
+        prodMap.set(pId, existingProd);
+      });
+
+      if (saleCost === 0 && s.costTotal) {
+        saleCost = Number(s.costTotal);
+      }
+      cogs += saleCost;
+
+      // Day grouping
+      const sDateStr = formatZonedDate(s.createdAt, timeZone) || 'اليوم';
+      const existingDay = dailyMap.get(sDateStr) || { date: sDateStr, sales: 0, profit: 0, orders: 0 };
+      existingDay.sales += sTotal;
+      existingDay.profit += Math.max(0, sTotal - saleCost);
+      existingDay.orders += 1;
+      dailyMap.set(sDateStr, existingDay);
+    });
+
+    // Returns
+    let totalReturns = 0;
+    returnsRecords.forEach((r) => {
+      totalReturns += Number(r.refundAmount ?? r.total ?? 0);
+    });
+
+    const netSales = Math.max(0, grossBilled - totalReturns);
+    const grossProfit = Math.max(0, netSales - cogs);
+    const grossMarginPct = netSales > 0 ? Math.round((grossProfit / netSales) * 100) : 0;
+    const avgTicket = transactions > 0 ? Math.round(netSales / transactions) : 0;
+    const netIncome = grossProfit - expensesTotal;
+    const netMarginPct = netSales > 0 ? Math.round((netIncome / netSales) * 100) : 0;
+
+    // Daily Trend Array (sorted by date)
+    const dailyTrend = Array.from(dailyMap.values()).sort((a, b) => a.date.localeCompare(b.date));
+
+    // Payment Methods Breakdown Array
+    const paymentBreakdown = Array.from(payMap.entries()).map(([name, value]) => ({ name, value }));
+
+    // Top Products
+    const topProducts = Array.from(prodMap.values()).sort((a, b) => b.totalRevenue - a.totalRevenue);
+
+    // Cashiers
+    const cashiers = Array.from(cashierMap.values()).map((c) => ({
+      ...c,
+      avgTicket: c.invoicesCount > 0 ? Math.round(c.totalSales / c.invoicesCount) : 0,
+    })).sort((a, b) => b.totalSales - a.totalSales);
+
+    // Inventory Valuation
+    let totalStockUnits = 0;
+    let totalCostValuation = 0;
+    let totalRetailValuation = 0;
+    let lowStockCount = 0;
+    let outOfStockCount = 0;
+
+    const stockItemsEnhanced = stockRecords.map((st) => {
+      const prod = productCatalog.get(st.productId);
+      const qty = Number(st.onHandQuantity ?? st.quantity ?? 0);
+      const cost = Number(st.unitCost ?? st.averageCost ?? prod?.costPrice ?? prod?.cost ?? 0);
+      const retail = Number(prod?.retailPrice ?? prod?.sellingPrice ?? prod?.price ?? cost);
+
+      totalStockUnits += qty;
+      totalCostValuation += qty * cost;
+      totalRetailValuation += qty * retail;
+
+      if (qty <= 0) outOfStockCount++;
+      else if (qty <= Number(st.reorderPoint || 5)) lowStockCount++;
+
+      return {
+        ...st,
+        name: prod?.name || st.productName || 'صنف',
+        category: (prod?.categoryId && categoriesMap.has(prod.categoryId))
+          ? categoriesMap.get(prod.categoryId)!
+          : (categoriesMap.get(prod?.category) || prod?.categoryName || prod?.category || 'عام'),
+        quantity: qty,
+        unitCost: cost,
+        retailPrice: retail,
+        totalCost: qty * cost,
+        totalRetail: qty * retail,
+      };
+    });
+
+    // Synthesize products not yet in branch_stock if catalog has stock
+    if (stockRecords.length === 0 && productCatalog.size > 0) {
+      productCatalog.forEach((p) => {
+        const qty = Number(p.stock ?? p.quantity ?? 0);
+        const cost = Number(p.costPrice ?? p.cost ?? 0);
+        const retail = Number(p.retailPrice ?? p.sellingPrice ?? p.price ?? cost);
+        totalStockUnits += qty;
+        totalCostValuation += qty * cost;
+        totalRetailValuation += qty * retail;
+        if (qty <= 0) outOfStockCount++;
+        else if (qty <= 5) lowStockCount++;
+      });
+    }
+
+    return {
+      grossBilled,
+      discounts,
+      totalReturns,
+      netSales,
+      cogs,
+      grossProfit,
+      grossMarginPct,
+      transactions,
+      itemsSold,
+      avgTicket,
+      expensesTotal,
+      netIncome,
+      netMarginPct,
+      dailyTrend,
+      paymentBreakdown,
+      topProducts,
+      cashiers,
+      totalStockUnits,
+      totalCostValuation,
+      totalRetailValuation,
+      lowStockCount,
+      outOfStockCount,
+      stockItemsEnhanced,
+    };
+  }, [salesRecords, returnsRecords, stockRecords, productCatalog, categoriesMap, expensesTotal, timeZone]);
+
+  // Filtered Products for the table
+  const filteredProducts = useMemo(() => {
+    if (!searchFilter.trim()) return metrics.topProducts;
+    const q = searchFilter.toLowerCase();
+    return metrics.topProducts.filter(
+      (p) => p.name.toLowerCase().includes(q) || p.category.toLowerCase().includes(q)
+    );
+  }, [metrics.topProducts, searchFilter]);
+
+  // CSV Exporter
+  const handleExportCsv = () => {
     try {
-      const res = await rebuildDailyAnalyticsForDateRange(
-        tenantId,
-        activeDateRange.startDate,
-        activeDateRange.endDate,
-        selectedBranch,
-        timeZone
-      );
-      toast.success(`تمت إعادة بناء وتحديث مجاميع ${res.processedDaysCount} يوماً بنجاح`);
-      loadAnalyticsData();
-    } catch (err: any) {
-      console.error('Error rebuilding aggregates:', err);
-      toast.error('فشلت عملية إعادة بناء المجاميع');
-    } finally {
-      setIsRebuildingAggregates(false);
+      const headers = ['الصنف', 'القسم', 'الكمية المباعة', 'إجمالي المبيعات', 'التكلفة', 'الربح', 'الهامش'];
+      const rows = metrics.topProducts.map((p) => [
+        `"${p.name.replace(/"/g, '""')}"`,
+        `"${p.category}"`,
+        p.unitsSold,
+        p.totalRevenue,
+        p.totalCost,
+        p.grossProfit,
+        `${p.marginPct}%`,
+      ]);
+      const csvContent = '\uFEFF' + [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.setAttribute('href', url);
+      link.setAttribute('download', `sales_report_${activeDateRange.startDate}_${activeDateRange.endDate}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      toast.success('تم تصدير التقرير بنجاح');
+    } catch {
+      toast.error('حدث خطأ أثناء تصدير التقرير');
     }
   };
 
-  // KPI Change Render Helper
-  const renderKPIBadge = (change?: number) => {
-    if (change === undefined || change === null) return null;
-    const isPositive = change >= 0;
-    return (
-      <span
-        className={`inline-flex items-center text-xs font-semibold px-2 py-0.5 rounded-full ${
-          isPositive ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
-        }`}
-      >
-        {isPositive ? <ArrowUpRight className="w-3 h-3 ml-0.5" /> : <ArrowDownRight className="w-3 h-3 ml-0.5" />}
-        {Math.abs(change)}%
-      </span>
-    );
-  };
-
   return (
-    <MainLayout>
-      <div className="space-y-6 pb-12" dir="rtl">
-        {/* Top Header & Global Filter Toolbar */}
-        <div className="bg-card border border-border rounded-2xl p-6 shadow-sm">
-          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b pb-5">
+    <MainLayout fullBleed={true}>
+      {/* 
+        EDGE-TO-EDGE DESKTOP COCKPIT & MOBILE FLUID CONTAINER
+        Fills 100% of viewport without blank borders on desktop, scrolls fluidly on mobile
+      */}
+      <div className="w-full h-auto min-h-screen md:h-[calc(100vh-3.75rem)] flex flex-col md:overflow-hidden gap-2 p-1.5 sm:p-2.5 md:p-3 pb-24 md:pb-2.5" dir="rtl">
+        
+        {/* ========================================================================= */}
+        {/* 1. TOP HEADER & HIGH-DENSITY FILTER TOOLBAR (FIXED VIEWPORT BAR)          */}
+        {/* ========================================================================= */}
+        <div className="bg-card border border-border/80 rounded-xl px-3 sm:px-4 py-2 shadow-sm shrink-0 flex flex-col md:flex-row md:items-center justify-between gap-2.5">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-600 flex items-center justify-center text-white shadow-md shadow-blue-500/20 shrink-0">
+              <BarChart3 className="w-5 h-5" />
+            </div>
             <div>
-              <div className="flex items-center gap-3">
-                <div className="p-2.5 bg-primary/10 text-primary rounded-xl">
-                  <BarChart3 className="w-7 h-7" />
-                </div>
-                <div>
-                  <h1 className="text-2xl font-black tracking-tight text-foreground">
-                    مركز ذكاء الأعمال والتقارير التنفيذية (BI Hub)
-                  </h1>
-                  <p className="text-sm text-muted-foreground mt-0.5">
-                    تحليلات المبيعات، صحة المخزون، ذكاء الطلب وإعادة التوريد، وهوامش الربح وفق معايير الحوكمة المالية
-                  </p>
-                </div>
+              <div className="flex items-center gap-2">
+                <h1 className="text-lg font-black tracking-tight text-foreground">
+                  مركز التقارير والذكاء المالي
+                </h1>
+                <Badge variant="outline" className="bg-emerald-500/10 text-emerald-500 border-emerald-500/20 text-[10px] px-2 py-0">
+                  مباشر ومربوط 100%
+                </Badge>
               </div>
-            </div>
-
-            <div className="flex items-center flex-wrap gap-2.5">
-              {/* Cost Masking Toggle */}
-              {canViewCostsGlobal && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setRevealCosts(!revealCosts)}
-                  className="text-xs h-9 gap-1.5"
-                >
-                  {showCosts ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                  {showCosts ? 'حجب التكاليف والأرباح' : 'إظهار التكاليف والأرباح'}
-                </Button>
-              )}
-
-              {/* Refresh Button */}
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={loadAnalyticsData}
-                disabled={loading}
-                className="text-xs h-9 gap-1.5"
-              >
-                <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-                تحديث
-              </Button>
+              <p className="text-[11px] text-muted-foreground">
+                المبيعات، المخزون، قائمة الدخل، وتحليلات الأداء التنفيذي
+              </p>
             </div>
           </div>
 
-          {/* Filter Controls Row */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3 pt-5">
-            {/* Period Preset */}
-            <div>
-              <label className="text-xs font-semibold text-muted-foreground mb-1.5 block">الفترة الزمنية</label>
-              <Select value={datePreset} onValueChange={(val) => setDatePreset(val as DatePreset)}>
-                <SelectTrigger className="h-9 text-xs">
-                  <SelectValue placeholder="اختر الفترة" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">جميع الفترات (كل البيانات)</SelectItem>
-                  <SelectItem value="today">اليوم (Today)</SelectItem>
-                  <SelectItem value="yesterday">أمس (Yesterday)</SelectItem>
-                  <SelectItem value="last_7_days">آخر 7 أيام</SelectItem>
-                  <SelectItem value="this_month">الشهر الحالي</SelectItem>
-                  <SelectItem value="last_month">الشهر السابق</SelectItem>
-                  <SelectItem value="this_quarter">الربع الحالي</SelectItem>
-                  <SelectItem value="this_year">السنة الحالية</SelectItem>
-                  <SelectItem value="custom">فترة مخصصة</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+          {/* Filter Toolbar Controls */}
+          <div className="flex items-center flex-wrap gap-2">
+            {/* Date Preset */}
+            <Select value={datePreset} onValueChange={(v: DatePreset) => setDatePreset(v)}>
+              <SelectTrigger className="h-8 text-xs w-[130px] font-medium bg-background border-border">
+                <Calendar className="w-3.5 h-3.5 ml-1.5 opacity-60" />
+                <SelectValue placeholder="الفترة الزمنية" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="today">اليوم</SelectItem>
+                <SelectItem value="yesterday">أمس</SelectItem>
+                <SelectItem value="last_7_days">آخر 7 أيام</SelectItem>
+                <SelectItem value="this_month">هذا الشهر</SelectItem>
+                <SelectItem value="last_month">الشهر الماضي</SelectItem>
+                <SelectItem value="this_year">هذا العام</SelectItem>
+                <SelectItem value="all">كل الفترات</SelectItem>
+                <SelectItem value="custom">فترة مخصصة</SelectItem>
+              </SelectContent>
+            </Select>
 
-            {/* Comparison Mode */}
-            <div>
-              <label className="text-xs font-semibold text-muted-foreground mb-1.5 block">فترة المقارنة</label>
-              <Select value={comparisonMode} onValueChange={(val) => setComparisonMode(val as ComparisonMode)}>
-                <SelectTrigger className="h-9 text-xs">
-                  <SelectValue placeholder="المقارنة" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">بدون مقارنة</SelectItem>
-                  <SelectItem value="previous_period">الفترة السابقة المماثلة</SelectItem>
-                  <SelectItem value="previous_year">نفس الفترة من العام الماضي</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            {/* Branch Selector */}
-            <div>
-              <label className="text-xs font-semibold text-muted-foreground mb-1.5 block">الفرع / الموقع</label>
-              <Select value={selectedBranch} onValueChange={setSelectedBranch}>
-                <SelectTrigger className="h-9 text-xs">
-                  <SelectValue placeholder="كافة الفروع" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">كافة الفروع والمستودعات</SelectItem>
-                  {branchReport?.branches.map((b) => (
-                    <SelectItem key={b.branchId} value={b.branchId}>
-                      {b.branchName}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            {/* Timezone (Audit 5) */}
-            <div>
-              <label className="text-xs font-semibold text-muted-foreground mb-1.5 block">
-                المنطقة الزمنية (توقيت الإغلاق)
-              </label>
-              <Select value={timeZone} onValueChange={setTimeZone}>
-                <SelectTrigger className="h-9 text-xs">
-                  <SelectValue placeholder="التوقيت" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="Africa/Cairo">توقيت القاهرة (Africa/Cairo)</SelectItem>
-                  <SelectItem value="Asia/Riyadh">توقيت مكة (Asia/Riyadh)</SelectItem>
-                  <SelectItem value="UTC">توقيت جرينتش (UTC)</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            {/* Date Span Display */}
-            <div className="flex flex-col justify-end">
-              <span className="text-[11px] text-muted-foreground font-mono">
-                {activeDateRange.startDate} إلى {activeDateRange.endDate}
-              </span>
-              {comparisonMode !== 'none' && activeComparisonRange.comparison && (
-                <span className="text-[10px] text-amber-600 font-mono">
-                  مقابل: {activeComparisonRange.comparison.startDate} إلى {activeComparisonRange.comparison.endDate}
-                </span>
-              )}
-            </div>
-          </div>
-
-          {/* Custom Date Picker Range (Shown if custom) */}
-          {datePreset === 'custom' && (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-3 border-t mt-3">
-              <div>
-                <label className="text-xs font-medium text-muted-foreground">من تاريخ</label>
+            {/* Custom Range Popups if custom selected */}
+            {datePreset === 'custom' && (
+              <div className="flex items-center gap-1">
                 <Input
                   type="date"
                   value={customStart}
                   onChange={(e) => setCustomStart(e.target.value)}
-                  className="h-8 text-xs"
+                  className="h-8 text-xs w-[115px] font-mono px-2"
                 />
-              </div>
-              <div>
-                <label className="text-xs font-medium text-muted-foreground">إلى تاريخ</label>
+                <span className="text-xs text-muted-foreground">-</span>
                 <Input
                   type="date"
                   value={customEnd}
                   onChange={(e) => setCustomEnd(e.target.value)}
-                  className="h-8 text-xs"
+                  className="h-8 text-xs w-[115px] font-mono px-2"
                 />
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* 10-Tab Navigation */}
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-          <div className="bg-card border border-border rounded-xl p-1.5 shadow-sm overflow-x-auto">
-            <TabsList className="bg-transparent h-auto flex flex-nowrap min-w-max gap-1">
-              <TabsTrigger value="overview" className="text-xs font-semibold py-2 px-3 gap-1.5 data-[state=active]:bg-blue-600 data-[state=active]:text-white">
-                <TrendingUp className="w-3.5 h-3.5" />
-                المؤشرات العامة
-              </TabsTrigger>
-              <TabsTrigger value="sales" className="text-xs font-semibold py-2 px-3 gap-1.5 data-[state=active]:bg-blue-600 data-[state=active]:text-white">
-                <ShoppingCart className="w-3.5 h-3.5" />
-                المبيعات وسلة الشراء
-              </TabsTrigger>
-              <TabsTrigger value="inventory" className="text-xs font-semibold py-2 px-3 gap-1.5 data-[state=active]:bg-blue-600 data-[state=active]:text-white">
-                <Package className="w-3.5 h-3.5" />
-                تقييم وصحة المخزون
-              </TabsTrigger>
-              <TabsTrigger value="aging" className="text-xs font-semibold py-2 px-3 gap-1.5 data-[state=active]:bg-blue-600 data-[state=active]:text-white">
-                <ShieldAlert className="w-3.5 h-3.5" />
-                الراكد وبطيء الحركة (90d)
-              </TabsTrigger>
-              <TabsTrigger value="demand" className="text-xs font-semibold py-2 px-3 gap-1.5 data-[state=active]:bg-blue-600 data-[state=active]:text-white">
-                <Flame className="w-3.5 h-3.5" />
-                ذكاء الطلب وإعادة التوريد
-              </TabsTrigger>
-              <TabsTrigger value="profitability" className="text-xs font-semibold py-2 px-3 gap-1.5 data-[state=active]:bg-blue-600 data-[state=active]:text-white">
-                <DollarSign className="w-3.5 h-3.5" />
-                الربحية وهوامش الأصناف
-              </TabsTrigger>
-              <TabsTrigger value="partners" className="text-xs font-semibold py-2 px-3 gap-1.5 data-[state=active]:bg-blue-600 data-[state=active]:text-white">
-                <Users className="w-3.5 h-3.5" />
-                الموردون وتصنيف العملاء (RFM)
-              </TabsTrigger>
-              <TabsTrigger value="branches" className="text-xs font-semibold py-2 px-3 gap-1.5 data-[state=active]:bg-blue-600 data-[state=active]:text-white">
-                <Building2 className="w-3.5 h-3.5" />
-                الفروع والكاشير
-              </TabsTrigger>
-              <TabsTrigger value="financial_bi" className="text-xs font-semibold py-2 px-3 gap-1.5 data-[state=active]:bg-blue-600 data-[state=active]:text-white">
-                <Layers className="w-3.5 h-3.5" />
-                التحليل المالي القيادي (GL)
-              </TabsTrigger>
-              <TabsTrigger value="data_sync" className="text-xs font-semibold py-2 px-3 gap-1.5 data-[state=active]:bg-blue-600 data-[state=active]:text-white">
-                <RefreshCw className="w-3.5 h-3.5" />
-                محرك التجميع والمطابقة
-              </TabsTrigger>
-            </TabsList>
-          </div>
-
-          {/* TAB 1: OVERVIEW */}
-          <TabsContent value="overview" className="space-y-6">
-            {/* KPI Cards Grid */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              {/* Net Sales */}
-              <Card className="border shadow-sm">
-                <CardHeader className="p-4 pb-2 flex flex-row items-center justify-between space-y-0">
-                  <span className="text-xs font-semibold text-muted-foreground">صافي المبيعات</span>
-                  <div className="p-2 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 rounded-lg">
-                    <DollarSign className="w-4 h-4" />
-                  </div>
-                </CardHeader>
-                <CardContent className="p-4 pt-0">
-                  <div className="text-2xl font-black text-foreground">
-                    {currency(salesReport?.summary.netSales.current || 0)}
-                  </div>
-                  <div className="flex items-center gap-2 mt-2">
-                    {renderKPIBadge(salesReport?.summary.netSales.percentageChange)}
-                    <span className="text-[11px] text-muted-foreground">مقارنة بالفترة السابقة</span>
-                  </div>
-                  <div className="flex items-center justify-between text-[11px] text-muted-foreground mt-2 pt-1.5 border-t border-border/60">
-                    <span>إجمالي الخصومات:</span>
-                    <span className="font-bold text-rose-600">
-                      -{currency(salesReport?.summary.discounts.current || 0)}
-                    </span>
-                  </div>
-                </CardContent>
-              </Card>
-
-              {/* Gross Profit */}
-              <Card className="border shadow-sm">
-                <CardHeader className="p-4 pb-2 flex flex-row items-center justify-between space-y-0">
-                  <span className="text-xs font-semibold text-muted-foreground">إجمالي الربح التجاري</span>
-                  <div className="p-2 bg-primary/10 text-primary rounded-lg">
-                    <TrendingUp className="w-4 h-4" />
-                  </div>
-                </CardHeader>
-                <CardContent className="p-4 pt-0">
-                  <div className="text-2xl font-black text-foreground">
-                    {showCosts ? currency(salesReport?.summary.grossProfit.current || 0) : '***'}
-                  </div>
-                  <div className="flex items-center gap-2 mt-2">
-                    {showCosts && renderKPIBadge(salesReport?.summary.grossProfit.percentageChange)}
-                    <span className="text-[11px] text-muted-foreground">
-                      الهامش: {showCosts ? `${salesReport?.summary.grossMarginPct.current || 0}%` : '***'}
-                    </span>
-                  </div>
-                </CardContent>
-              </Card>
-
-              {/* Transactions Count */}
-              <Card className="border shadow-sm">
-                <CardHeader className="p-4 pb-2 flex flex-row items-center justify-between space-y-0">
-                  <span className="text-xs font-semibold text-muted-foreground">عدد الفواتير المنفذة</span>
-                  <div className="p-2 bg-violet-500/10 text-violet-600 dark:text-violet-400 rounded-lg">
-                    <ShoppingCart className="w-4 h-4" />
-                  </div>
-                </CardHeader>
-                <CardContent className="p-4 pt-0">
-                  <div className="text-2xl font-black text-foreground">
-                    {number(salesReport?.summary.transactionsCount.current || 0)}
-                  </div>
-                  <div className="flex items-center gap-2 mt-2">
-                    {renderKPIBadge(salesReport?.summary.transactionsCount.percentageChange)}
-                    <span className="text-[11px] text-muted-foreground">
-                      متوسط الفاتورة: {currency(salesReport?.summary.averageOrderValue.current || 0)}
-                    </span>
-                  </div>
-                </CardContent>
-              </Card>
-
-              {/* Inventory Valuation */}
-              <Card className="border shadow-sm">
-                <CardHeader className="p-4 pb-2 flex flex-row items-center justify-between space-y-0">
-                  <span className="text-xs font-semibold text-muted-foreground">قيمة المخزون الحالي (التكلفة)</span>
-                  <div className="p-2 bg-amber-500/10 text-amber-600 dark:text-amber-400 rounded-lg">
-                    <Package className="w-4 h-4" />
-                  </div>
-                </CardHeader>
-                <CardContent className="p-4 pt-0">
-                  <div className="text-2xl font-black text-foreground">
-                    {showCosts ? currency(inventoryReport?.summary.totalCostValuation || 0) : '***'}
-                  </div>
-                  <div className="flex items-center gap-2 mt-2">
-                    <span className="text-[11px] text-muted-foreground font-medium">
-                      البيع المتوقع: {currency(inventoryReport?.summary.totalRetailValuation || 0)}
-                    </span>
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
-
-            {/* Revenue & Profit Trends Chart */}
-            <Card className="border shadow-sm">
-              <CardHeader className="p-5 pb-3 flex flex-row items-center justify-between border-b">
-                <div>
-                  <CardTitle className="text-base font-bold text-foreground">
-                    مسار صافي المبيعات والربح اليومي
-                  </CardTitle>
-                  <CardDescription className="text-xs text-muted-foreground">
-                    حركة المبيعات الفعلية بعد خصم المرتجعات والخصومات بتوقيت ({timeZone})
-                  </CardDescription>
-                </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => exportSalesTrendCsv(salesReport?.dailyTrends || [], showCosts)}
-                  className="text-xs h-8 gap-1.5"
-                >
-                  <Download className="w-3.5 h-3.5" />
-                  تصدير المسار (CSV)
-                </Button>
-              </CardHeader>
-              <CardContent className="p-5">
-                <div className="h-80 w-full" dir="ltr">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={salesReport?.dailyTrends || []}>
-                      <defs>
-                        <linearGradient id="netSalesGrad" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.4} />
-                          <stop offset="95%" stopColor="#3b82f6" stopOpacity={0.0} />
-                        </linearGradient>
-                        <linearGradient id="profitGrad" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#10b981" stopOpacity={0.4} />
-                          <stop offset="95%" stopColor="#10b981" stopOpacity={0.0} />
-                        </linearGradient>
-                      </defs>
-                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                      <XAxis dataKey="date" tick={{ fontSize: 11 }} />
-                      <YAxis tick={{ fontSize: 11 }} />
-                      <RechartsTooltip contentStyle={{ backgroundColor: "hsl(var(--card))", borderColor: "hsl(var(--border))", borderRadius: "12px", color: "hsl(var(--foreground))" }} />
-                      <Legend />
-                      <Area type="monotone" dataKey="netSales" name="صافي المبيعات" stroke="#3b82f6" fillOpacity={1} fill="url(#netSalesGrad)" strokeWidth={2} />
-                      {showCosts && (
-                        <Area type="monotone" dataKey="grossProfit" name="الربح الإجمالي" stroke="#10b981" fillOpacity={1} fill="url(#profitGrad)" strokeWidth={2} />
-                      )}
-                    </AreaChart>
-                  </ResponsiveContainer>
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Quick Health Status Row */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {/* Dead Stock Alert Card */}
-              <Card className="border border-rose-200 bg-rose-50/50 p-4 rounded-xl">
-                <div className="flex items-center gap-3">
-                  <div className="p-2.5 bg-rose-100 text-rose-700 rounded-lg">
-                    <ShieldAlert className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <h3 className="text-xs font-semibold text-rose-900">رأس المال الراكد (90 يوماً بلا مبيعات)</h3>
-                    <p className="text-xl font-black text-rose-800 mt-1">
-                      {showCosts ? currency(inventoryReport?.summary.deadStockCapital || 0) : '***'}
-                    </p>
-                    <p className="text-[11px] text-rose-600 mt-0.5">
-                      {inventoryReport?.deadStockItems.length || 0} صنف راكد بحاجة لتصفية أو خصم
-                    </p>
-                  </div>
-                </div>
-              </Card>
-
-              {/* Reorder Critical Card */}
-              <Card className="border border-amber-200 bg-amber-50/50 p-4 rounded-xl">
-                <div className="flex items-center gap-3">
-                  <div className="p-2.5 bg-amber-100 text-amber-700 rounded-lg">
-                    <Flame className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <h3 className="text-xs font-semibold text-amber-900">عجز المخزون الحرج (أصناف نفدت)</h3>
-                    <p className="text-xl font-black text-amber-800 mt-1">
-                      {demandReport?.criticalItemsCount || 0} صنف
-                    </p>
-                    <p className="text-[11px] text-amber-600 mt-0.5">
-                      تكلفة التوريد المقترحة: {currency(demandReport?.totalRecommendedCost || 0)}
-                    </p>
-                  </div>
-                </div>
-              </Card>
-
-              {/* Cash Conversion Cycle Card */}
-              <Card className="border border-blue-200 bg-blue-50/50 p-4 rounded-xl">
-                <div className="flex items-center gap-3">
-                  <div className="p-2.5 bg-blue-100 text-blue-700 rounded-lg">
-                    <Clock className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <h3 className="text-xs font-semibold text-blue-900">دورة التحول النقدي (CCC)</h3>
-                    <p className="text-xl font-black text-blue-800 mt-1">
-                      {financialBIMetrics?.cashConversionCycleDays ?? '—'} يوماً
-                    </p>
-                    <p className="text-[11px] text-blue-600 mt-0.5">
-                      بقاؤه بالمخزن: {financialBIMetrics?.dioDaysEstimate ?? 0}d | تحصيل: {financialBIMetrics?.dsoDays ?? 0}d
-                    </p>
-                  </div>
-                </div>
-              </Card>
-            </div>
-          </TabsContent>
-
-          {/* TAB 2: SALES INTELLIGENCE */}
-          <TabsContent value="sales" className="space-y-6">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {/* Hourly Heatmap Distribution */}
-              <Card className="border shadow-sm">
-                <CardHeader className="p-4 border-b">
-                  <CardTitle className="text-sm font-bold text-foreground">
-                    أوقات ذروة المبيعات اليومية (توزيع ساعات اليوم)
-                  </CardTitle>
-                  <CardDescription className="text-xs text-muted-foreground">
-                    تحديد ساعات الازدحام لتنظيم دوريات الموظفين والكاشير
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="p-4">
-                  <div className="h-64 w-full" dir="ltr">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={salesReport?.hourlyDistribution || []}>
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                        <XAxis dataKey="hour" tickFormatter={(h) => `${h}:00`} tick={{ fontSize: 10 }} />
-                        <YAxis tick={{ fontSize: 10 }} />
-                        <RechartsTooltip contentStyle={{ backgroundColor: "hsl(var(--card))", borderColor: "hsl(var(--border))", borderRadius: "12px", color: "hsl(var(--foreground))" }} formatter={(val: any) => [currency(val), 'المبيعات']} labelFormatter={(h) => `الساعة ${h}:00`} />
-                        <Bar dataKey="totalSalesAmount" fill="#3b82f6" radius={[4, 4, 0, 0]} />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </div>
-                </CardContent>
-              </Card>
-
-              {/* Payment Methods Distribution */}
-              <Card className="border shadow-sm">
-                <CardHeader className="p-4 border-b">
-                  <CardTitle className="text-sm font-bold text-foreground">
-                    توزيع طرق الدفع
-                  </CardTitle>
-                  <CardDescription className="text-xs text-muted-foreground">
-                    نسبة المقبوضات النقدية والبطاقات والبيع الآجل
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="p-4 flex items-center justify-center">
-                  <div className="h-64 w-full" dir="ltr">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <PieChart>
-                        <Pie
-                          data={salesReport?.paymentMethods || []}
-                          dataKey="amount"
-                          nameKey="method"
-                          cx="50%"
-                          cy="50%"
-                          outerRadius={80}
-                          label={(entry) => `${entry.method} (${entry.sharePct}%)`}
-                        >
-                          {(salesReport?.paymentMethods || []).map((_, idx) => (
-                            <Cell key={`cell-${idx}`} fill={CHART_COLORS[idx % CHART_COLORS.length]} />
-                          ))}
-                        </Pie>
-                        <RechartsTooltip contentStyle={{ backgroundColor: "hsl(var(--card))", borderColor: "hsl(var(--border))", borderRadius: "12px", color: "hsl(var(--foreground))" }} formatter={(val: any) => currency(val)} />
-                      </PieChart>
-                    </ResponsiveContainer>
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
-
-            {/* Category Performance Breakdown */}
-            <Card className="border shadow-sm">
-              <CardHeader className="p-4 border-b flex flex-row items-center justify-between">
-                <div>
-                  <CardTitle className="text-sm font-bold text-foreground">أداء التصنيفات الرئيسية</CardTitle>
-                  <CardDescription className="text-xs text-muted-foreground">حجم المبيعات وهوامش الربح لكل تصنيف</CardDescription>
-                </div>
-              </CardHeader>
-              <CardContent className="p-0">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>التصنيف</TableHead>
-                      <TableHead>الوحدات المباعة</TableHead>
-                      <TableHead>صافي المبيعات</TableHead>
-                      <TableHead>الحصة من الإيراد %</TableHead>
-                      {showCosts && <TableHead>التكلفة (COGS)</TableHead>}
-                      {showCosts && <TableHead>الربح التجاري</TableHead>}
-                      {showCosts && <TableHead>الهامش %</TableHead>}
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {salesReport?.categories.map((c) => (
-                      <TableRow key={c.key}>
-                        <TableCell className="font-semibold text-foreground">{c.label}</TableCell>
-                        <TableCell>{number(c.unitsSold)}</TableCell>
-                        <TableCell className="font-medium text-foreground">{currency(c.netSales)}</TableCell>
-                        <TableCell>
-                          <Badge variant="outline">{c.transactionSharePct}%</Badge>
-                        </TableCell>
-                        {showCosts && <TableCell>{currency(c.cogs)}</TableCell>}
-                        {showCosts && <TableCell className="text-emerald-700 font-bold">{currency(c.grossProfit)}</TableCell>}
-                        {showCosts && <TableCell><Badge variant="secondary">{c.grossMarginPct}%</Badge></TableCell>}
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </CardContent>
-            </Card>
-
-            {/* Market Basket Analysis (Frequently Bought Together) */}
-            <Card className="border shadow-sm">
-              <CardHeader className="p-4 border-b">
-                <CardTitle className="text-sm font-bold text-foreground">
-                  تحليل سلة الشراء والأصناف المترابطة (Frequently Bought Together)
-                </CardTitle>
-                <CardDescription className="text-xs text-muted-foreground">
-                  أصناف تُباع معاً في نفس الفاتورة لمساعدة إدارة العروض وحزم الأدوات المدرسية
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="p-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                  {salesReport?.frequentlyBoughtTogether.map((pair, idx) => (
-                    <div key={idx} className="border p-3.5 rounded-xl bg-muted/40 flex flex-col justify-between">
-                      <div className="space-y-1">
-                        <div className="text-xs font-bold text-foreground line-clamp-1">{pair.productAName}</div>
-                        <div className="text-[11px] text-blue-600 font-semibold">+ مع +</div>
-                        <div className="text-xs font-bold text-foreground line-clamp-1">{pair.productBName}</div>
-                      </div>
-                      <div className="mt-3 pt-2 border-t flex items-center justify-between text-xs text-muted-foreground">
-                        <span>تكرار الاقتران: {pair.coOccurrenceCount} مرة</span>
-                        <Badge variant="outline" className="bg-background text-[10px]">دعم {pair.supportPct}%</Badge>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          {/* TAB 3: INVENTORY HEALTH */}
-          <TabsContent value="inventory" className="space-y-6">
-            <div className="flex items-center justify-between bg-card p-4 border border-border rounded-xl">
-              <div>
-                <h3 className="text-sm font-bold text-foreground">تقييم المخزون وصحة الدوران</h3>
-                <p className="text-xs text-muted-foreground">معدل دوران المخزون، أيام البقاء، وقيمة رأس المال المحتجز</p>
-              </div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => exportInventoryHealthCsv(inventoryReport?.allHealthItems || [], showCosts)}
-                className="text-xs h-8 gap-1.5"
-              >
-                <Download className="w-3.5 h-3.5" />
-                تصدير جرد المخزون (CSV)
-              </Button>
-            </div>
-
-            {/* Inventory Valuation Metric Row */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              <Card className="p-4 border">
-                <span className="text-xs text-muted-foreground">إجمالي الأصناف بالمستودع</span>
-                <div className="text-xl font-black mt-1">{number(inventoryReport?.summary.totalSkusCount || 0)} صنف</div>
-              </Card>
-              <Card className="p-4 border">
-                <span className="text-xs text-muted-foreground">إجمالي الوحدات الفعلية</span>
-                <div className="text-xl font-black mt-1">{number(inventoryReport?.summary.totalUnitsOnHand || 0)} قطعة</div>
-              </Card>
-              <Card className="p-4 border">
-                <span className="text-xs text-muted-foreground">معدل دوران المخزون السنوي</span>
-                <div className="text-xl font-black text-blue-600 mt-1">{inventoryReport?.periodTurnoverRatio || 0} مرة</div>
-              </Card>
-              <Card className="p-4 border">
-                <span className="text-xs text-muted-foreground">متوسط أيام بقاء المخزون (DIO)</span>
-                <div className="text-xl font-black text-amber-600 mt-1">{inventoryReport?.periodDio || 0} يوماً</div>
-              </Card>
-            </div>
-
-            {/* Category Valuation Table */}
-            <Card className="border shadow-sm">
-              <CardHeader className="p-4 border-b">
-                <CardTitle className="text-sm font-bold text-foreground">توزيع رأس المال المخزني حسب التصنيف</CardTitle>
-              </CardHeader>
-              <CardContent className="p-0">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>التصنيف</TableHead>
-                      <TableHead>عدد الأصناف</TableHead>
-                      <TableHead>الوحدات المتاحة</TableHead>
-                      {showCosts && <TableHead>القيمة بالتكلفة</TableHead>}
-                      <TableHead>القيمة بالبيع المتوقع</TableHead>
-                      {showCosts && <TableHead>حصة رأس المال %</TableHead>}
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {inventoryReport?.categoryBreakdown.map((cat) => (
-                      <TableRow key={cat.category}>
-                        <TableCell className="font-semibold">{cat.category}</TableCell>
-                        <TableCell>{cat.skuCount}</TableCell>
-                        <TableCell>{number(cat.unitsOnHand)}</TableCell>
-                        {showCosts && <TableCell>{currency(cat.costValuation)}</TableCell>}
-                        <TableCell className="font-medium text-foreground">{currency(cat.retailValuation)}</TableCell>
-                        {showCosts && <TableCell><Badge variant="outline">{cat.shareOfCapitalPct}%</Badge></TableCell>}
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          {/* TAB 4: AGING & DEAD STOCK */}
-          <TabsContent value="aging" className="space-y-6">
-            <Card className="border shadow-sm">
-              <CardHeader className="p-4 border-b flex flex-row items-center justify-between">
-                <div>
-                  <CardTitle className="text-sm font-bold text-foreground">
-                    تقرير الأصناف الراكدة (لم يُبع منها أي وحدة منذ 90 يوماً فأكثر)
-                  </CardTitle>
-                  <CardDescription className="text-xs text-muted-foreground">
-                    أصناف تجمّد سيولة نقدية وتحتاج إلى إعادة تسعير، إرجاع للمورد، أو عروض ترويجية
-                  </CardDescription>
-                </div>
-                <Badge variant="destructive" className="px-3 py-1">
-                  رأس مال معطل: {showCosts ? currency(inventoryReport?.summary.deadStockCapital || 0) : '***'}
-                </Badge>
-              </CardHeader>
-              <CardContent className="p-0">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>الباركود / SKU</TableHead>
-                      <TableHead>اسم الصنف</TableHead>
-                      <TableHead>التصنيف</TableHead>
-                      <TableHead>الرصيد المعطل</TableHead>
-                      {showCosts && <TableHead>تكلفة الوحدة</TableHead>}
-                      {showCosts && <TableHead>إجمالي السيولة المعطلة</TableHead>}
-                      <TableHead>أيام بلا مبيعات</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {inventoryReport?.deadStockItems.length === 0 ? (
-                      <TableRow>
-                        <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
-                          لا توجد أصناف راكدة مطابقة لمعايير الـ 90 يوماً الحالية
-                        </TableCell>
-                      </TableRow>
-                    ) : (
-                      inventoryReport?.deadStockItems.map((item) => (
-                        <TableRow key={item.productId}>
-                          <TableCell className="font-mono text-xs">{item.sku}</TableCell>
-                          <TableCell className="font-semibold">{item.name}</TableCell>
-                          <TableCell>{item.category}</TableCell>
-                          <TableCell className="font-bold text-rose-700">{item.currentStock}</TableCell>
-                          {showCosts && <TableCell>{currency(item.unitCost)}</TableCell>}
-                          {showCosts && <TableCell className="font-bold text-foreground">{currency(item.totalCostValue)}</TableCell>}
-                          <TableCell><Badge variant="secondary">{item.daysSinceLastSale ?? '90+'} يوم</Badge></TableCell>
-                        </TableRow>
-                      ))
-                    )}
-                  </TableBody>
-                </Table>
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          {/* TAB 5: DEMAND & SMART REORDER */}
-          <TabsContent value="demand" className="space-y-6">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-card p-4 border border-border rounded-xl">
-              <div>
-                <h3 className="text-sm font-bold text-foreground">محرك ذكاء الطلب واقتراحات إعادة التوريد الشفافة</h3>
-                <p className="text-xs text-muted-foreground">
-                  معادلة واضحة ومفسرة استناداً لسرعة البيع الفعلية ومدة التوريد ومخزون الأمان (بدون خوارزميات غامضة)
-                </p>
-              </div>
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => exportReorderRecommendationsCsv(demandReport?.recommendations || [], showCosts)}
-                  className="text-xs h-8 gap-1.5"
-                >
-                  <Download className="w-3.5 h-3.5" />
-                  تصدير خطة التوريد (CSV)
-                </Button>
-              </div>
-            </div>
-
-            {/* Reorder Table */}
-            <Card className="border shadow-sm">
-              <CardContent className="p-0">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>الصنف والباركود</TableHead>
-                      <TableHead>المورد المفضل</TableHead>
-                      <TableHead>المبيعات اليومية</TableHead>
-                      <TableHead>المتاح حالياً</TableHead>
-                      <TableHead>قيد التوريد (PO)</TableHead>
-                      <TableHead>الكمية المقترحة</TableHead>
-                      {showCosts && <TableHead>التكلفة التقديرية</TableHead>}
-                      <TableHead>الاستعجال</TableHead>
-                      <TableHead className="min-w-[280px]">التفسير والمسوغ</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {demandReport?.recommendations.length === 0 ? (
-                      <TableRow>
-                        <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">
-                          المخزون متوازن ومستقر بالكامل، لا توجد احتياجات إعادة طلب حرجة حالياً
-                        </TableCell>
-                      </TableRow>
-                    ) : (
-                      demandReport?.recommendations.map((item) => (
-                        <TableRow key={item.productId}>
-                          <TableCell>
-                            <div className="font-semibold text-foreground">{item.name}</div>
-                            <div className="text-[11px] font-mono text-muted-foreground">{item.sku}</div>
-                          </TableCell>
-                          <TableCell className="text-xs">{item.preferredSupplierName}</TableCell>
-                          <TableCell>
-                            <span className="font-mono text-xs">{item.effectiveDailyDemand.toFixed(1)} / يوم</span>
-                          </TableCell>
-                          <TableCell>
-                            <Badge variant={item.availableStock <= 0 ? 'destructive' : 'outline'}>
-                              {item.availableStock}
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="text-xs text-blue-600 font-semibold">{item.incomingPoStock}</TableCell>
-                          <TableCell className="font-bold text-emerald-700 text-sm">
-                            {item.reorderQuantity} {item.packSize > 1 ? `(${item.reorderPacks} عبوة)` : 'قطعة'}
-                          </TableCell>
-                          {showCosts && <TableCell className="font-semibold">{currency(item.estimatedTotalCost)}</TableCell>}
-                          <TableCell>
-                            <Badge
-                              className={
-                                item.urgency === 'critical'
-                                  ? 'bg-rose-600'
-                                  : item.urgency === 'high'
-                                  ? 'bg-amber-600'
-                                  : 'bg-blue-600'
-                              }
-                            >
-                              {item.urgency === 'critical' ? 'حرج (نفد)' : item.urgency === 'high' ? 'عالي' : 'متوسط'}
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="text-xs text-muted-foreground leading-relaxed">
-                            {item.explanationAr}
-                          </TableCell>
-                        </TableRow>
-                      ))
-                    )}
-                  </TableBody>
-                </Table>
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          {/* TAB 6: PROFITABILITY */}
-          <TabsContent value="profitability" className="space-y-6">
-            <div className="flex items-center justify-between bg-card p-4 border border-border rounded-xl">
-              <div>
-                <h3 className="text-sm font-bold text-foreground">ربحية الأصناف ومكافحة تآكل الهوامش</h3>
-                <p className="text-xs text-muted-foreground">
-                  محسوبة استناداً إلى لقطة التكلفة التاريخية لحظة البيع (unitCostSnapshot) لكشف تسريبات الخصومات
-                </p>
-              </div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => exportProfitabilityCsv(profitabilityReport?.allProductProfitability || [], showCosts)}
-                className="text-xs h-8 gap-1.5"
-              >
-                <Download className="w-3.5 h-3.5" />
-                تصدير الربحية (CSV)
-              </Button>
-            </div>
-
-            {/* Leak Alerts */}
-            {profitabilityReport?.marginErosionAlerts && profitabilityReport.marginErosionAlerts.length > 0 && (
-              <div className="p-4 bg-rose-500/10 border border-rose-500/30 rounded-xl">
-                <div className="flex items-center gap-2 text-rose-600 dark:text-rose-400 font-bold text-sm mb-1">
-                  <AlertTriangle className="w-4 h-4" />
-                  تنبيه تآكل الهامش: تم رصد {profitabilityReport.marginErosionAlerts.length} صنفاً يُباع بهامش ضعيف جداً أو بخسارة
-                </div>
-                <p className="text-xs text-rose-600">
-                  يرجى مراجعة أسعار البيع والتخفيضات الممنوحة على هذه الأصناف لوقف تسريب الأرباح.
-                </p>
               </div>
             )}
 
-            {/* Profitability Table */}
-            <Card className="border shadow-sm">
-              <CardContent className="p-0">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>الصنف</TableHead>
-                      <TableHead>التصنيف</TableHead>
-                      <TableHead>الوحدات المباعة</TableHead>
-                      <TableHead>صافي الإيراد</TableHead>
-                      {showCosts && <TableHead>التكلفة التاريخية (COGS)</TableHead>}
-                      {showCosts && <TableHead>الربح المحقق</TableHead>}
-                      {showCosts && <TableHead>الهامش %</TableHead>}
-                      <TableHead>الحالة</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {profitabilityReport?.allProductProfitability.slice(0, 50).map((prod) => (
-                      <TableRow key={prod.productId}>
-                        <TableCell>
-                          <div className="font-semibold text-foreground">{prod.name}</div>
-                          <div className="text-[11px] font-mono text-muted-foreground">{prod.sku}</div>
-                        </TableCell>
-                        <TableCell>{prod.category}</TableCell>
-                        <TableCell>{number(prod.unitsSold)}</TableCell>
-                        <TableCell className="font-medium">{currency(prod.netRevenue)}</TableCell>
-                        {showCosts && <TableCell>{currency(prod.historicalCogs)}</TableCell>}
-                        {showCosts && (
-                          <TableCell className={`font-bold ${prod.isNegativeMargin ? 'text-rose-600' : 'text-emerald-700'}`}>
-                            {currency(prod.grossProfit)}
-                          </TableCell>
-                        )}
-                        {showCosts && (
-                          <TableCell>
-                            <Badge variant={prod.isNegativeMargin ? 'destructive' : prod.isLowMargin ? 'secondary' : 'outline'}>
-                              {prod.grossMarginPct}%
-                            </Badge>
-                          </TableCell>
-                        )}
-                        <TableCell>
-                          {prod.isNegativeMargin ? (
-                            <Badge variant="destructive">بيع بخسارة</Badge>
-                          ) : prod.isLowMargin ? (
-                            <Badge variant="secondary" className="text-amber-700 bg-amber-100">هامش ضعيف</Badge>
-                          ) : (
-                            <Badge variant="outline" className="text-emerald-700">سليم</Badge>
-                          )}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </CardContent>
-            </Card>
-          </TabsContent>
+            {/* Branch Filter */}
+            <Select value={selectedBranch} onValueChange={setSelectedBranch}>
+              <SelectTrigger className="h-8 text-xs w-[135px] font-medium bg-background border-border">
+                <Building2 className="w-3.5 h-3.5 ml-1.5 opacity-60" />
+                <SelectValue placeholder="الفرع" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">كافة الفروع</SelectItem>
+                {branchesList.map((b) => (
+                  <SelectItem key={b.id} value={b.id}>
+                    {b.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
 
-          {/* TAB 7: PARTNERS (SUPPLIERS & CUSTOMER RFM) */}
-          <TabsContent value="partners" className="space-y-6">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {/* Suppliers Scorecard */}
-              <Card className="border shadow-sm">
-                <CardHeader className="p-4 border-b">
-                  <CardTitle className="text-sm font-bold text-foreground">بطاقة تقييم الموردين ودور النشر</CardTitle>
-                  <CardDescription className="text-xs text-muted-foreground">
-                    سرعة التوريد، نسبة الالتزام بالمواعيد، ومعدل إتمام الكميات المطلوبة
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="p-0">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>المورد</TableHead>
-                        <TableHead>إجمالي المشتريات</TableHead>
-                        <TableHead>مدة التوريد</TableHead>
-                        <TableHead>نسبة الإتمام</TableHead>
-                        <TableHead>التقييم</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {partnerReport?.suppliers.slice(0, 10).map((sup) => (
-                        <TableRow key={sup.supplierId}>
-                          <TableCell className="font-semibold text-xs">{sup.name}</TableCell>
-                          <TableCell className="text-xs font-medium">{currency(sup.totalPurchasesAmount)}</TableCell>
-                          <TableCell className="text-xs">{sup.avgLeadTimeDays} يوم</TableCell>
-                          <TableCell className="text-xs">
-                            <Badge variant="outline">{sup.fillRatePct}%</Badge>
-                          </TableCell>
-                          <TableCell>
-                            <Badge className={sup.scorecardRating === 'A+' || sup.scorecardRating === 'A' ? 'bg-emerald-600' : 'bg-blue-600'}>
-                              {sup.scorecardRating}
-                            </Badge>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </CardContent>
-              </Card>
+            {/* Cost Masking */}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setRevealCosts(!revealCosts)}
+              className="h-8 px-2.5 text-xs gap-1.5 border-border bg-background"
+              title={revealCosts ? 'حجب التكاليف والأرباح' : 'إظهار التكاليف والأرباح'}
+            >
+              {revealCosts ? <EyeOff className="w-3.5 h-3.5 text-muted-foreground" /> : <Eye className="w-3.5 h-3.5 text-primary" />}
+              <span className="hidden xl:inline">{revealCosts ? 'حجب التكاليف' : 'إظهار التكاليف'}</span>
+            </Button>
 
-              {/* Customer RFM Segmentation */}
-              <Card className="border shadow-sm">
-                <CardHeader className="p-4 border-b">
-                  <CardTitle className="text-sm font-bold text-foreground">
-                    تصنيف العملاء السلوكي (RFM Behavioral Matrix)
-                  </CardTitle>
-                  <CardDescription className="text-xs text-muted-foreground">
-                    تقسيم العملاء وفق الحداثة والتكرار وإجمالي القيمة المستدامة (LTV)
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="p-0">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>العميل</TableHead>
-                        <TableHead>الشريحة</TableHead>
-                        <TableHead>الطلبات</TableHead>
-                        <TableHead>القيمة التراكمية (LTV)</TableHead>
-                        <TableHead>آخر شراء</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {partnerReport?.customers.slice(0, 10).map((cust) => (
-                        <TableRow key={cust.customerId}>
-                          <TableCell className="font-semibold text-xs">{cust.name}</TableCell>
-                          <TableCell>
-                            <Badge variant="secondary" className="text-xs">
-                              {cust.segmentLabelAr}
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="text-xs">{cust.frequencyOrders}</TableCell>
-                          <TableCell className="text-xs font-bold text-emerald-700">{currency(cust.monetaryLtv)}</TableCell>
-                          <TableCell className="text-xs text-muted-foreground">{cust.recencyDays} يوم مضى</TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </CardContent>
-              </Card>
-            </div>
-          </TabsContent>
+            {/* Refresh */}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={loadReportsData}
+              disabled={loading}
+              className="h-8 px-2.5 text-xs gap-1.5 border-border bg-background"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-primary' : ''}`} />
+              <span className="hidden sm:inline">تحديث</span>
+            </Button>
 
-          {/* TAB 8: BRANCHES & CASHIERS */}
-          <TabsContent value="branches" className="space-y-6">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {/* Branch Comparison */}
-              <Card className="border shadow-sm">
-                <CardHeader className="p-4 border-b">
-                  <CardTitle className="text-sm font-bold text-foreground">مقارنة أداء الفروع والمناقلات</CardTitle>
-                </CardHeader>
-                <CardContent className="p-0">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>الفرع</TableHead>
-                        <TableHead>الفواتير</TableHead>
-                        <TableHead>صافي المبيعات</TableHead>
-                        <TableHead>المناقلات الواردة/الصادرة</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {branchReport?.branches.map((b) => (
-                        <TableRow key={b.branchId}>
-                          <TableCell className="font-bold text-xs">{b.branchName}</TableCell>
-                          <TableCell className="text-xs">{number(b.transactionsCount)}</TableCell>
-                          <TableCell className="text-xs font-bold text-foreground">{currency(b.netSales)}</TableCell>
-                          <TableCell className="text-xs">
-                            صادر: {b.outgoingTransfersCount} | وارد: {b.incomingTransfersCount}
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </CardContent>
-              </Card>
+            {/* Export CSV */}
+            <Button
+              size="sm"
+              onClick={handleExportCsv}
+              className="h-8 px-3 text-xs gap-1.5 bg-primary text-primary-foreground hover:bg-primary/90"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>تصدير</span>
+            </Button>
+          </div>
+        </div>
 
-              {/* Cashier Operational Tracking */}
-              <Card className="border shadow-sm">
-                <CardHeader className="p-4 border-b">
-                  <CardTitle className="text-sm font-bold text-foreground">إنتاجية ومؤشرات الكاشير</CardTitle>
-                </CardHeader>
-                <CardContent className="p-0">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>الكاشير</TableHead>
-                        <TableHead>الفواتير</TableHead>
-                        <TableHead>المبيعات المحصلة</TableHead>
-                        <TableHead>الخصومات الممنوحة</TableHead>
-                        <TableHead>المرتجعات</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {branchReport?.cashiers.map((c) => (
-                        <TableRow key={c.cashierId}>
-                          <TableCell className="font-semibold text-xs">{c.cashierName}</TableCell>
-                          <TableCell className="text-xs">{c.invoicesCount}</TableCell>
-                          <TableCell className="text-xs font-medium">{currency(c.totalNetSales)}</TableCell>
-                          <TableCell className="text-xs text-rose-600 font-semibold">{currency(c.totalDiscounts)}</TableCell>
-                          <TableCell className="text-xs">{c.returnsCount} فواتير ({currency(c.returnsAmount)})</TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </CardContent>
-              </Card>
-            </div>
-          </TabsContent>
-
-          {/* TAB 9: FINANCIAL BI (GL SOURCED) */}
-          <TabsContent value="financial_bi" className="space-y-6">
-            <div className="p-4 bg-blue-50 border border-blue-200 rounded-xl flex items-center gap-3">
-              <Layers className="w-6 h-6 text-blue-700 flex-shrink-0" />
-              <div>
-                <h4 className="text-xs font-bold text-blue-900">
-                  بيانات دفتر الأستاذ العام الرسمية (Sourced 100% from General Ledger - Audit 4)
-                </h4>
-                <p className="text-[11px] text-blue-700 mt-0.5">
-                  هذه المؤشرات المالية مستخرجة حصرياً من قيود اليومية المحاسبية المعتمدة والمرحلة لضمان الانضباط الرقابي والتوافق المالي.
-                </p>
+        {/* ========================================================================= */}
+        {/* 2. EXECUTIVE 5-CARD KPI RIBBON (COMPACT, HIGH-DENSITY)                    */}
+        {/* ========================================================================= */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5 shrink-0">
+          {/* Card 1: Net Sales */}
+          <Card className="bg-card border-border/80 shadow-sm p-3 flex flex-col justify-between">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-bold text-muted-foreground">صافي المبيعات</span>
+              <div className="w-7 h-7 rounded-lg bg-emerald-500/10 text-emerald-500 flex items-center justify-center">
+                <DollarSign className="w-4 h-4" />
               </div>
             </div>
-
-            {/* Financial Ratios Grid */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              <Card className="p-4 border">
-                <span className="text-xs text-muted-foreground">نسبة التداول الحالية (Current Ratio)</span>
-                <div className="text-2xl font-black text-foreground mt-1">{financialBIMetrics?.currentRatio ?? 0}x</div>
-                <span className="text-[10px] text-muted-foreground">الأصول المتداولة / الالتزامات المتداولة</span>
-              </Card>
-
-              <Card className="p-4 border">
-                <span className="text-xs text-muted-foreground">السيولة السريعة (Quick Ratio)</span>
-                <div className="text-2xl font-black text-emerald-600 mt-1">{financialBIMetrics?.quickRatio ?? 0}x</div>
-                <span className="text-[10px] text-muted-foreground">(النقدية + العملاء) / الالتزامات</span>
-              </Card>
-
-              <Card className="p-4 border">
-                <span className="text-xs text-muted-foreground">فترة تحصيل الديون (DSO)</span>
-                <div className="text-2xl font-black text-amber-600 mt-1">{financialBIMetrics?.dsoDays ?? 0} يوماً</div>
-                <span className="text-[10px] text-muted-foreground">متوسط سرعة تحصيل ديون العملاء</span>
-              </Card>
-
-              <Card className="p-4 border">
-                <span className="text-xs text-muted-foreground">فترة سداد الموردين (DPO)</span>
-                <div className="text-2xl font-black text-blue-600 mt-1">{financialBIMetrics?.dpoDays ?? 0} يوماً</div>
-                <span className="text-[10px] text-muted-foreground">متوسط فترة سداد مستحقات الموردين</span>
-              </Card>
+            <div className="mt-1">
+              <div className="text-lg lg:text-xl font-black font-mono text-emerald-500 tracking-tight">
+                {currency(metrics.netSales)}
+              </div>
+              <div className="flex items-center justify-between text-[10px] text-muted-foreground mt-0.5 font-medium">
+                <span>فواتير: {number(metrics.transactions)}</span>
+                <span className="text-rose-500">خصم: -{currency(metrics.discounts)}</span>
+              </div>
             </div>
+          </Card>
 
-            {/* GL Balances Overview */}
-            <Card className="border shadow-sm">
-              <CardHeader className="p-4 border-b">
-                <CardTitle className="text-sm font-bold text-foreground">أرصدة الميزانية والأستاذ العام</CardTitle>
-              </CardHeader>
-              <CardContent className="p-0">
-                <Table>
-                  <TableBody>
-                    <TableRow>
-                      <TableCell className="font-semibold">إجمالي الأصول (Assets)</TableCell>
-                      <TableCell className="font-bold text-foreground">{currency(financialBIMetrics?.totalAssets || 0)}</TableCell>
-                    </TableRow>
-                    <TableRow>
-                      <TableCell className="font-semibold">إجمالي الالتزامات (Liabilities)</TableCell>
-                      <TableCell className="font-bold text-rose-700">{currency(financialBIMetrics?.totalLiabilities || 0)}</TableCell>
-                    </TableRow>
-                    <TableRow>
-                      <TableCell className="font-semibold">حقوق الملكية (Equity)</TableCell>
-                      <TableCell className="font-bold text-blue-700">{currency(financialBIMetrics?.totalEquity || 0)}</TableCell>
-                    </TableRow>
-                    <TableRow>
-                      <TableCell className="font-semibold">رأس المال العامل الصافي (Working Capital)</TableCell>
-                      <TableCell className="font-bold text-emerald-700">{currency(financialBIMetrics?.workingCapital || 0)}</TableCell>
-                    </TableRow>
-                    <TableRow>
-                      <TableCell className="font-semibold">صافي الدخل من واقع الدفاتر (Net Income GL)</TableCell>
-                      <TableCell className="font-bold text-emerald-700">{currency(financialBIMetrics?.netIncomeGL || 0)}</TableCell>
-                    </TableRow>
-                  </TableBody>
-                </Table>
-              </CardContent>
+          {/* Card 2: Gross Profit */}
+          <Card className="bg-card border-border/80 shadow-sm p-3 flex flex-col justify-between">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-bold text-muted-foreground">مجمل الربح التجاري</span>
+              <div className="w-7 h-7 rounded-lg bg-blue-500/10 text-blue-500 flex items-center justify-center">
+                <TrendingUp className="w-4 h-4" />
+              </div>
+            </div>
+            <div className="mt-1">
+              <div className="text-lg lg:text-xl font-black font-mono text-blue-500 tracking-tight">
+                {revealCosts ? currency(metrics.grossProfit) : '••••••'}
+              </div>
+              <div className="flex items-center justify-between text-[10px] text-muted-foreground mt-0.5 font-medium">
+                <span>الهامش: {revealCosts ? `${metrics.grossMarginPct}%` : '•••'}</span>
+                <span>تكلفة: {revealCosts ? currency(metrics.cogs) : '•••'}</span>
+              </div>
+            </div>
+          </Card>
+
+          {/* Card 3: Inventory Valuation */}
+          <Card className="bg-card border-border/80 shadow-sm p-3 flex flex-col justify-between">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-bold text-muted-foreground">قيمة المخزون الحالي</span>
+              <div className="w-7 h-7 rounded-lg bg-amber-500/10 text-amber-500 flex items-center justify-center">
+                <Package className="w-4 h-4" />
+              </div>
+            </div>
+            <div className="mt-1">
+              <div className="text-lg lg:text-xl font-black font-mono text-amber-500 tracking-tight">
+                {revealCosts ? currency(metrics.totalCostValuation) : currency(metrics.totalRetailValuation)}
+              </div>
+              <div className="flex items-center justify-between text-[10px] text-muted-foreground mt-0.5 font-medium">
+                <span>القطع: {number(metrics.totalStockUnits)}</span>
+                <span className="text-emerald-500 font-medium">البيع: {currency(metrics.totalRetailValuation)}</span>
+              </div>
+            </div>
+          </Card>
+
+          {/* Card 4: Operating Expenses */}
+          <Card className="bg-card border-border/80 shadow-sm p-3 flex flex-col justify-between">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-bold text-muted-foreground">المصروفات التشغيلية</span>
+              <div className="w-7 h-7 rounded-lg bg-rose-500/10 text-rose-500 flex items-center justify-center">
+                <Wallet className="w-4 h-4" />
+              </div>
+            </div>
+            <div className="mt-1">
+              <div className="text-lg lg:text-xl font-black font-mono text-rose-500 tracking-tight">
+                {currency(metrics.expensesTotal)}
+              </div>
+              <div className="flex items-center justify-between text-[10px] text-muted-foreground mt-0.5 font-medium">
+                <span>سجلات: {number(expensesList.length)}</span>
+                <span>متوسط الفاتورة: {currency(metrics.avgTicket)}</span>
+              </div>
+            </div>
+          </Card>
+
+          {/* Card 5: Net Profit (Bottom Line) */}
+          <Card className={`border-border/80 shadow-sm p-3 flex flex-col justify-between col-span-2 sm:col-span-1 ${
+            metrics.netIncome >= 0 ? 'bg-gradient-to-br from-emerald-500/10 via-card to-card border-emerald-500/30' : 'bg-gradient-to-br from-rose-500/10 via-card to-card border-rose-500/30'
+          }`}>
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-bold text-muted-foreground">صافي الدخل النهائي</span>
+              <div className={`w-7 h-7 rounded-lg flex items-center justify-center ${
+                metrics.netIncome >= 0 ? 'bg-emerald-500/20 text-emerald-500' : 'bg-rose-500/20 text-rose-500'
+              }`}>
+                {metrics.netIncome >= 0 ? <ArrowUpRight className="w-4 h-4" /> : <ArrowDownRight className="w-4 h-4" />}
+              </div>
+            </div>
+            <div className="mt-1">
+              <div className={`text-lg lg:text-xl font-black font-mono tracking-tight ${
+                metrics.netIncome >= 0 ? 'text-emerald-400' : 'text-rose-400'
+              }`}>
+                {revealCosts ? currency(metrics.netIncome) : '••••••'}
+              </div>
+              <div className="flex items-center justify-between text-[10px] text-muted-foreground mt-0.5 font-medium">
+                <span>صافي الهامش: {revealCosts ? `${metrics.netMarginPct}%` : '•••'}</span>
+                <span>القطع المباعة: {number(metrics.itemsSold)}</span>
+              </div>
+            </div>
+          </Card>
+        </div>
+
+        {/* ========================================================================= */}
+        {/* 3. INTERACTIVE SUB-COCKPITS (EXPANDED TO OCCUPY REMAINING SCREEN)          */}
+        {/* ========================================================================= */}
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col md:overflow-hidden min-h-0">
+          {/* Tabs Navigation Header */}
+          <div className="bg-card border border-border/80 rounded-xl p-1 shrink-0 flex items-center justify-between overflow-x-auto">
+            <TabsList className="bg-transparent h-auto p-0 gap-1 flex flex-nowrap shrink-0">
+              <TabsTrigger
+                value="overview"
+                className="h-7 text-xs font-bold px-3 gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground rounded-lg"
+              >
+                <TrendingUp className="w-3.5 h-3.5" />
+                المؤشرات العامة والمسار
+              </TabsTrigger>
+              <TabsTrigger
+                value="products"
+                className="h-7 text-xs font-bold px-3 gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground rounded-lg"
+              >
+                <ShoppingCart className="w-3.5 h-3.5" />
+                المبيعات وسلة الأصناف
+              </TabsTrigger>
+              <TabsTrigger
+                value="inventory"
+                className="h-7 text-xs font-bold px-3 gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground rounded-lg"
+              >
+                <Package className="w-3.5 h-3.5" />
+                تقييم وصحة المخزون
+              </TabsTrigger>
+              <TabsTrigger
+                value="cashiers"
+                className="h-7 text-xs font-bold px-3 gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground rounded-lg"
+              >
+                <Users className="w-3.5 h-3.5" />
+                الكاشير والفروع
+              </TabsTrigger>
+              <TabsTrigger
+                value="financials"
+                className="h-7 text-xs font-bold px-3 gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground rounded-lg"
+              >
+                <Layers className="w-3.5 h-3.5" />
+                قائمة الدخل والأرباح (P&L)
+              </TabsTrigger>
+            </TabsList>
+
+            <span className="text-[11px] text-muted-foreground font-mono hidden md:inline px-3">
+              {activeDateRange.startDate} ⟵ {activeDateRange.endDate}
+            </span>
+          </div>
+
+          {/* TAB CONTENT 1: OVERVIEW */}
+          <TabsContent value="overview" className="flex-1 overflow-y-auto md:overflow-hidden min-h-0 pt-2 mt-0 data-[state=active]:flex data-[state=active]:flex-col">
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-2.5 flex-1 min-h-0">
+              {/* Left 2 Cols: Sales & Profit Chart */}
+              <Card className="lg:col-span-2 border-border/80 bg-card p-3.5 flex flex-col overflow-hidden">
+                <div className="flex items-center justify-between pb-2 border-b border-border/60 shrink-0">
+                  <div>
+                    <h3 className="text-sm font-bold text-foreground flex items-center gap-1.5">
+                      <Sparkles className="w-4 h-4 text-blue-500" />
+                      مسار صافي المبيعات والربح اليومي
+                    </h3>
+                    <p className="text-[11px] text-muted-foreground">حركة الإيرادات والربح المحقق خلال الفترة المحددة</p>
+                  </div>
+                  <div className="flex items-center gap-3 text-xs font-medium">
+                    <span className="flex items-center gap-1">
+                      <span className="w-2.5 h-2.5 rounded-full bg-blue-500 inline-block" />
+                      المبيعات
+                    </span>
+                    {revealCosts && (
+                      <span className="flex items-center gap-1">
+                        <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 inline-block" />
+                        مجمل الربح
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                <div className="flex-1 min-h-0 pt-2">
+                  {metrics.dailyTrend.length > 0 ? (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={metrics.dailyTrend} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                        <defs>
+                          <linearGradient id="salesGrad" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3} />
+                            <stop offset="95%" stopColor="#3b82f6" stopOpacity={0.0} />
+                          </linearGradient>
+                          <linearGradient id="profitGrad" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#10b981" stopOpacity={0.3} />
+                            <stop offset="95%" stopColor="#10b981" stopOpacity={0.0} />
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid strokeDasharray="3 3" opacity={0.15} vertical={false} />
+                        <XAxis dataKey="date" tick={{ fontSize: 10 }} stroke="#888888" />
+                        <YAxis tick={{ fontSize: 10 }} stroke="#888888" />
+                        <RechartsTooltip
+                          contentStyle={{
+                            backgroundColor: 'hsl(var(--card))',
+                            borderColor: 'hsl(var(--border))',
+                            borderRadius: '0.5rem',
+                            fontSize: '11px',
+                            direction: 'rtl',
+                          }}
+                          formatter={(value: any) => [currency(Number(value)), '']}
+                        />
+                        <Area type="monotone" dataKey="sales" name="المبيعات" stroke="#3b82f6" strokeWidth={2} fillOpacity={1} fill="url(#salesGrad)" />
+                        {revealCosts && (
+                          <Area type="monotone" dataKey="profit" name="مجمل الربح" stroke="#10b981" strokeWidth={2} fillOpacity={1} fill="url(#profitGrad)" />
+                        )}
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    <div className="h-full flex flex-col items-center justify-center text-muted-foreground text-xs">
+                      <BarChart3 className="w-10 h-10 mb-2 opacity-30" />
+                      لا توجد بيانات مبيعات مسجلة في هذه الفترة
+                    </div>
+                  )}
+                </div>
+              </Card>
+
+              {/* Right Col: Payment Methods & Quick Snapshot */}
+              <div className="flex flex-col gap-2.5 min-h-0">
+                {/* Payment Methods */}
+                <Card className="border-border/80 bg-card p-3 flex-1 flex flex-col min-h-0">
+                  <h3 className="text-xs font-bold text-foreground pb-1.5 border-b border-border/60 flex items-center gap-1.5 shrink-0">
+                    <CreditCard className="w-3.5 h-3.5 text-emerald-500" />
+                    توزيع وسائل التحصيل والدفع
+                  </h3>
+                  <div className="flex-1 min-h-0 pt-1">
+                    {metrics.paymentBreakdown.length > 0 ? (
+                      <ResponsiveContainer width="100%" height="100%">
+                        <PieChart>
+                          <Pie
+                            data={metrics.paymentBreakdown}
+                            cx="50%"
+                            cy="50%"
+                            innerRadius={40}
+                            outerRadius={65}
+                            paddingAngle={3}
+                            dataKey="value"
+                          >
+                            {metrics.paymentBreakdown.map((_, idx) => (
+                              <Cell key={`cell-${idx}`} fill={CHART_PALETTE[idx % CHART_PALETTE.length]} />
+                            ))}
+                          </Pie>
+                          <RechartsTooltip formatter={(val: any) => currency(Number(val))} />
+                          <Legend wrapperStyle={{ fontSize: '11px' }} />
+                        </PieChart>
+                      </ResponsiveContainer>
+                    ) : (
+                      <div className="h-full flex items-center justify-center text-xs text-muted-foreground">
+                        لا توجد مدفوعات مسجلة
+                      </div>
+                    )}
+                  </div>
+                </Card>
+
+                {/* Quick Performance Summary Card */}
+                <Card className="border-border/80 bg-card p-3 shrink-0 space-y-2 text-xs">
+                  <h4 className="font-bold text-foreground text-xs border-b border-border/60 pb-1 flex items-center gap-1">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-blue-400" />
+                    ملخص الإنتاجية والتشغيل
+                  </h4>
+                  <div className="grid grid-cols-2 gap-2 text-[11px]">
+                    <div className="bg-muted/30 p-2 rounded-lg border border-border/50">
+                      <span className="text-muted-foreground block text-[10px]">متوسط الفاتورة</span>
+                      <span className="font-bold font-mono text-foreground">{currency(metrics.avgTicket)}</span>
+                    </div>
+                    <div className="bg-muted/30 p-2 rounded-lg border border-border/50">
+                      <span className="text-muted-foreground block text-[10px]">القطع / فاتورة</span>
+                      <span className="font-bold font-mono text-foreground">
+                        {metrics.transactions > 0 ? (metrics.itemsSold / metrics.transactions).toFixed(1) : 0} قطعة
+                      </span>
+                    </div>
+                    <div className="bg-muted/30 p-2 rounded-lg border border-border/50">
+                      <span className="text-muted-foreground block text-[10px]">أصناف منخفضة</span>
+                      <span className="font-bold font-mono text-amber-500">{number(metrics.lowStockCount)} صنف</span>
+                    </div>
+                    <div className="bg-muted/30 p-2 rounded-lg border border-border/50">
+                      <span className="text-muted-foreground block text-[10px]">أصناف نافذة</span>
+                      <span className="font-bold font-mono text-rose-500">{number(metrics.outOfStockCount)} صنف</span>
+                    </div>
+                  </div>
+                </Card>
+              </div>
+            </div>
+          </TabsContent>
+
+          {/* TAB CONTENT 2: SALES & PRODUCTS */}
+          <TabsContent value="products" className="flex-1 overflow-y-auto md:overflow-hidden min-h-0 pt-2 mt-0 data-[state=active]:flex data-[state=active]:flex-col">
+            <Card className="border-border/80 bg-card p-3 flex-1 flex flex-col min-h-0">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2.5 border-b border-border/60 shrink-0">
+                <div>
+                  <h3 className="text-sm font-bold text-foreground">تحليل مبيعات الأصناف والأقسام الأكثر ربحية</h3>
+                  <p className="text-[11px] text-muted-foreground">ترتيب الأصناف بحسب إجمالي الإيرادات والكميات المحققة</p>
+                </div>
+                <div className="relative w-full sm:w-64">
+                  <Search className="w-3.5 h-3.5 absolute right-2.5 top-2.5 text-muted-foreground" />
+                  <Input
+                    placeholder="بحث في الأصناف والأقسام..."
+                    value={searchFilter}
+                    onChange={(e) => setSearchFilter(e.target.value)}
+                    className="h-8 pr-8 text-xs bg-background"
+                  />
+                </div>
+              </div>
+
+              {/* Internal Smooth Scrollable Table Container */}
+              <div className="flex-1 overflow-x-auto overflow-y-auto min-h-0 pt-1">
+                <table className="w-full min-w-[650px] text-xs text-right">
+                  <thead className="sticky top-0 bg-card text-muted-foreground font-semibold border-b border-border/60 z-10 text-[11px]">
+                    <tr>
+                      <th className="py-2 px-3">اسم الصنف / الكتاب</th>
+                      <th className="py-2 px-3">القسم</th>
+                      <th className="py-2 px-3 text-center">الكمية المباعة</th>
+                      <th className="py-2 px-3 text-left">إجمالي المبيعات</th>
+                      {revealCosts && (
+                        <>
+                          <th className="py-2 px-3 text-left">التكلفة</th>
+                          <th className="py-2 px-3 text-left">مجمل الربح</th>
+                          <th className="py-2 px-3 text-center">هامش الربح</th>
+                        </>
+                      )}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border/40">
+                    {filteredProducts.map((p, idx) => (
+                      <tr key={p.id} className="hover:bg-muted/30 transition-colors">
+                        <td className="py-2 px-3 font-medium text-foreground flex items-center gap-2">
+                          <span className="w-5 h-5 rounded-full bg-primary/10 text-primary flex items-center justify-center text-[10px] font-bold shrink-0">
+                            {idx + 1}
+                          </span>
+                          <span className="truncate max-w-xs">{p.name}</span>
+                        </td>
+                        <td className="py-2 px-3 text-muted-foreground">
+                          <Badge variant="outline" className="text-[10px] font-normal py-0">
+                            {p.category}
+                          </Badge>
+                        </td>
+                        <td className="py-2 px-3 text-center font-mono font-bold">{number(p.unitsSold)}</td>
+                        <td className="py-2 px-3 text-left font-mono font-bold text-emerald-500" dir="ltr">
+                          {currency(p.totalRevenue)}
+                        </td>
+                        {revealCosts && (
+                          <>
+                            <td className="py-2 px-3 text-left font-mono text-muted-foreground" dir="ltr">
+                              {currency(p.totalCost)}
+                            </td>
+                            <td className="py-2 px-3 text-left font-mono font-bold text-blue-500" dir="ltr">
+                              {currency(p.grossProfit)}
+                            </td>
+                            <td className="py-2 px-3 text-center font-mono">
+                              <Badge variant="outline" className={`text-[10px] ${
+                                p.marginPct >= 25 ? 'text-emerald-500 border-emerald-500/30' : p.marginPct >= 10 ? 'text-blue-500 border-blue-500/30' : 'text-amber-500 border-amber-500/30'
+                              }`}>
+                                {p.marginPct}%
+                              </Badge>
+                            </td>
+                          </>
+                        )}
+                      </tr>
+                    ))}
+                    {filteredProducts.length === 0 && (
+                      <tr>
+                        <td colSpan={7} className="text-center py-12 text-muted-foreground text-xs">
+                          لا توجد مبيعات مسجلة مطابقة في هذه الفترة
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </Card>
           </TabsContent>
 
-          {/* TAB 10: DATA SYNC & PRE-AGGREGATION */}
-          <TabsContent value="data_sync" className="space-y-6">
-            <Card className="border shadow-sm">
-              <CardHeader className="p-5 border-b">
-                <CardTitle className="text-base font-bold text-foreground">
-                  محرك معالجة البيانات الإحصائية اليومية المجمعة (Idempotent Daily Aggregates Engine)
-                </CardTitle>
-                <CardDescription className="text-xs text-muted-foreground">
-                  تخزين مسبق للبيانات لرفع سرعة استجابة النظام وضمان ثبات التقارير التاريخية
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="p-5 space-y-4">
-                <div className="p-4 bg-muted/30 rounded-xl border border-border text-xs text-foreground space-y-2">
-                  <div className="font-bold">حالة محرك البيانات:</div>
-                  <ul className="list-disc list-inside space-y-1 text-muted-foreground">
-                    <li>المجاميع اليومية تحفظ بمفتاح فريد وغير قابل للتكرار: <code className="font-mono bg-muted/60 px-1.5 py-0.5 rounded border border-border text-[11px] text-foreground">{tenantId}___branchId___YYYY-MM-DD</code></li>
-                    <li>المعادلات تطبق بتوقيت المنطقة الزمنية المعتمدة ({timeZone}) لمنع انزياح مبيعات ما بعد الساعة 23:00.</li>
-                    <li>عمليات إعادة البناء متكررة وآمنة تماماً (Idempotent) ولا تكرر أو تغير الأرقام التاريخية.</li>
-                  </ul>
+          {/* TAB CONTENT 3: INVENTORY & HEALTH */}
+          <TabsContent value="inventory" className="flex-1 overflow-y-auto md:overflow-hidden min-h-0 pt-2 mt-0 data-[state=active]:flex data-[state=active]:flex-col">
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-2.5 flex-1 min-h-0">
+              {/* Left Col: Stock Alerts */}
+              <Card className="border-border/80 bg-card p-3 flex flex-col min-h-0">
+                <h3 className="text-xs font-bold text-foreground pb-2 border-b border-border/60 flex items-center gap-1.5 shrink-0">
+                  <AlertTriangle className="w-4 h-4 text-amber-500" />
+                  تنبيهات نواقص المخزون ونقاط الطلب
+                </h3>
+                <div className="flex-1 overflow-y-auto min-h-0 pt-1 divide-y divide-border/40">
+                  {metrics.stockItemsEnhanced
+                    .filter((i) => i.quantity <= Number(i.reorderPoint || 5))
+                    .slice(0, 50)
+                    .map((item) => (
+                      <div key={item.id} className="py-2 flex items-center justify-between text-xs">
+                        <div>
+                          <p className="font-medium text-foreground">{item.name}</p>
+                          <span className="text-[10px] text-muted-foreground">القسم: {item.category}</span>
+                        </div>
+                        <div className="text-left">
+                          <Badge variant="outline" className={item.quantity <= 0 ? 'bg-rose-500/10 text-rose-500 border-rose-500/30' : 'bg-amber-500/10 text-amber-500 border-amber-500/30'}>
+                            {item.quantity <= 0 ? 'نافذ تماماً' : `متبقي: ${item.quantity}`}
+                          </Badge>
+                          <span className="block text-[10px] font-mono text-muted-foreground mt-0.5" dir="ltr">
+                            {currency(item.retailPrice)}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  {metrics.stockItemsEnhanced.filter((i) => i.quantity <= Number(i.reorderPoint || 5)).length === 0 && (
+                    <div className="h-full flex flex-col items-center justify-center text-muted-foreground text-xs py-8">
+                      <CheckCircle2 className="w-8 h-8 text-emerald-500 mb-2 opacity-50" />
+                      كافة الأصناف متوفرة بأرصدة آمنة
+                    </div>
+                  )}
+                </div>
+              </Card>
+
+              {/* Right 2 Cols: Full Inventory Valuation Table */}
+              <Card className="lg:col-span-2 border-border/80 bg-card p-3 flex flex-col min-h-0">
+                <div className="flex items-center justify-between pb-2 border-b border-border/60 shrink-0">
+                  <div>
+                    <h3 className="text-sm font-bold text-foreground">بيان تقييم المخزون الحالي وأرصدة المستودعات</h3>
+                    <p className="text-[11px] text-muted-foreground">
+                      إجمالي القيمة بسعر التكلفة: <span className="font-bold text-amber-500 font-mono">{currency(metrics.totalCostValuation)}</span>
+                    </p>
+                  </div>
+                </div>
+                <div className="flex-1 overflow-x-auto overflow-y-auto min-h-0 pt-1">
+                  <table className="w-full min-w-[620px] text-xs text-right">
+                    <thead className="sticky top-0 bg-card text-muted-foreground font-semibold border-b border-border/60 z-10 text-[11px]">
+                      <tr>
+                        <th className="py-2 px-3">الصنف</th>
+                        <th className="py-2 px-3">القسم</th>
+                        <th className="py-2 px-3 text-center">الرصيد المتاح</th>
+                        <th className="py-2 px-3 text-left">سعر التكلفة</th>
+                        <th className="py-2 px-3 text-left">سعر البيع</th>
+                        <th className="py-2 px-3 text-left">إجمالي القيمة</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border/40">
+                      {metrics.stockItemsEnhanced.slice(0, 100).map((s) => (
+                        <tr key={s.id} className="hover:bg-muted/30 transition-colors">
+                          <td className="py-2 px-3 font-medium text-foreground">{s.name}</td>
+                          <td className="py-2 px-3 text-muted-foreground">{s.category}</td>
+                          <td className="py-2 px-3 text-center font-mono font-bold">
+                            <span className={s.quantity <= 0 ? 'text-rose-500' : 'text-foreground'}>
+                              {number(s.quantity)}
+                            </span>
+                          </td>
+                          <td className="py-2 px-3 text-left font-mono" dir="ltr">
+                            {revealCosts ? currency(s.unitCost) : '•••'}
+                          </td>
+                          <td className="py-2 px-3 text-left font-mono" dir="ltr">{currency(s.retailPrice)}</td>
+                          <td className="py-2 px-3 text-left font-mono font-bold text-emerald-500" dir="ltr">
+                            {revealCosts ? currency(s.totalCost) : currency(s.totalRetail)}
+                          </td>
+                        </tr>
+                      ))}
+                      {metrics.stockItemsEnhanced.length === 0 && (
+                        <tr>
+                          <td colSpan={6} className="text-center py-12 text-muted-foreground text-xs">
+                            لا توجد أصناف مسجلة في المخزون
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </Card>
+            </div>
+          </TabsContent>
+
+          {/* TAB CONTENT 4: CASHIERS & BRANCHES */}
+          <TabsContent value="cashiers" className="flex-1 overflow-y-auto md:overflow-hidden min-h-0 pt-2 mt-0 data-[state=active]:flex data-[state=active]:flex-col">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-2.5 flex-1 min-h-0">
+              {/* Cashiers Performance Table */}
+              <Card className="border-border/80 bg-card p-3 flex flex-col min-h-0">
+                <h3 className="text-sm font-bold text-foreground pb-2 border-b border-border/60 flex items-center gap-1.5 shrink-0">
+                  <Users className="w-4 h-4 text-primary" />
+                  إنتاجية ومبيعات الكاشير والموظفين
+                </h3>
+                <div className="flex-1 overflow-x-auto overflow-y-auto min-h-0 pt-1">
+                  <table className="w-full min-w-[500px] text-xs text-right">
+                    <thead className="sticky top-0 bg-card text-muted-foreground font-semibold border-b border-border/60 z-10 text-[11px]">
+                      <tr>
+                        <th className="py-2 px-3">اسم الكاشير</th>
+                        <th className="py-2 px-3 text-center">عدد الفواتير</th>
+                        <th className="py-2 px-3 text-left">إجمالي المبيعات</th>
+                        <th className="py-2 px-3 text-left">متوسط الفاتورة</th>
+                        <th className="py-2 px-3 text-left">الخصومات الممنوحة</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border/40">
+                      {metrics.cashiers.map((c) => (
+                        <tr key={c.id} className="hover:bg-muted/30 transition-colors">
+                          <td className="py-2.5 px-3 font-medium text-foreground">{c.name}</td>
+                          <td className="py-2.5 px-3 text-center font-mono font-bold">{number(c.invoicesCount)}</td>
+                          <td className="py-2.5 px-3 text-left font-mono font-bold text-emerald-500" dir="ltr">
+                            {currency(c.totalSales)}
+                          </td>
+                          <td className="py-2.5 px-3 text-left font-mono text-muted-foreground" dir="ltr">
+                            {currency(c.avgTicket)}
+                          </td>
+                          <td className="py-2.5 px-3 text-left font-mono text-rose-500" dir="ltr">
+                            {currency(c.totalDiscounts)}
+                          </td>
+                        </tr>
+                      ))}
+                      {metrics.cashiers.length === 0 && (
+                        <tr>
+                          <td colSpan={5} className="text-center py-10 text-muted-foreground">
+                            لا توجد عمليات بيع منفذة
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </Card>
+
+              {/* Branches Comparison */}
+              <Card className="border-border/80 bg-card p-3 flex flex-col min-h-0">
+                <h3 className="text-sm font-bold text-foreground pb-2 border-b border-border/60 flex items-center gap-1.5 shrink-0">
+                  <Building2 className="w-4 h-4 text-blue-500" />
+                  أداء ومقارنة الفروع ونقاط البيع
+                </h3>
+                <div className="flex-1 overflow-y-auto min-h-0 pt-1 divide-y divide-border/40">
+                  {branchesList.map((br) => {
+                    const brSales = salesRecords.filter((s) => s.branchId === br.id || s.branch_id === br.id);
+                    const brTotal = brSales.reduce((acc, s) => acc + Number(s.total || 0), 0);
+                    return (
+                      <div key={br.id} className="py-3 flex items-center justify-between text-xs">
+                        <div className="flex items-center gap-2">
+                          <div className="w-8 h-8 rounded-lg bg-primary/10 text-primary flex items-center justify-center font-bold">
+                            <Building2 className="w-4 h-4" />
+                          </div>
+                          <div>
+                            <p className="font-bold text-foreground">{br.name}</p>
+                            <span className="text-[10px] text-muted-foreground">فواتير: {number(brSales.length)}</span>
+                          </div>
+                        </div>
+                        <div className="text-left font-mono font-bold text-emerald-500 text-sm" dir="ltr">
+                          {currency(brTotal)}
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {branchesList.length === 0 && (
+                    <div className="py-10 text-center text-muted-foreground text-xs">
+                      الفرع الرئيسي النشط
+                    </div>
+                  )}
+                </div>
+              </Card>
+            </div>
+          </TabsContent>
+
+          {/* TAB CONTENT 5: FINANCIAL P&L STATEMENT */}
+          <TabsContent value="financials" className="flex-1 overflow-y-auto min-h-0 pt-2 mt-0 data-[state=active]:flex data-[state=active]:flex-col">
+            <Card className="border-border/80 bg-card p-4 flex-1 flex flex-col min-h-0 max-w-4xl mx-auto w-full">
+              <div className="border-b border-border/60 pb-2.5 shrink-0 flex items-center justify-between">
+                <div>
+                  <h3 className="text-base font-black text-foreground flex items-center gap-2">
+                    <Layers className="w-4 h-4 text-primary" />
+                    قائمة الدخل والأرباح التشغيلية (Executive P&L)
+                  </h3>
+                  <p className="text-[11px] text-muted-foreground">
+                    الفترة: {activeDateRange.startDate} إلى {activeDateRange.endDate}
+                  </p>
+                </div>
+                <Badge variant="outline" className="font-mono text-xs text-primary border-primary/30">
+                  صافي الهامش: {metrics.netMarginPct}%
+                </Badge>
+              </div>
+
+              <div className="flex-1 overflow-y-auto min-h-0 pt-3 space-y-3 font-mono text-xs">
+                {/* 1. Revenue Block */}
+                <div className="bg-muted/20 border border-border/60 rounded-xl p-3 space-y-1.5">
+                  <div className="flex items-center justify-between font-bold text-sm text-foreground">
+                    <span>1. إجمالي إيرادات المبيعات (Gross Sales)</span>
+                    <span dir="ltr">{currency(metrics.grossBilled)}</span>
+                  </div>
+                  <div className="flex items-center justify-between text-muted-foreground text-xs pr-4">
+                    <span>- الخصومات الممنوحة للعملاء</span>
+                    <span className="text-rose-500" dir="ltr">-{currency(metrics.discounts)}</span>
+                  </div>
+                  <div className="flex items-center justify-between text-muted-foreground text-xs pr-4">
+                    <span>- مرتجعات المبيعات المستردة</span>
+                    <span className="text-rose-500" dir="ltr">-{currency(metrics.totalReturns)}</span>
+                  </div>
+                  <div className="flex items-center justify-between font-bold text-emerald-500 pt-1 border-t border-border/40">
+                    <span>= صافي الإيرادات (Net Revenue)</span>
+                    <span dir="ltr">{currency(metrics.netSales)}</span>
+                  </div>
                 </div>
 
-                <div className="flex items-center gap-3 pt-2">
-                  <Button
-                    onClick={handleRebuildAggregates}
-                    disabled={isRebuildingAggregates}
-                    className="bg-blue-600 hover:bg-blue-700 text-white text-xs gap-2"
-                  >
-                    <RefreshCw className={`w-3.5 h-3.5 ${isRebuildingAggregates ? 'animate-spin' : ''}`} />
-                    {isRebuildingAggregates
-                      ? 'جارٍ احتساب وتحديث المجاميع...'
-                      : `إعادة بناء وتحديث مجاميع الفترة (${activeDateRange.startDate} إلى ${activeDateRange.endDate})`}
-                  </Button>
+                {/* 2. COGS Block */}
+                <div className="bg-muted/20 border border-border/60 rounded-xl p-3 space-y-1.5">
+                  <div className="flex items-center justify-between font-bold text-xs text-foreground">
+                    <span>2. تكلفة البضاعة المباعة (Cost of Goods Sold - COGS)</span>
+                    <span className="text-rose-400" dir="ltr">
+                      {revealCosts ? `-${currency(metrics.cogs)}` : '••••••'}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between font-bold text-blue-500 pt-1 border-t border-border/40 text-sm">
+                    <span>= مجمل الربح التجاري (Gross Profit)</span>
+                    <span dir="ltr">{revealCosts ? currency(metrics.grossProfit) : '••••••'}</span>
+                  </div>
+                  <div className="text-[10px] text-muted-foreground flex justify-end">
+                    نسبة هامش مجمل الربح: {revealCosts ? `${metrics.grossMarginPct}%` : '•••'}
+                  </div>
                 </div>
-              </CardContent>
+
+                {/* 3. Operating Expenses Block */}
+                <div className="bg-muted/20 border border-border/60 rounded-xl p-3 space-y-1.5">
+                  <div className="flex items-center justify-between font-bold text-xs text-foreground">
+                    <span>3. المصروفات التشغيلية والعمومية (Operating Expenses)</span>
+                    <span className="text-rose-500" dir="ltr">-{currency(metrics.expensesTotal)}</span>
+                  </div>
+                  <div className="text-[10px] text-muted-foreground pr-4">
+                    تشمل إيجارات، فواتير، رواتب، ونثريات مسجلة خلال الفترة
+                  </div>
+                </div>
+
+                {/* 4. Bottom Line Net Profit */}
+                <div className={`border rounded-xl p-4 flex items-center justify-between text-base font-black ${
+                  metrics.netIncome >= 0 ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : 'bg-rose-500/10 border-rose-500/30 text-rose-400'
+                }`}>
+                  <div className="flex items-center gap-2">
+                    <Sparkles className="w-5 h-5" />
+                    <span>صافي الربح التشغيلي النهائي (Net Operating Profit)</span>
+                  </div>
+                  <span className="font-mono text-lg" dir="ltr">
+                    {revealCosts ? currency(metrics.netIncome) : '••••••'}
+                  </span>
+                </div>
+              </div>
             </Card>
           </TabsContent>
         </Tabs>

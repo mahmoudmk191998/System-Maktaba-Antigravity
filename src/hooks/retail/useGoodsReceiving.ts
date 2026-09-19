@@ -12,8 +12,14 @@ import type { DocumentSnapshot } from 'firebase/firestore';
 export function useGoodsReceiving(options: FetchGoodsReceiptsOptions = {}) {
   const currentTenant = useAppStore((state) => state.currentTenant);
   const currentBranch = useAppStore((state) => state.currentBranch);
-  const tenantId = currentTenant?.id || '';
-  const branchId = currentBranch?.id || '';
+  const currentUser = useAppStore((state) => state.currentUser);
+  const tenantId =
+    currentTenant?.id ||
+    (currentTenant as any)?.tenantId ||
+    currentUser?.tenantId ||
+    (currentUser as any)?.tenant_id ||
+    'default';
+  const branchId = currentBranch?.id || 'main-branch';
 
   const [receipts, setReceipts] = useState<GoodsReceipt[]>([]);
   const [loading, setLoading] = useState(false);
@@ -23,12 +29,12 @@ export function useGoodsReceiving(options: FetchGoodsReceiptsOptions = {}) {
 
   const loadReceipts = useCallback(
     async (opts: FetchGoodsReceiptsOptions = {}, append = false) => {
-      if (!tenantId) return;
+      const effTenant = tenantId || 'default';
       setLoading(true);
       setError(null);
       try {
         const merged = { ...options, ...opts };
-        const res = await fetchGoodsReceiptsFromDb(tenantId, merged);
+        const res = await fetchGoodsReceiptsFromDb(effTenant, merged);
         if (append) {
           setReceipts((prev) => [...prev, ...res.receipts]);
         } else {
@@ -46,25 +52,24 @@ export function useGoodsReceiving(options: FetchGoodsReceiptsOptions = {}) {
   );
 
   useEffect(() => {
-    if (tenantId) {
-      loadReceipts();
-    }
-  }, [tenantId, loadReceipts]);
+    loadReceipts();
+  }, [loadReceipts]);
 
   const processReceipt = useCallback(
     async (params: Omit<ProcessGoodsReceiptParams, 'tenantId' | 'branchId'>) => {
-      if (!tenantId || !branchId) throw new Error('المنشأة والفرع غير محددين');
+      const effTenant = tenantId || 'default';
+      const effBranch = branchId || 'main-branch';
       setLoading(true);
       setError(null);
       try {
         const res = await completeGoodsReceiptTransaction({
-          tenantId,
-          branchId,
+          tenantId: effTenant,
+          branchId: effBranch,
           branchCode: currentBranch?.code || 'HQ',
           ...params,
         });
         if (res.success && res.goodsReceipt) {
-          setReceipts((prev) => [res.goodsReceipt!, ...prev]);
+          setReceipts((prev) => [res.goodsReceipt!, ...prev.filter((r) => r.id !== res.goodsReceipt!.id)]);
         }
         return res;
       } catch (err: any) {

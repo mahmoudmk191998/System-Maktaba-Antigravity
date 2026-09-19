@@ -95,6 +95,9 @@ export interface Product {
   minimumStock: number;
   maximumStock?: number;
   reorderPoint: number;
+  quantity?: number;
+  isLowStock?: boolean;
+  stockStatus?: 'normal' | 'low' | 'out';
   active: boolean;
   archived: boolean;
   createdAt: string;
@@ -207,6 +210,8 @@ export interface BranchStockRecord {
   averageCost?: number;       // Weighted average cost (WAC)
   minimumStock?: number;
   reorderPoint?: number;
+  isLowStock?: boolean;
+  stockStatus?: 'normal' | 'low' | 'out';
   lastStocktakeAt?: string;
   lastMovementAt?: string;
   updatedAt: string;
@@ -358,6 +363,13 @@ export interface Sale {
   priceTierUsed?: 'retail' | 'wholesale';
   notes?: string;
   isCreditSale?: boolean;
+  returnedAmount?: number;
+  refundedAmount?: number;
+  returnStatus?: 'none' | 'partial' | 'full';
+  hasExchange?: boolean;
+  exchangeInvoiceNumber?: string;
+  isExchangeReplacement?: boolean;
+  exchangeOriginInvoice?: string;
   idempotencyKey?: string;
   createdBy?: string;
   createdAt: string;
@@ -449,7 +461,13 @@ export interface SaleReturn {
   refundStatus: SaleRefundStatus;
   reason?: string;
   notes?: string;
+  isExchange?: boolean;
   exchangeId?: string;
+  replacementSaleId?: string;
+  replacementInvoiceNumber?: string;
+  difference?: number;
+  settlementType?: string;
+  exchangeNewItemsCount?: number;
   idempotencyKey?: string;
   createdAt: string;
   completedAt?: string;
@@ -1057,6 +1075,7 @@ export interface DamageLossRecord {
   branchId: string;
   productId: string;
   variantId?: string | null;
+  productNameSnapshot?: string;
   quantity: number;
   unitCost: number;
   totalCostValue: number;
@@ -1064,6 +1083,7 @@ export interface DamageLossRecord {
   type: DamageLossType;
   employeeId: string;
   notes?: string;
+  recoveredQuantity?: number;
   createdAt: string;
 }
 

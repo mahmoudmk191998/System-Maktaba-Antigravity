@@ -7,7 +7,7 @@
 import { collection, getDocs, query, where } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { Product, PurchaseOrder, Sale } from '../../types/retail.types';
-import { fetchTenantStockBalances } from './inventoryAnalytics.service';
+import { fetchProductsCatalog, fetchTenantStockBalances } from './inventoryAnalytics.service';
 import { fetchSalesPeriodData } from './salesAnalytics.service';
 import { parseToDate } from './reportingTimezone';
 
@@ -178,17 +178,36 @@ export async function generateDemandAndReorderReport(
   // Load products catalog if not provided
   let catalog = catalogMap;
   if (!catalog) {
-    const prodRef = collection(db, 'products');
-    const prodSnap = await getDocs(query(prodRef, where('tenantId', '==', tenantId)));
-    catalog = new Map<string, Product>();
-    prodSnap.forEach((doc) => {
-      catalog!.set(doc.id, { id: doc.id, ...doc.data() } as Product);
-    });
+    catalog = await fetchProductsCatalog(tenantId);
   }
+
+  const effectiveStockRecords = [...stockRecords];
+  const registeredProductIdsInStock = new Set(effectiveStockRecords.map((r) => r.productId));
+
+  // Synthesize stock records for any catalog product not yet in branch_stock
+  catalog.forEach((prod, prodId) => {
+    if (!registeredProductIdsInStock.has(prodId) && !prod.isArchived) {
+      const stockQty = Number((prod as any).stock ?? (prod as any).quantity ?? (prod as any).onHandQuantity ?? 0);
+      effectiveStockRecords.push({
+        id: `synth_${prodId}`,
+        tenantId,
+        branchId: branchId || 'default',
+        productId: prodId,
+        quantity: stockQty,
+        onHandQuantity: stockQty,
+        availableQuantity: stockQty,
+        reservedQuantity: 0,
+        unitCost: Number(prod.costPrice ?? (prod as any).cost ?? 0),
+        reorderPoint: Number((prod as any).reorderPoint ?? (prod as any).minStock ?? 5),
+        lastMovementAt: prod.updatedAt || prod.createdAt || new Date().toISOString(),
+      } as any);
+      registeredProductIdsInStock.add(prodId);
+    }
+  });
 
   const recommendations: ProductDemandProfile[] = [];
 
-  for (const record of stockRecords) {
+  for (const record of effectiveStockRecords) {
     const prod = catalog.get(record.productId);
     if (prod?.isArchived) continue; // Skip archived products from reordering recommendations
 
@@ -258,24 +277,41 @@ export async function generateDemandAndReorderReport(
       urgency = 'medium';
     }
 
-    const unitCost = record.unitCost ?? record.averageCost ?? prod?.costPrice ?? 0;
+    const unitCost = record.unitCost ?? record.averageCost ?? prod?.costPrice ?? (prod as any)?.cost ?? 0;
     const estimatedTotalCost = Number((reorderQuantity * unitCost).toFixed(2));
 
     // Human-readable explanations
     const explanationAr = `المبيعات اليومية: ${effectiveDailyDemand.toFixed(1)}، مدة التوريد: ${leadTime} يوم (${leadTimeDemand} وحدة)، أمان: ${safetyStockUnits} وحدة. المتاح: ${availableStock}، قيد التوريد بأمر شراء: ${incomingPoStock}. العجز: ${netDeficit > 0 ? netDeficit : 0} وحدة.`;
     const explanationEn = `Daily Sales: ${effectiveDailyDemand.toFixed(1)}, Lead Time: ${leadTime}d (${leadTimeDemand}u), Safety: ${safetyStockUnits}u. Available: ${availableStock}, Incoming PO: ${incomingPoStock}. Deficit: ${netDeficit > 0 ? netDeficit : 0} units.`;
 
+    const resolvedName =
+      prod?.name ||
+      (prod as any)?.nameAr ||
+      (prod as any)?.title ||
+      (record as any)?.productName ||
+      (record as any)?.name ||
+      'كتاب / صنف مسجل';
+
+    const resolvedCategory = prod?.category || (record as any)?.category || 'عام';
+    const resolvedBrand = prod?.brand || (prod as any)?.publisher || (prod as any)?.author || 'عام';
+    const resolvedSku = prod?.sku || (prod as any)?.barcode || record.productId;
+    const resolvedSupplierName =
+      (prod as any)?.preferredSupplierName ||
+      (prod as any)?.supplierName ||
+      (prod as any)?.supplier ||
+      'المورد الافتراضي';
+
     // Only include items with positive reorder recommendations or critical stockout
     if (reorderQuantity > 0 || urgency === 'critical' || urgency === 'high') {
       recommendations.push({
         productId: record.productId,
         variantId: record.variantId,
-        sku: (prod as any)?.sku || record.productId,
-        name: prod?.name || 'Unknown Product',
-        category: prod?.category || 'General',
-        brand: prod?.brand || 'Generic',
+        sku: resolvedSku,
+        name: resolvedName,
+        category: resolvedCategory,
+        brand: resolvedBrand,
         preferredSupplierId: (prod as any)?.preferredSupplierId || (prod as any)?.supplierId || 'unassigned',
-        preferredSupplierName: (prod as any)?.preferredSupplierName || (prod as any)?.supplierName || 'غير محدد (Unassigned)',
+        preferredSupplierName: resolvedSupplierName,
         sales7d: s7,
         sales30d: s30,
         sales90d: s90,

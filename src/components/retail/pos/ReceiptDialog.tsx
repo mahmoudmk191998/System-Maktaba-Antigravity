@@ -5,6 +5,7 @@ import { Printer, ChefHat, Receipt as ReceiptIcon } from 'lucide-react';
 import type { Sale } from '@/types/retail.types';
 import { useFormatters } from '@/lib/formatters';
 import { useAppStore } from '@/lib/store';
+import { printSaleReceipt } from '@/lib/thermalPrinter';
 
 interface ReceiptDialogProps {
   open: boolean;
@@ -40,11 +41,11 @@ export const ReceiptDialog: React.FC<ReceiptDialogProps> = ({
   useEffect(() => {
     if (open && sale && settings.autoPrintReceipt) {
       const timer = setTimeout(() => {
-        window.print();
-      }, 400);
+        printSaleReceipt(sale, settings, effectiveStoreName, viewMode);
+      }, 500);
       return () => clearTimeout(timer);
     }
-  }, [open, sale, settings.autoPrintReceipt]);
+  }, [open, sale, settings.autoPrintReceipt, viewMode, effectiveStoreName]);
 
   // Reset view mode to receipt when dialog opens
   useEffect(() => {
@@ -56,7 +57,7 @@ export const ReceiptDialog: React.FC<ReceiptDialogProps> = ({
   if (!sale) return null;
 
   const handlePrint = () => {
-    window.print();
+    printSaleReceipt(sale, settings, effectiveStoreName, viewMode);
   };
 
   return (

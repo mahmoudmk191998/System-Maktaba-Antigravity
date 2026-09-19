@@ -212,7 +212,7 @@ export async function createEmployeeLeave(data: {
       actorUser,
     } = data;
 
-    if (!tenantId) return { success: false, error: 'معرّف المطعم (Tenant ID) مطلوب.' };
+    if (!tenantId) return { success: false, error: 'معرّف المكتبة/المؤسسة (Tenant ID) مطلوب.' };
     if (!employeeId) return { success: false, error: 'يرجى اختيار الموظف.' };
     if (!startDate || !endDate) return { success: false, error: 'يرجى تحديد تاريخ البداية والنهاية.' };
     if (startDate > endDate) return { success: false, error: 'تاريخ البداية يجب ألا يتجاوز تاريخ النهاية.' };
