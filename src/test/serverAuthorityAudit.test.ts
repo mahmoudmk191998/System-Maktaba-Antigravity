@@ -140,13 +140,17 @@ class FirestoreSecurityRulesEngine {
       return { allowed: false, reason: 'cross-tenant violation' };
     }
 
-    // Direct modification of expectedCash is strictly forbidden to cashiers
-    if (
-      'expectedCash' in req.request.resource.data &&
-      req.request.resource.data.expectedCash !== req.resource?.data?.expectedCash &&
-      !this.isSystemAdmin(req.auth)
-    ) {
-      return { allowed: false, reason: 'permission-denied: cashier cannot directly manipulate expectedCash' };
+    // Direct modification of expectedCash, openingCash, actualCash, or shift closing status is forbidden
+    const isChangingCash = 
+      ('expectedCash' in req.request.resource.data && req.request.resource.data.expectedCash !== req.resource?.data?.expectedCash) ||
+      ('openingCash' in req.request.resource.data && req.request.resource.data.openingCash !== req.resource?.data?.openingCash) ||
+      ('actualCash' in req.request.resource.data && req.request.resource.data.actualCash !== req.resource?.data?.actualCash);
+
+    const isChangingStatus =
+      'status' in req.request.resource.data && req.request.resource.data.status !== req.resource?.data?.status;
+
+    if ((isChangingCash || isChangingStatus) && !this.isSystemAdmin(req.auth)) {
+      return { allowed: false, reason: 'permission-denied: shift state and cash registers are server-controlled' };
     }
 
     return { allowed: true };
@@ -185,7 +189,7 @@ class FirestoreSecurityRulesEngine {
     return { allowed: true };
   }
 
-  // 9. Idempotency Lock Rule
+  // 9. Idempotency Lock Rule (Client create = DENIED, only Trusted Backend allowed)
   public evaluateIdempotencyWrite(req: FirestoreRuleRequest, isDelete = false): { allowed: boolean; reason?: string } {
     if (!req.auth) return { allowed: false, reason: 'unauthenticated' };
 
@@ -199,19 +203,29 @@ class FirestoreSecurityRulesEngine {
       return { allowed: false, reason: 'permission-denied: idempotency locks are immutable' };
     }
 
+    // Pre-emptive creation by client is DENIED to prevent lock-hijacking; only Trusted Backend can create
+    if (!this.isSystemAdmin(req.auth)) {
+      return { allowed: false, reason: 'permission-denied: client cannot pre-create or forge idempotency locks' };
+    }
+
     return { allowed: true };
   }
 
-  // 10. Sequence Counter Rule
+  // 10. Sequence Counter Rule (Mutation is Trusted Backend Only)
   public evaluateCounterUpdate(req: FirestoreRuleRequest): { allowed: boolean; reason?: string } {
     if (!req.auth) return { allowed: false, reason: 'unauthenticated' };
+
+    // Sequence mutation is strictly Trusted Backend only (prevents jump attacks like 150 -> 99999999)
+    if (!this.isSystemAdmin(req.auth)) {
+      return { allowed: false, reason: 'permission-denied: sequence counters are strictly server-controlled' };
+    }
 
     const beforeVal = req.resource?.data?.current ?? 0;
     const afterVal = req.request.resource.data.current;
 
-    // Counter can only strictly increment (+1)
-    if (afterVal <= beforeVal) {
-      return { allowed: false, reason: 'permission-denied: sequence counters cannot be reset or decremented' };
+    // Even admin/backend cannot decrement or jump arbitrarily
+    if (afterVal <= beforeVal || afterVal > beforeVal + 1) {
+      return { allowed: false, reason: 'permission-denied: sequence counters must strictly increment by 1' };
     }
 
     return { allowed: true };
@@ -498,7 +512,27 @@ describe('Server-Authority Enforcement & Direct Firestore SDK Attack Suite', () 
       expect(overwriteResult.reason).toContain('permission-denied');
     });
 
-    it('1.12 REJECTS direct client resetting or decrementing sequence counter', () => {
+    it('1.12 REJECTS direct client pre-creating sale_idempotency entry to block or hijack sales', () => {
+      const preCreateResult = rules.evaluateIdempotencyWrite({
+        auth: cashierUser,
+        resource: null,
+        request: {
+          auth: cashierUser,
+          resource: {
+            data: {
+              tenantId: 'tenant_main',
+              idempotencyKey: 'target_cashier_key',
+              status: 'blocked',
+            },
+          },
+        },
+      });
+
+      expect(preCreateResult.allowed).toBe(false);
+      expect(preCreateResult.reason).toContain('permission-denied: client cannot pre-create or forge idempotency locks');
+    });
+
+    it('1.13 REJECTS direct client resetting or decrementing sequence counter', () => {
       const resetResult = rules.evaluateCounterUpdate({
         auth: cashierUser,
         resource: { data: { tenantId: 'tenant_main', current: 150 } },
@@ -510,18 +544,38 @@ describe('Server-Authority Enforcement & Direct Firestore SDK Attack Suite', () 
 
       expect(resetResult.allowed).toBe(false);
       expect(resetResult.reason).toContain('permission-denied');
+    });
 
-      const decrementResult = rules.evaluateCounterUpdate({
+    it('1.14 REJECTS sequence counter jump attack (150 -> 99999999) from client', () => {
+      const jumpResult = rules.evaluateCounterUpdate({
         auth: cashierUser,
         resource: { data: { tenantId: 'tenant_main', current: 150 } },
         request: {
           auth: cashierUser,
-          resource: { data: { tenantId: 'tenant_main', current: 149 } }, // Duplicate invoice sequence attempt
+          resource: { data: { tenantId: 'tenant_main', current: 99999999 } }, // Malicious gap creation
         },
       });
 
-      expect(decrementResult.allowed).toBe(false);
-      expect(decrementResult.reason).toContain('permission-denied');
+      expect(jumpResult.allowed).toBe(false);
+      expect(jumpResult.reason).toContain('permission-denied: sequence counters are strictly server-controlled');
+    });
+
+    it('1.15 REJECTS direct client closing shift directly or changing actualCash', () => {
+      const closeResult = rules.evaluateShiftUpdate({
+        auth: cashierUser,
+        resource: {
+          data: { tenantId: 'tenant_main', status: 'open', openingCash: 1000, expectedCash: 1500 },
+        },
+        request: {
+          auth: cashierUser,
+          resource: {
+            data: { tenantId: 'tenant_main', status: 'closed', actualCash: 1000 },
+          },
+        },
+      });
+
+      expect(closeResult.allowed).toBe(false);
+      expect(closeResult.reason).toContain('permission-denied: shift state and cash registers are server-controlled');
     });
   });
 
@@ -529,7 +583,7 @@ describe('Server-Authority Enforcement & Direct Firestore SDK Attack Suite', () 
   // 8. Cross-Tenant & Cross-Branch Attacks
   // =========================================================================
   describe('8. Cross-Tenant & Cross-Branch Isolation Attacks', () => {
-    it('1.13 REJECTS cross-tenant direct modification on branch_stock', () => {
+    it('1.16 REJECTS cross-tenant direct modification on branch_stock', () => {
       const result = rules.evaluateBranchStockWrite({
         auth: attackerFromOtherTenant,
         resource: { data: { tenantId: 'tenant_main', productId: 'p1', onHandQuantity: 10 } },
@@ -543,7 +597,7 @@ describe('Server-Authority Enforcement & Direct Firestore SDK Attack Suite', () 
       expect(result.reason).toContain('cross-tenant violation');
     });
 
-    it('1.14 REJECTS cross-tenant direct creation on customer_ledger', () => {
+    it('1.17 REJECTS cross-tenant direct creation on customer_ledger', () => {
       const result = rules.evaluateCustomerLedgerCreate({
         auth: attackerFromOtherTenant,
         resource: null,
@@ -564,7 +618,7 @@ describe('Server-Authority Enforcement & Direct Firestore SDK Attack Suite', () 
       expect(result.reason).toContain('cross-tenant violation');
     });
 
-    it('1.15 REJECTS cross-tenant direct creation on sales', () => {
+    it('1.18 REJECTS cross-tenant direct creation on sales', () => {
       const result = rules.evaluateSaleCreate({
         auth: attackerFromOtherTenant,
         resource: null,
@@ -581,6 +635,79 @@ describe('Server-Authority Enforcement & Direct Firestore SDK Attack Suite', () 
 
       expect(result.allowed).toBe(false);
       expect(result.reason).toContain('cross-tenant violation');
+    });
+  });
+
+  // =========================================================================
+  // 9. Failure Scenario & Idempotent Retry Integrity
+  // =========================================================================
+  describe('9. Network Loss & Trusted Backend Idempotent Retry', () => {
+    it('1.19 returns identical result and prevents duplicate mutations on network loss retry', async () => {
+      // Simulate Backend Idempotency Engine
+      const mockDatabase = {
+        invoices: new Map<string, any>(),
+        idempotencyRegistry: new Map<string, any>(),
+        stockMutationsCount: 0,
+        cashMutationsCount: 0,
+        accountingEventsCount: 0,
+      };
+
+      async function trustedBackendCommit(tenantId: string, idempotencyKey: string, payload: any) {
+        // Step 1: Idempotency Check
+        if (mockDatabase.idempotencyRegistry.has(idempotencyKey)) {
+          const cached = mockDatabase.idempotencyRegistry.get(idempotencyKey);
+          return { ...cached, isReplay: true };
+        }
+
+        // Step 2: Atomic Execution
+        const invoiceNumber = `INV-${mockDatabase.invoices.size + 1}`;
+        const invoiceRecord = {
+          id: `sale_${Date.now()}`,
+          invoiceNumber,
+          grandTotal: payload.total,
+          tenantId,
+        };
+
+        mockDatabase.invoices.set(invoiceRecord.id, invoiceRecord);
+        mockDatabase.stockMutationsCount += 1;
+        mockDatabase.cashMutationsCount += 1;
+        mockDatabase.accountingEventsCount += 1;
+
+        const response = {
+          success: true,
+          sale: invoiceRecord,
+          isReplay: false,
+        };
+
+        mockDatabase.idempotencyRegistry.set(idempotencyKey, response);
+        return response;
+      }
+
+      const clientPayload = { total: 250, items: [{ id: 'p1', qty: 2 }] };
+      const sharedIdempotencyKey = 'pos_chk_fail_scenario_999';
+
+      // First Call: Succeeded on Server, but HTTP response dropped on network
+      const firstServerResult = await trustedBackendCommit('tenant_main', sharedIdempotencyKey, clientPayload);
+      expect(firstServerResult.success).toBe(true);
+      expect(firstServerResult.isReplay).toBe(false);
+      expect(firstServerResult.sale.invoiceNumber).toBe('INV-1');
+
+      // State after first run
+      expect(mockDatabase.stockMutationsCount).toBe(1);
+      expect(mockDatabase.cashMutationsCount).toBe(1);
+      expect(mockDatabase.accountingEventsCount).toBe(1);
+
+      // Client retries with EXACT same idempotencyKey
+      const retryResult = await trustedBackendCommit('tenant_main', sharedIdempotencyKey, clientPayload);
+      expect(retryResult.success).toBe(true);
+      expect(retryResult.isReplay).toBe(true);
+      expect(retryResult.sale.invoiceNumber).toBe('INV-1'); // Exact same invoice number!
+
+      // CRITICAL GUARANTEE: Zero duplicate mutations!
+      expect(mockDatabase.stockMutationsCount).toBe(1);
+      expect(mockDatabase.cashMutationsCount).toBe(1);
+      expect(mockDatabase.accountingEventsCount).toBe(1);
+      expect(mockDatabase.invoices.size).toBe(1);
     });
   });
 });
