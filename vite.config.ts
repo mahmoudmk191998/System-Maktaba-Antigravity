@@ -27,7 +27,7 @@ export default defineConfig(({ mode }) => ({
         lang: 'ar',
       },
       workbox: {
-        globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
+        globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
         navigateFallback: '/index.html',
         navigateFallbackDenylist: [/^\/__/, /^\/api\//],
       },

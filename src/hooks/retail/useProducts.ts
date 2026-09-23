@@ -13,6 +13,7 @@ import {
   FetchProductsOptions,
 } from '@/services/products/products.repository';
 import { DocumentSnapshot } from 'firebase/firestore';
+import { offlineCacheService, isGenuineTransportError } from '@/services/offline';
 
 export function useProducts(initialFilters: FetchProductsOptions = {}) {
   const storeTenant = useAppStore((state) => state.currentTenant);
@@ -60,6 +61,33 @@ export function useProducts(initialFilters: FetchProductsOptions = {}) {
 
       const activeFilters = { ...filters, searchTerm: debouncedSearch, ...overrideFilters };
 
+      // 1. Zero-latency offline bootstrap
+      if (!navigator.onLine) {
+        try {
+          const cached = await offlineCacheService.getCachedCatalog(tenantId);
+          let filtered = cached;
+          if (activeFilters.categoryId && activeFilters.categoryId !== 'all') {
+            filtered = filtered.filter((p) => p.categoryId === activeFilters.categoryId);
+          }
+          if (activeFilters.searchTerm && activeFilters.searchTerm.trim() !== '') {
+            const term = activeFilters.searchTerm.trim().toLowerCase();
+            filtered = filtered.filter(
+              (p) =>
+                p.name.toLowerCase().includes(term) ||
+                (p.sku && p.sku.toLowerCase().includes(term)) ||
+                (p.barcode && p.barcode.includes(term))
+            );
+          }
+          setProducts(filtered);
+          setHasMore(false);
+        } catch {
+          setProducts([]);
+        } finally {
+          setLoading(false);
+        }
+        return;
+      }
+
       try {
         const res = await fetchProductsFromDb(tenantId, {
           ...activeFilters,
@@ -74,9 +102,37 @@ export function useProducts(initialFilters: FetchProductsOptions = {}) {
 
         setLastVisible(res.lastVisible);
         setHasMore(res.hasMore);
+
+        // Pre-warm local catalog cache on successful fetch
+        if (res.products && res.products.length > 0) {
+          offlineCacheService.cacheProductsCatalog(tenantId, res.products).catch(() => {});
+        }
       } catch (err: any) {
         console.error('Error fetching products:', err);
-        setError(err?.message || 'تعذر تحميل قائمة المنتجات');
+        if (isGenuineTransportError(err) || !navigator.onLine || err?.code === 'unavailable') {
+          try {
+            const cached = await offlineCacheService.getCachedCatalog(tenantId);
+            let filtered = cached;
+            if (activeFilters.categoryId && activeFilters.categoryId !== 'all') {
+              filtered = filtered.filter((p) => p.categoryId === activeFilters.categoryId);
+            }
+            if (activeFilters.searchTerm && activeFilters.searchTerm.trim() !== '') {
+              const term = activeFilters.searchTerm.trim().toLowerCase();
+              filtered = filtered.filter(
+                (p) =>
+                  p.name.toLowerCase().includes(term) ||
+                  (p.sku && p.sku.toLowerCase().includes(term)) ||
+                  (p.barcode && p.barcode.includes(term))
+              );
+            }
+            setProducts(filtered);
+            setHasMore(false);
+          } catch {
+            setError('تعذر تحميل المنتجات محلياً');
+          }
+        } else {
+          setError(err?.message || 'تعذر تحميل قائمة المنتجات');
+        }
       } finally {
         setLoading(false);
       }

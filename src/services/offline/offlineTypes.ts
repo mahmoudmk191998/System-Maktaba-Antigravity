@@ -131,6 +131,34 @@ export interface CacheHealthStatus {
   reason?: string;
 }
 
+export interface DeviceOfflineReadiness {
+  tenantId: string;
+  branchId: string;
+  tenantName?: string;
+  branchName?: string;
+  catalogSyncedAt?: string;
+  stockSyncedAt?: string;
+  settingsSyncedAt?: string;
+  categoriesSyncedAt?: string;
+  cacheSchemaVersion: number;
+  cacheReady: boolean;
+  preparedAt: string;
+}
+
+export interface OfflineReadinessBreakdown {
+  catalog: 'ready' | 'missing';
+  stock: 'ready' | 'missing';
+  settings: 'ready' | 'missing';
+  categories: 'ready' | 'missing';
+  posAssets: 'ready' | 'missing';
+  authSession: 'ready' | 'missing';
+  lastSyncedAt: string | null;
+  isFullyReady: boolean;
+  catalogCount: number;
+  stockCount: number;
+  categoriesCount: number;
+}
+
 export interface OfflineSettings {
   offlineModeEnabled: boolean;
   offlineSalesEnabled: boolean;

@@ -171,12 +171,18 @@ export default function POSPage() {
     categoryId: effectiveQueryCategoryId,
   });
 
-  // Pre-warm offline catalog and shift cache whenever products or activeShift load
+  // Pre-warm offline catalog, categories, and shift cache whenever products, categories or activeShift load
   useEffect(() => {
     if (tenantId && products && products.length > 0) {
       offlineCacheService.cacheProductsCatalog(tenantId, products).catch(() => {});
     }
   }, [tenantId, products]);
+
+  useEffect(() => {
+    if (tenantId && categories && categories.length > 0) {
+      offlineCacheService.cacheCategories(tenantId, categories).catch(() => {});
+    }
+  }, [tenantId, categories]);
 
   useEffect(() => {
     if (activeShift) {
@@ -812,7 +818,7 @@ export default function POSPage() {
     // Safeguard 5 & 19: Cache Health & First-Time Offline Block
     const cacheHealth = await offlineCacheService.checkCacheHealth(tenantId, branchId);
     if (!cacheHealth.isReady) {
-      toast.error('يلزم الاتصال بالإنترنت مرة واحدة لتحميل بيانات الفرع قبل استخدام وضع عدم الاتصال.');
+      toast.error(cacheHealth.reason || 'يلزم الاتصال بالإنترنت مرة واحدة لتحميل بيانات الفرع قبل استخدام وضع عدم الاتصال.');
       return null;
     }
 
@@ -822,12 +828,14 @@ export default function POSPage() {
     }
 
     // Shift check
+    let resolvedShiftId = activeShift?.id || null;
     if (!isShiftOpen && !activeShift) {
       const cachedShift = await offlineCacheService.getCachedActiveShift(tenantId, branchId);
       if (!cachedShift) {
         toast.error('يجب فتح الوردية أثناء الاتصال أولاً قبل العمل دون اتصال');
         return null;
       }
+      resolvedShiftId = cachedShift.shiftId;
     }
 
     // Safeguard 15 & 16: External Card Offline Policy
@@ -846,7 +854,7 @@ export default function POSPage() {
       customerId: selectedCustomer?.id || null,
       customerNameSnapshot: selectedCustomer?.name || 'عميل نقدي (Walk-in)',
       customerPhoneSnapshot: selectedCustomer?.phone || '',
-      shiftId: activeShift?.id || null,
+      shiftId: resolvedShiftId,
       saleType: (isWholesale ? 'wholesale' : 'retail') as const,
       items: cartItems.map((item) => ({
         productId: item.productId,

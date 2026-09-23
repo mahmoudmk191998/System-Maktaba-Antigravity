@@ -14,13 +14,31 @@ export interface UserProfile {
   role?: string;
 }
 
+const getInitialProfile = (uid?: string | null) => {
+  if (!uid || typeof window === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem(`alwan_cached_profile_${uid}`);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+};
+
 export function useProfile() {
   const { user } = useAuth();
-  const [profile, setProfile] = useState<UserProfile | null>(null);
-  const [loading, setLoading] = useState(true);
+  const cached = getInitialProfile(user?.uid);
+  const [profile, setProfile] = useState<UserProfile | null>(cached);
+  const [loading, setLoading] = useState(cached ? false : true);
 
   useEffect(() => {
     if (!user) { setLoading(false); return; }
+
+    const cachedSnapshot = getInitialProfile(user.uid);
+    if (!navigator.onLine && cachedSnapshot) {
+      setProfile(cachedSnapshot);
+      setLoading(false);
+      return;
+    }
     
     const fetchProfile = async () => {
       try {
@@ -40,12 +58,19 @@ export function useProfile() {
             console.error('Error fetching role:', err);
           }
 
-          setProfile({ id: docSnap.id, role: userRole, ...docSnap.data() } as UserProfile);
+          const profileData = { id: docSnap.id, role: userRole, ...docSnap.data() } as UserProfile;
+          setProfile(profileData);
+          try {
+            localStorage.setItem(`alwan_cached_profile_${user.uid}`, JSON.stringify(profileData));
+          } catch {}
         } else {
-          setProfile(null);
+          setProfile(cachedSnapshot);
         }
       } catch (error) {
         console.error("Error fetching profile:", error);
+        if (cachedSnapshot) {
+          setProfile(cachedSnapshot);
+        }
       } finally {
         setLoading(false);
       }

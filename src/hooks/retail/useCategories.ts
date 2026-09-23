@@ -13,6 +13,7 @@ import {
   buildCategoryTree,
   CategoryTreeNode,
 } from '@/services/categories/categories.service';
+import { offlineCacheService, isGenuineTransportError } from '@/services/offline';
 
 const CATEGORIES_SYNC_EVENT = 'alwan_categories_synced';
 
@@ -37,13 +38,41 @@ export function useCategories() {
     setLoading(true);
     setError(null);
 
+    // 1. Zero-latency offline bootstrap
+    if (!navigator.onLine) {
+      try {
+        const cached = await offlineCacheService.getCachedCategories(tenantId);
+        setCategories(cached);
+        setTree(buildCategoryTree(cached));
+      } catch {
+        setCategories([]);
+        setTree([]);
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
     try {
       const data = await fetchCategoriesFromDb(tenantId);
       setCategories(data);
       setTree(buildCategoryTree(data));
+      if (data && data.length > 0) {
+        offlineCacheService.cacheCategories(tenantId, data).catch(() => {});
+      }
     } catch (err: any) {
       console.error('Error fetching categories:', err);
-      setError(err?.message || 'تعذر تحميل قائمة التصنيفات');
+      if (isGenuineTransportError(err) || !navigator.onLine || err?.code === 'unavailable') {
+        try {
+          const cached = await offlineCacheService.getCachedCategories(tenantId);
+          setCategories(cached);
+          setTree(buildCategoryTree(cached));
+        } catch {
+          setError('تعذر تحميل التصنيفات محلياً');
+        }
+      } else {
+        setError(err?.message || 'تعذر تحميل قائمة التصنيفات');
+      }
     } finally {
       setLoading(false);
     }

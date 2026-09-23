@@ -25,18 +25,29 @@ import {
   WifiOff,
   AlertCircle,
   HelpCircle,
+  Shield,
+  Layers,
+  Sparkles,
+  XCircle,
+  HardDrive,
+  Check,
 } from 'lucide-react';
 import {
   offlineQueueService,
   offlineSyncService,
   offlineConflictService,
+  offlineCacheService,
   type OfflineOperation,
   type OfflineSalePayload,
+  type OfflineReadinessBreakdown,
 } from '@/services/offline';
 import { useTenantBranch } from '@/hooks/useDatabase';
 import { useAuth } from '@/hooks/useAuth';
 import { useOfflineStatus } from '@/hooks/useOfflineStatus';
 import { useFormatters } from '@/lib/formatters';
+import { useAppStore } from '@/lib/store';
+import { fetchProductsFromDb } from '@/services/products/products.repository';
+import { fetchCategoriesFromDb } from '@/services/categories/categories.service';
 import { toast } from 'sonner';
 
 interface SyncCenterDrawerProps {
@@ -45,15 +56,19 @@ interface SyncCenterDrawerProps {
 }
 
 export function SyncCenterDrawer({ open, onOpenChange }: SyncCenterDrawerProps) {
-  const { tenantId } = useTenantBranch();
+  const { tenantId, branchId } = useTenantBranch();
+  const { currentTenant, currentBranch, settings } = useAppStore();
+  const effectiveBranchId = branchId || currentBranch?.id || '';
   const { user, profile } = useAuth();
   const { isOnline, connectivity, counts, syncNow, refreshCounts } = useOfflineStatus();
   const { currency, formatDate } = useFormatters();
 
   const [operations, setOperations] = useState<OfflineOperation<any>[]>([]);
-  const [activeTab, setActiveTab] = useState<'pending' | 'conflicts' | 'synced' | 'all'>('pending');
+  const [activeTab, setActiveTab] = useState<'pending' | 'conflicts' | 'synced' | 'all' | 'readiness'>('pending');
   const [syncing, setSyncing] = useState(false);
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
+  const [readiness, setReadiness] = useState<OfflineReadinessBreakdown | null>(null);
+  const [preparing, setPreparing] = useState(false);
 
   const isManagerOrAdmin = profile?.role === 'admin' || profile?.role === 'owner' || profile?.role === 'manager';
 
@@ -66,12 +81,56 @@ export function SyncCenterDrawer({ open, onOpenChange }: SyncCenterDrawerProps) 
     }
   };
 
+  const loadReadiness = async () => {
+    if (!tenantId) return;
+    try {
+      const res = await offlineCacheService.getDetailedReadiness(tenantId, effectiveBranchId);
+      setReadiness(res);
+    } catch (err) {
+      console.error('Failed to load readiness:', err);
+    }
+  };
+
   useEffect(() => {
     if (open) {
       loadOperations();
       refreshCounts();
+      loadReadiness();
     }
-  }, [open, refreshCounts]);
+  }, [open, refreshCounts, tenantId, effectiveBranchId]);
+
+  const handlePrepareDevice = async () => {
+    if (!isOnline) {
+      toast.error('يلزم الاتصال بالإنترنت مرة واحدة لتحميل بيانات الفرع قبل استخدام وضع عدم الاتصال.');
+      return;
+    }
+    if (!tenantId) {
+      toast.error('معرف المستأجر غير متوفر');
+      return;
+    }
+    setPreparing(true);
+    toast.loading('جاري تجهيز بيانات الفرع للعمل دون اتصال...', { id: 'prep_offline' });
+    try {
+      const prodRes = await fetchProductsFromDb(tenantId, { pageSize: 500 });
+      const catRes = await fetchCategoriesFromDb(tenantId);
+
+      await offlineCacheService.prepareDeviceForOffline(tenantId, effectiveBranchId, {
+        products: prodRes.products,
+        categories: catRes,
+        settings,
+        tenantName: currentTenant?.name,
+        branchName: currentBranch?.name,
+      });
+
+      await loadReadiness();
+      toast.success('تم بنجاح: الجهاز جاهز للعمل دون اتصال', { id: 'prep_offline' });
+    } catch (err: any) {
+      console.error('Error preparing device:', err);
+      toast.error(`فشل تجهيز الجهاز: ${err?.message || 'خطأ غير معروف'}`, { id: 'prep_offline' });
+    } finally {
+      setPreparing(false);
+    }
+  };
 
   const handleManualSync = async () => {
     if (!isOnline) {
@@ -205,7 +264,7 @@ export function SyncCenterDrawer({ open, onOpenChange }: SyncCenterDrawerProps) 
             className="flex-1 flex flex-col min-h-0"
           >
             <div className="px-6 pt-3 border-b border-border/40">
-              <TabsList className="grid grid-cols-4 w-full h-10">
+              <TabsList className="grid grid-cols-5 w-full h-10">
                 <TabsTrigger value="pending" className="text-xs font-bold gap-1">
                   <Clock className="w-3.5 h-3.5" />
                   <span>معلقة ({counts.pending + counts.awaiting_confirmation})</span>
@@ -221,11 +280,142 @@ export function SyncCenterDrawer({ open, onOpenChange }: SyncCenterDrawerProps) 
                 <TabsTrigger value="all" className="text-xs font-bold">
                   <span>الكل ({operations.length})</span>
                 </TabsTrigger>
+                <TabsTrigger value="readiness" className="text-xs font-bold gap-1 text-primary">
+                  <Shield className="w-3.5 h-3.5" />
+                  <span>الجاهزية</span>
+                </TabsTrigger>
               </TabsList>
             </div>
 
             <div className="flex-1 overflow-y-auto p-6 space-y-3">
-              {filteredOperations.length === 0 ? (
+              {activeTab === 'readiness' ? (
+                <div className="space-y-4">
+                  <div className="bg-card border border-border/70 rounded-2xl p-5 shadow-sm space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h4 className="font-black text-base text-foreground flex items-center gap-2">
+                          <Shield className="w-5 h-5 text-primary" />
+                          حالة جاهزية هذا الجهاز للعمل دون اتصال
+                        </h4>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          فحص بيانات الذاكرة المحلية (IndexedDB) للتحقق من إمكانية استخدام نقطة البيع بدون إنترنت.
+                        </p>
+                      </div>
+                      <Badge
+                        variant={readiness?.isFullyReady ? 'default' : 'secondary'}
+                        className="text-xs font-bold px-3 py-1"
+                      >
+                        {readiness?.isFullyReady ? 'الجهاز جاهز للعمل دون اتصال' : 'غير جاهز كلياً'}
+                      </Badge>
+                    </div>
+
+                    <div className="space-y-2.5 pt-2 border-t border-border/50">
+                      {/* Catalog */}
+                      <div className="flex items-center justify-between p-3 rounded-xl bg-muted/30 border border-border/40">
+                        <div className="flex items-center gap-2.5">
+                          <Layers className="w-4 h-4 text-blue-500" />
+                          <div>
+                            <span className="text-xs font-bold text-foreground block">كتالوج الأصناف والأسعار</span>
+                            <span className="text-[11px] text-muted-foreground">
+                              {readiness?.catalogCount ? `${readiness.catalogCount} صنف محمل محلياً` : 'لم يتم التحميل'}
+                            </span>
+                          </div>
+                        </div>
+                        <Badge variant={readiness?.catalog === 'ready' ? 'default' : 'destructive'} className="text-[10px] font-bold">
+                          {readiness?.catalog === 'ready' ? 'جاهز' : 'مفقود'}
+                        </Badge>
+                      </div>
+
+                      {/* Stock */}
+                      <div className="flex items-center justify-between p-3 rounded-xl bg-muted/30 border border-border/40">
+                        <div className="flex items-center gap-2.5">
+                          <HardDrive className="w-4 h-4 text-amber-500" />
+                          <div>
+                            <span className="text-xs font-bold text-foreground block">أرصدة المخزون للفرع</span>
+                            <span className="text-[11px] text-muted-foreground">
+                              {readiness?.stockCount ? `${readiness.stockCount} رصيد محلي مخزن` : 'لم يتم التحميل'}
+                            </span>
+                          </div>
+                        </div>
+                        <Badge variant={readiness?.stock === 'ready' ? 'default' : 'destructive'} className="text-[10px] font-bold">
+                          {readiness?.stock === 'ready' ? 'جاهز' : 'مفقود'}
+                        </Badge>
+                      </div>
+
+                      {/* Categories */}
+                      <div className="flex items-center justify-between p-3 rounded-xl bg-muted/30 border border-border/40">
+                        <div className="flex items-center gap-2.5">
+                          <Layers className="w-4 h-4 text-purple-500" />
+                          <div>
+                            <span className="text-xs font-bold text-foreground block">شجرة التصنيفات</span>
+                            <span className="text-[11px] text-muted-foreground">
+                              {readiness?.categoriesCount ? `${readiness.categoriesCount} تصنيف محمل` : 'لم يتم التحميل'}
+                            </span>
+                          </div>
+                        </div>
+                        <Badge variant={readiness?.categories === 'ready' ? 'default' : 'destructive'} className="text-[10px] font-bold">
+                          {readiness?.categories === 'ready' ? 'جاهز' : 'مفقود'}
+                        </Badge>
+                      </div>
+
+                      {/* Settings */}
+                      <div className="flex items-center justify-between p-3 rounded-xl bg-muted/30 border border-border/40">
+                        <div className="flex items-center gap-2.5">
+                          <Check className="w-4 h-4 text-emerald-500" />
+                          <div>
+                            <span className="text-xs font-bold text-foreground block">إعدادات البيع والضرائب</span>
+                            <span className="text-[11px] text-muted-foreground">السياسات والحدود والضريبة</span>
+                          </div>
+                        </div>
+                        <Badge variant={readiness?.settings === 'ready' ? 'default' : 'destructive'} className="text-[10px] font-bold">
+                          {readiness?.settings === 'ready' ? 'جاهز' : 'مفقود'}
+                        </Badge>
+                      </div>
+
+                      {/* Auth session */}
+                      <div className="flex items-center justify-between p-3 rounded-xl bg-muted/30 border border-border/40">
+                        <div className="flex items-center gap-2.5">
+                          <Shield className="w-4 h-4 text-indigo-500" />
+                          <div>
+                            <span className="text-xs font-bold text-foreground block">جلسة المستخدم والصلاحيات</span>
+                            <span className="text-[11px] text-muted-foreground">{user?.email || 'جلسة نشطة'}</span>
+                          </div>
+                        </div>
+                        <Badge variant={readiness?.authSession === 'ready' ? 'default' : 'destructive'} className="text-[10px] font-bold">
+                          {readiness?.authSession === 'ready' ? 'جاهز' : 'مفقود'}
+                        </Badge>
+                      </div>
+
+                      {/* Last Sync */}
+                      <div className="text-xs text-muted-foreground pt-1 flex justify-between items-center">
+                        <span>آخر مزامنة ناجحة:</span>
+                        <span className="font-mono font-bold">
+                          {readiness?.lastSyncedAt ? formatDate(readiness.lastSyncedAt) : 'لا توجد مزامنة سابقة'}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="pt-3">
+                      <Button
+                        type="button"
+                        variant="default"
+                        size="lg"
+                        disabled={preparing || !isOnline}
+                        onClick={handlePrepareDevice}
+                        className="w-full gap-2 font-black rounded-xl shadow-md text-sm h-11"
+                      >
+                        <Sparkles className={`w-4 h-4 ${preparing ? 'animate-spin' : ''}`} />
+                        <span>{preparing ? 'جارٍ تحميل البيانات وتجهيز الجهاز...' : 'تجهيز هذا الجهاز للعمل دون اتصال'}</span>
+                      </Button>
+                      {!isOnline && (
+                        <p className="text-[11px] text-destructive text-center mt-2 font-bold">
+                          يلزم الاتصال بالإنترنت مرة واحدة لتجهيز الجهاز ومزامنة بيانات الفرع.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ) : filteredOperations.length === 0 ? (
                 <div className="h-64 flex flex-col items-center justify-center text-center text-muted-foreground gap-2">
                   <CheckCircle2 className="w-12 h-12 text-muted-foreground/30" />
                   <p className="text-sm font-bold">لا توجد عمليات في هذا التبويب</p>

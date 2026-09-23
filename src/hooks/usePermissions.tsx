@@ -20,12 +20,23 @@ export interface PermissionsHookResult {
   refresh: () => void;
 }
 
+const getInitialCachedPermissions = (uid?: string | null) => {
+  if (!uid || typeof window === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem(`alwan_cached_perms_${uid}`);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+};
+
 export function useUserPermissions(): PermissionsHookResult {
   const { user } = useAuth();
-  const [permissions, setPermissions] = useState<string[]>([]);
-  const [roles, setRoles] = useState<string[]>([]);
-  const [userStatus, setUserStatus] = useState<'active' | 'disabled'>('active');
-  const [loading, setLoading] = useState(true);
+  const cached = getInitialCachedPermissions(user?.uid);
+  const [permissions, setPermissions] = useState<string[]>(cached?.permissions || []);
+  const [roles, setRoles] = useState<string[]>(cached?.roles || []);
+  const [userStatus, setUserStatus] = useState<'active' | 'disabled'>(cached?.status || 'active');
+  const [loading, setLoading] = useState(cached ? false : true);
 
   useEffect(() => {
     if (!user) {
@@ -36,14 +47,23 @@ export function useUserPermissions(): PermissionsHookResult {
       return;
     }
 
-    setLoading(true);
-    let currentRoles: string[] = [];
-    let currentPerms: string[] = [];
-    let currentStatus: 'active' | 'disabled' = 'active';
+    const cachedSnapshot = getInitialCachedPermissions(user.uid);
+    if (cachedSnapshot && !navigator.onLine) {
+      setRoles(cachedSnapshot.roles || []);
+      setPermissions(cachedSnapshot.permissions || []);
+      setUserStatus(cachedSnapshot.status || 'active');
+      setLoading(false);
+      return;
+    }
 
-    let rolesLoaded = false;
-    let permsLoaded = false;
-    let profileLoaded = false;
+    setLoading(cachedSnapshot ? false : true);
+    let currentRoles: string[] = cachedSnapshot?.roles || [];
+    let currentPerms: string[] = cachedSnapshot?.permissions || [];
+    let currentStatus: 'active' | 'disabled' = cachedSnapshot?.status || 'active';
+
+    let rolesLoaded = Boolean(cachedSnapshot);
+    let permsLoaded = Boolean(cachedSnapshot);
+    let profileLoaded = Boolean(cachedSnapshot);
 
     const updatePermissionsState = () => {
       if (!rolesLoaded || !permsLoaded || !profileLoaded) return;
@@ -59,11 +79,25 @@ export function useUserPermissions(): PermissionsHookResult {
       setRoles(currentRoles);
 
       const hasAdminOrOwner = currentRoles.some((r) => isAdminOrOwnerRole(r));
+      let resolvedPerms = currentPerms;
       if (hasAdminOrOwner) {
+        resolvedPerms = ['*'];
         setPermissions(['*']); // wildcard = all permissions
       } else {
         setPermissions(currentPerms);
       }
+
+      // Persist durable permissions snapshot for offline boots
+      try {
+        localStorage.setItem(
+          `alwan_cached_perms_${user.uid}`,
+          JSON.stringify({
+            roles: currentRoles,
+            permissions: resolvedPerms,
+            status: currentStatus,
+          })
+        );
+      } catch {}
 
       setLoading(false);
     };
@@ -94,7 +128,9 @@ export function useUserPermissions(): PermissionsHookResult {
     const unsubscribeRoles = onSnapshot(
       rolesQ,
       (snapshot) => {
-        currentRoles = snapshot.docs.map((doc) => doc.data().role);
+        if (!snapshot.empty) {
+          currentRoles = snapshot.docs.map((doc) => doc.data().role);
+        }
         rolesLoaded = true;
         updatePermissionsState();
       },
@@ -111,7 +147,9 @@ export function useUserPermissions(): PermissionsHookResult {
     const unsubscribePerms = onSnapshot(
       permsQ,
       (snapshot) => {
-        currentPerms = snapshot.docs.map((doc) => doc.data().permission);
+        if (!snapshot.empty) {
+          currentPerms = snapshot.docs.map((doc) => doc.data().permission);
+        }
         permsLoaded = true;
         updatePermissionsState();
       },
