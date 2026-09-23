@@ -2,6 +2,7 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react-swc";
 import path from "path";
 import { componentTagger } from "lovable-tagger";
+import { VitePWA } from "vite-plugin-pwa";
 
 export default defineConfig(({ mode }) => ({
   server: {
@@ -11,6 +12,26 @@ export default defineConfig(({ mode }) => ({
   plugins: [
     react(),
     mode === 'development' && componentTagger(),
+    VitePWA({
+      registerType: 'autoUpdate',
+      includeAssets: ['favicon.ico', 'robots.txt'],
+      manifest: {
+        name: 'Alwan Maktaba ERP',
+        short_name: 'AlwanERP',
+        description: 'نظام إدارة مكتبات ألوان ونقاط البيع السحابية',
+        theme_color: '#ffffff',
+        background_color: '#ffffff',
+        display: 'standalone',
+        orientation: 'any',
+        dir: 'rtl',
+        lang: 'ar',
+      },
+      workbox: {
+        globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
+        navigateFallback: '/index.html',
+        navigateFallbackDenylist: [/^\/__/, /^\/api\//],
+      },
+    }),
   ].filter(Boolean),
   resolve: {
     alias: {

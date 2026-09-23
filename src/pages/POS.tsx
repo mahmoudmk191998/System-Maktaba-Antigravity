@@ -81,6 +81,14 @@ import { HeldSalesDrawer } from '@/components/retail/pos/HeldSalesDrawer';
 import { CategoryVisualGrid } from '@/components/retail/pos/CategoryVisualGrid';
 import { POSCategoryBreadcrumb } from '@/components/retail/pos/POSCategoryBreadcrumb';
 import { CategoryManageDialog } from '@/components/retail/CategoryManageDialog';
+import { ConnectivityBanner } from '@/components/retail/ConnectivityBanner';
+import {
+  connectivityService,
+  isGenuineTransportError,
+  offlineCacheService,
+  offlineQueueService,
+  generateTemporaryReceiptNumber,
+} from '@/services/offline';
 import type { Product, ProductVariant, Sale, PaymentEntry, ProductCategory } from '@/types/retail.types';
 import { toast } from 'sonner';
 import { useNavigate } from 'react-router-dom';
@@ -162,6 +170,19 @@ export default function POSPage() {
     searchTerm: searchQuery,
     categoryId: effectiveQueryCategoryId,
   });
+
+  // Pre-warm offline catalog and shift cache whenever products or activeShift load
+  useEffect(() => {
+    if (tenantId && products && products.length > 0) {
+      offlineCacheService.cacheProductsCatalog(tenantId, products).catch(() => {});
+    }
+  }, [tenantId, products]);
+
+  useEffect(() => {
+    if (activeShift) {
+      offlineCacheService.cacheActiveShift(activeShift).catch(() => {});
+    }
+  }, [activeShift]);
 
   // Displayed products in leaf or special view
   const displayedProducts = useMemo(() => {
@@ -512,12 +533,93 @@ export default function POSPage() {
       return { success: true, product: inMemoryMatch, variant: matchedVariant || undefined };
     }
 
-    // 2. Comprehensive database lookup (handles URLs, JSONs, variants, and indexes)
+    // 2. Offline Mode: Instant lookup from local IndexedDB catalog cache
+    if (!connectivityService.isOnline()) {
+      const offlineItem = await offlineCacheService.findOfflineProductByBarcode(tenantId, raw);
+      if (offlineItem) {
+        const prod: Product = {
+          id: offlineItem.productId,
+          tenantId,
+          name: offlineItem.name,
+          sku: offlineItem.sku,
+          barcode: offlineItem.barcode,
+          retailPrice: offlineItem.sellingPrice,
+          wholesalePrice: offlineItem.wholesalePrice || offlineItem.sellingPrice,
+          purchasePrice: offlineItem.cost || 0,
+          minimumPrice: offlineItem.minimumPrice,
+          taxRate: offlineItem.taxRate,
+          categoryId: offlineItem.categoryId || '',
+          baseUnitId: offlineItem.unitId || 'piece',
+          baseUnitName: offlineItem.unitName || 'قطعة',
+          hasVariants: offlineItem.hasVariants,
+          active: true,
+          status: 'active',
+        } as any;
+
+        let matchedVariant: ProductVariant | null = null;
+        if (offlineItem.variantId) {
+          matchedVariant = {
+            id: offlineItem.variantId,
+            productId: offlineItem.productId,
+            name: offlineItem.name,
+            sku: offlineItem.sku,
+            barcode: offlineItem.barcode,
+            price: offlineItem.sellingPrice,
+            cost: offlineItem.cost || 0,
+            active: true,
+          } as any;
+        }
+
+        addToCart(prod, matchedVariant, 1);
+        toast.success(`تمت إضافة ${prod.name} (محلياً) إلى السلة بنجاح`);
+        return { success: true, product: prod, variant: matchedVariant || undefined };
+      }
+    }
+
+    // 3. Comprehensive database lookup (handles URLs, JSONs, variants, and indexes)
     toast.loading(`جاري فحص الرمز: ${raw}...`, { id: 'barcode_scan' });
     const res = await addByBarcode(raw);
     if (res.success) {
       toast.success(`تمت إضافة ${res.product?.name || 'الصنف'} إلى السلة بنجاح`, { id: 'barcode_scan' });
     } else {
+      // If network failed during online lookup, check offline cache as resilient safety net
+      const offlineFallback = await offlineCacheService.findOfflineProductByBarcode(tenantId, raw);
+      if (offlineFallback) {
+        const prod: Product = {
+          id: offlineFallback.productId,
+          tenantId,
+          name: offlineFallback.name,
+          sku: offlineFallback.sku,
+          barcode: offlineFallback.barcode,
+          retailPrice: offlineFallback.sellingPrice,
+          wholesalePrice: offlineFallback.wholesalePrice || offlineFallback.sellingPrice,
+          purchasePrice: offlineFallback.cost || 0,
+          minimumPrice: offlineFallback.minimumPrice,
+          taxRate: offlineFallback.taxRate,
+          categoryId: offlineFallback.categoryId || '',
+          baseUnitId: offlineFallback.unitId || 'piece',
+          baseUnitName: offlineFallback.unitName || 'قطعة',
+          hasVariants: offlineFallback.hasVariants,
+          active: true,
+          status: 'active',
+        } as any;
+        let matchedVariant: ProductVariant | null = null;
+        if (offlineFallback.variantId) {
+          matchedVariant = {
+            id: offlineFallback.variantId,
+            productId: offlineFallback.productId,
+            name: offlineFallback.name,
+            sku: offlineFallback.sku,
+            barcode: offlineFallback.barcode,
+            price: offlineFallback.sellingPrice,
+            cost: offlineFallback.cost || 0,
+            active: true,
+          } as any;
+        }
+        addToCart(prod, matchedVariant, 1);
+        toast.success(`تمت إضافة ${prod.name} (محلياً) إلى السلة بنجاح`, { id: 'barcode_scan' });
+        return { success: true, product: prod, variant: matchedVariant || undefined };
+      }
       toast.error(res.error || 'تعذر العثور على الصنف', { id: 'barcode_scan' });
     }
     return res;
@@ -556,7 +658,186 @@ export default function POSPage() {
     payments: PaymentEntry[],
     clientCheckoutId: string
   ): Promise<Sale | null> => {
-    const saleResult = await completeSaleTransaction({
+    const isCurrentlyOnline = connectivityService.isOnline();
+
+    // 1. ONLINE PATH
+    if (isCurrentlyOnline) {
+      try {
+        const saleResult = await completeSaleTransaction({
+          tenantId,
+          branchId,
+          branchCode,
+          cashierId,
+          cashierNameSnapshot: cashierName,
+          customerId: selectedCustomer?.id || null,
+          customerNameSnapshot: selectedCustomer?.name || 'عميل نقدي (Walk-in)',
+          customerPhoneSnapshot: selectedCustomer?.phone || '',
+          shiftId: activeShift?.id || null,
+          saleType: isWholesale ? 'wholesale' : 'retail',
+          items: cartItems.map((item) => ({
+            productId: item.productId,
+            variantId: item.variantId,
+            productName: item.productName,
+            variantName: item.variantName,
+            sku: item.sku,
+            barcode: item.barcode,
+            categoryName: item.categoryName,
+            brandName: item.brandName,
+            quantity: item.quantity,
+            inputUnitId: item.inputUnitId,
+            conversionFactor: item.conversionFactor,
+            unitSellingPrice: item.unitSellingPrice,
+            originalUnitPrice: item.originalUnitPrice,
+            discountAmount: item.discountAmount,
+            taxRate: item.taxRate,
+            priceSource: item.priceSource,
+            minimumSellingPrice: item.minimumSellingPrice,
+          })),
+          payments,
+          cartDiscountAmount: totals.cartDiscount,
+          discountType: cartDiscountType,
+          discountValue: cartDiscountValue,
+          serviceChargeRate: totals.serviceChargeRate,
+          serviceChargeAmount: totals.totalServiceCharge,
+          taxIncluded: totals.taxIncluded,
+          serviceChargeIncluded: totals.serviceChargeIncluded,
+          clientCheckoutId,
+          allowBelowMinimum: isAdmin,
+        });
+
+        if (saleResult.success && saleResult.sale) {
+          toast.success(`تم إتمام الفاتورة بنجاح برقم: ${saleResult.sale.invoiceNumber}`);
+          setCompletedSale(saleResult.sale);
+          clearCart();
+          refreshShift();
+          setReceiptModalOpen(true);
+          return saleResult.sale;
+        } else {
+          toast.error(saleResult.error || 'فشلت عملية إتمام البيع');
+          return null;
+        }
+      } catch (err: any) {
+        // Safeguard 4: Distinguish transport failure from business/auth error
+        if (isGenuineTransportError(err)) {
+          // Transport dropped mid-transaction!
+          // Safeguard 1: Status must be 'awaiting_confirmation'
+          const tempReceiptNumber = await generateTemporaryReceiptNumber(tenantId, branchCode);
+          const offlinePayload = {
+            tenantId,
+            branchId,
+            branchCode,
+            cashierId,
+            cashierNameSnapshot: cashierName,
+            customerId: selectedCustomer?.id || null,
+            customerNameSnapshot: selectedCustomer?.name || 'عميل نقدي (Walk-in)',
+            customerPhoneSnapshot: selectedCustomer?.phone || '',
+            shiftId: activeShift?.id || null,
+            saleType: (isWholesale ? 'wholesale' : 'retail') as const,
+            items: cartItems.map((item) => ({
+              productId: item.productId,
+              variantId: item.variantId,
+              productName: item.productName,
+              variantName: item.variantName,
+              sku: item.sku,
+              barcode: item.barcode,
+              categoryName: item.categoryName,
+              brandName: item.brandName,
+              quantity: item.quantity,
+              inputUnitId: item.inputUnitId,
+              conversionFactor: item.conversionFactor,
+              unitSellingPrice: item.unitSellingPrice,
+              originalUnitPrice: item.originalUnitPrice,
+              discountAmount: item.discountAmount,
+              taxRate: item.taxRate,
+              priceSource: item.priceSource,
+              minimumSellingPrice: item.minimumSellingPrice,
+            })),
+            payments,
+            cartDiscountAmount: totals.cartDiscount,
+            discountType: cartDiscountType,
+            discountValue: cartDiscountValue,
+            serviceChargeRate: totals.serviceChargeRate,
+            serviceChargeAmount: totals.totalServiceCharge,
+            taxIncluded: totals.taxIncluded,
+            serviceChargeIncluded: totals.serviceChargeIncluded,
+            clientCheckoutId,
+            temporaryReceiptNumber,
+          };
+
+          const enqueueRes = await offlineQueueService.enqueueOfflineSale(
+            offlinePayload,
+            'awaiting_confirmation'
+          );
+
+          // Safeguard 3: Only clear cart if IndexedDB committed
+          if (enqueueRes.success) {
+            const provisionalSale: Sale = {
+              id: tempReceiptNumber,
+              invoiceNumber: tempReceiptNumber,
+              tenantId,
+              branchId,
+              cashierId,
+              cashierNameSnapshot: cashierName,
+              customerNameSnapshot: selectedCustomer?.name || 'عميل نقدي',
+              items: cartItems as any,
+              payments,
+              subtotal: totals.subtotal,
+              total: totals.grandTotal,
+              totalDiscount: totals.totalDiscount,
+              totalTax: totals.totalTax,
+              status: 'local_pending' as any,
+              createdAt: new Date().toISOString(),
+              paymentStatus: 'paid',
+              clientCheckoutId,
+            } as any;
+
+            clearCart();
+            setCompletedSale(provisionalSale);
+            setReceiptModalOpen(true);
+            toast.warning(`انقطع الاتصال أثناء الإرسال. تم حفظ الفاتورة محلياً برقم مؤقت: ${tempReceiptNumber} (بانتظار التأكيد) لمنع الازدواجية.`);
+            return provisionalSale;
+          } else {
+            toast.error(enqueueRes.error || 'تعذر حفظ العملية محلياً بعد سقوط الشبكة');
+            return null;
+          }
+        } else {
+          // Hard / Business error
+          toast.error(err?.message || 'فشلت عملية إتمام البيع');
+          return null;
+        }
+      }
+    }
+
+    // 2. OFFLINE PATH
+    // Safeguard 5 & 19: Cache Health & First-Time Offline Block
+    const cacheHealth = await offlineCacheService.checkCacheHealth(tenantId, branchId);
+    if (!cacheHealth.isReady) {
+      toast.error('يلزم الاتصال بالإنترنت مرة واحدة لتحميل بيانات الفرع قبل استخدام وضع عدم الاتصال.');
+      return null;
+    }
+
+    // Safeguard 17 & 18: Stale Cache Warning
+    if (cacheHealth.isStale) {
+      toast.warning(`تنبيه: آخر مزامنة لبيانات الفرع منذ ${cacheHealth.staleHours} ساعة.`);
+    }
+
+    // Shift check
+    if (!isShiftOpen && !activeShift) {
+      const cachedShift = await offlineCacheService.getCachedActiveShift(tenantId, branchId);
+      if (!cachedShift) {
+        toast.error('يجب فتح الوردية أثناء الاتصال أولاً قبل العمل دون اتصال');
+        return null;
+      }
+    }
+
+    // Safeguard 15 & 16: External Card Offline Policy
+    const nonCashPayment = payments.find((p) => p.method !== 'cash');
+    const hasNonCash = Boolean(nonCashPayment);
+    const externalReference = nonCashPayment?.referenceNumber || 'EXT-CARD-OFFLINE';
+
+    // Generate high-entropy provisional receipt number (Safeguard 13)
+    const tempReceiptNumber = await generateTemporaryReceiptNumber(tenantId, branchCode);
+    const offlinePayload = {
       tenantId,
       branchId,
       branchCode,
@@ -566,7 +847,7 @@ export default function POSPage() {
       customerNameSnapshot: selectedCustomer?.name || 'عميل نقدي (Walk-in)',
       customerPhoneSnapshot: selectedCustomer?.phone || '',
       shiftId: activeShift?.id || null,
-      saleType: isWholesale ? 'wholesale' : 'retail',
+      saleType: (isWholesale ? 'wholesale' : 'retail') as const,
       items: cartItems.map((item) => ({
         productId: item.productId,
         variantId: item.variantId,
@@ -595,18 +876,46 @@ export default function POSPage() {
       taxIncluded: totals.taxIncluded,
       serviceChargeIncluded: totals.serviceChargeIncluded,
       clientCheckoutId,
-      allowBelowMinimum: isAdmin,
-    });
+      temporaryReceiptNumber,
+      externalPaymentConfirmed: hasNonCash ? true : undefined,
+      externalReference: hasNonCash ? externalReference : undefined,
+      notes: hasNonCash ? 'تم التحصيل بواسطة جهاز دفع خارجي' : undefined,
+    };
 
-    if (saleResult.success && saleResult.sale) {
-      toast.success(`تم إتمام الفاتورة بنجاح برقم: ${saleResult.sale.invoiceNumber}`);
-      setCompletedSale(saleResult.sale);
+    const enqueueRes = await offlineQueueService.enqueueOfflineSale(
+      offlinePayload,
+      'pending'
+    );
+
+    // Safeguard 3: Never clear cart until IndexedDB transaction committed
+    if (enqueueRes.success) {
+      const provisionalSale: Sale = {
+        id: tempReceiptNumber,
+        invoiceNumber: tempReceiptNumber,
+        tenantId,
+        branchId,
+        cashierId,
+        cashierNameSnapshot: cashierName,
+        customerNameSnapshot: selectedCustomer?.name || 'عميل نقدي',
+        items: cartItems as any,
+        payments,
+        subtotal: totals.subtotal,
+        total: totals.grandTotal,
+        totalDiscount: totals.totalDiscount,
+        totalTax: totals.totalTax,
+        status: 'local_pending' as any,
+        createdAt: new Date().toISOString(),
+        paymentStatus: 'paid',
+        clientCheckoutId,
+      } as any;
+
       clearCart();
-      refreshShift();
+      setCompletedSale(provisionalSale);
       setReceiptModalOpen(true);
-      return saleResult.sale;
+      toast.success(`تم حفظ الفاتورة محلياً بنجاح (رقم مؤقت: ${tempReceiptNumber}) — بانتظار المزامنة`);
+      return provisionalSale;
     } else {
-      toast.error(saleResult.error || 'فشلت عملية إتمام البيع');
+      toast.error(enqueueRes.error || 'فشل حفظ الفاتورة محلياً');
       return null;
     }
   };
@@ -745,6 +1054,9 @@ export default function POSPage() {
 
           {/* Left: Action buttons (Shift, Wholesale, Held Carts with Live Badge, Returns, Camera, Drawer, Shortcuts, Theme, Fullscreen) */}
           <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap justify-end">
+            {/* Offline Connectivity & Sync Status Pill */}
+            <ConnectivityBanner compact />
+
             {/* Shift Status Button */}
             <Button
               size="sm"
@@ -1746,6 +2058,25 @@ export default function POSPage() {
           return false;
         }}
         onConfirmClose={async (actualCash, notes) => {
+          // Safeguard 24: Shift Safety - Block closing shift if pending sales exist
+          try {
+            const pendingOps = await offlineQueueService.getAllOperations(tenantId);
+            const shiftPendingSales = pendingOps.filter(
+              (op) =>
+                (op.status === 'pending' || op.status === 'syncing' || op.status === 'awaiting_confirmation') &&
+                op.operationType === 'pos_sale' &&
+                (op.payload as any)?.shiftId === activeShift?.id
+            );
+            if (shiftPendingSales.length > 0) {
+              toast.error(
+                `لا يمكن إغلاق الوردية حالياً: يوجد ${shiftPendingSales.length} عملية بيع معلقة دون اتصال مرتبطة بهذه الوردية. يرجى المزامنة أولاً.`
+              );
+              return false;
+            }
+          } catch (e) {
+            console.warn('Could not verify offline pending shift sales:', e);
+          }
+
           const res = await closeShift(actualCash, notes);
           if (res.success) {
             toast.success('تم إغلاق الوردية وجرد الدرج بنجاح');

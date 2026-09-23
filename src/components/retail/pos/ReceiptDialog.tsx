@@ -128,16 +128,27 @@ export const ReceiptDialog: React.FC<ReceiptDialogProps> = ({
                   الرقم الضريبي: {effectiveTaxNumber}
                 </p>
               )}
-              <div className="mt-1 font-bold text-xs bg-gray-100 py-0.5 rounded">
-                فاتورة مبيعات ضريبية
-              </div>
+              {/* Title / Header Type */}
+              {(sale.invoiceNumber?.startsWith('OFF-') || (sale as any).status === 'local_pending' || (sale as any).isProvisional) ? (
+                <div className="mt-1 font-black text-xs bg-amber-100 text-amber-900 border border-amber-300 py-1 px-2 rounded text-center">
+                  ⚠️ إيصال مؤقت (غير متزامن — بانتظار المزامنة)
+                </div>
+              ) : (
+                <div className="mt-1 font-bold text-xs bg-gray-100 py-0.5 rounded text-center">
+                  فاتورة مبيعات ضريبية
+                </div>
+              )}
             </div>
 
             {/* Metadata */}
             <div className="text-[11px] space-y-0.5 border-b border-dashed border-gray-400 pb-2 mb-2">
               <div className="flex justify-between">
-                <span className="text-gray-600">رقم الفاتورة:</span>
-                <span className="font-bold">{sale.invoiceNumber}</span>
+                <span className="text-gray-600">
+                  {(sale.invoiceNumber?.startsWith('OFF-') || (sale as any).status === 'local_pending')
+                    ? 'رقم الإيصال المؤقت:'
+                    : 'رقم الفاتورة:'}
+                </span>
+                <span className="font-bold font-mono">{sale.invoiceNumber}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-gray-600">التاريخ والوقت:</span>

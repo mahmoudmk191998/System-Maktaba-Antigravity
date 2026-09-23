@@ -249,6 +249,48 @@ export async function completeSaleTransaction(
         stockSnapshots.set(stockKey, { snap, beforeOnHand, averageCost });
       }
 
+      // 3.5 Read Canonical Products in Transaction for Authoritative Verification
+      const productSnapshots = new Map<string, { exists: boolean; data: any }>();
+      const distinctProductIds = Array.from(new Set(items.map((it) => it.productId)));
+      for (const pId of distinctProductIds) {
+        const pRef = doc(db, 'products', pId);
+        const pSnap = await transaction.get(pRef);
+        if (pSnap.exists()) {
+          productSnapshots.set(pId, { exists: true, data: pSnap.data() });
+        } else {
+          productSnapshots.set(pId, { exists: false, data: null });
+        }
+      }
+
+      // 3.6 Authoritative Pre-Validation on Items (Tenant Isolation, Active, Minimum Selling Price)
+      for (const itemInput of items) {
+        const pInfo = productSnapshots.get(itemInput.productId);
+        let minPrice = itemInput.minimumSellingPrice ?? 0;
+
+        if (pInfo && pInfo.exists) {
+          const canonicalProduct = pInfo.data;
+          // Security Check: Tenant Isolation on Product
+          if (canonicalProduct.tenantId && canonicalProduct.tenantId !== tenantId) {
+            throw new Error(`محاولة بيع صنف تابع لمؤسسة أخرى (${itemInput.productName})`);
+          }
+          // Security Check: Archived or Inactive Guard
+          if (canonicalProduct.active === false) {
+            throw new Error(`الصنف "${canonicalProduct.name || itemInput.productName}" معطل أو مؤرشف ولا يمكن بيعه`);
+          }
+          // Security Check: Authoritative Minimum Price Override
+          if (canonicalProduct.minimumPrice !== undefined && canonicalProduct.minimumPrice !== null) {
+            minPrice = Number(canonicalProduct.minimumPrice);
+          }
+        }
+
+        // Minimum price guard
+        if (!allowBelowMinimum && minPrice > 0 && itemInput.unitSellingPrice < minPrice) {
+          throw new Error(
+            `سعر بيع الصنف "${itemInput.productName}" (${itemInput.unitSellingPrice} ج.م) أقل من الحد الأدنى المعتمد (${minPrice} ج.م)`
+          );
+        }
+      }
+
       // 4. Validate Stock Availability for all grouped requirements
       for (const [stockKey, req] of stockRequirements) {
         const stockInfo = stockSnapshots.get(stockKey)!;
@@ -308,18 +350,42 @@ export async function completeSaleTransaction(
         const stockInfo = stockSnapshots.get(stockKey)!;
         const unitCostSnapshot = stockInfo.averageCost;
 
+        // Authoritative Canonical Verification from Database Snapshot
+        const pInfo = productSnapshots.get(itemInput.productId);
+        let minPrice = itemInput.minimumSellingPrice ?? 0;
+        let effectiveTaxRate = itemInput.taxRate ?? 0;
+
+        if (pInfo && pInfo.exists) {
+          const canonicalProduct = pInfo.data;
+          // Security Check: Tenant Isolation on Product
+          if (canonicalProduct.tenantId && canonicalProduct.tenantId !== tenantId) {
+            throw new Error(`محاولة بيع صنف تابع لمؤسسة أخرى (${itemInput.productName})`);
+          }
+          // Security Check: Archived or Inactive Guard
+          if (canonicalProduct.active === false) {
+            throw new Error(`الصنف "${canonicalProduct.name || itemInput.productName}" معطل أو مؤرشف ولا يمكن بيعه`);
+          }
+          // Security Check: Authoritative Minimum Price Override
+          if (canonicalProduct.minimumPrice !== undefined && canonicalProduct.minimumPrice !== null) {
+            minPrice = Number(canonicalProduct.minimumPrice);
+          }
+          // Security Check: Authoritative Tax Rate
+          if (canonicalProduct.taxRate !== undefined && canonicalProduct.taxRate !== null) {
+            effectiveTaxRate = Number(canonicalProduct.taxRate);
+          }
+        }
+
         // Minimum price guard
-        const minPrice = itemInput.minimumSellingPrice ?? 0;
         if (!allowBelowMinimum && minPrice > 0 && itemInput.unitSellingPrice < minPrice) {
           throw new Error(
-            `سعر بيع الصنف "${itemInput.productName}" (${itemInput.unitSellingPrice} ج.م) أقل من الحد الأدنى المسموح (${minPrice} ج.م)`
+            `سعر بيع الصنف "${itemInput.productName}" (${itemInput.unitSellingPrice} ج.م) أقل من الحد الأدنى المعتمد (${minPrice} ج.م)`
           );
         }
 
         const lineOriginalUnit = itemInput.originalUnitPrice ?? itemInput.unitSellingPrice;
         const lineSubtotal = Math.round(itemInput.unitSellingPrice * itemInput.quantity * 100) / 100;
         const lineDiscount = Math.round((itemInput.discountAmount ?? 0) * 100) / 100;
-        const taxRate = itemInput.taxRate ?? 0;
+        const taxRate = effectiveTaxRate;
         const taxableAmount = Math.max(0, lineSubtotal - lineDiscount);
         const lineTax = Math.round(taxableAmount * taxRate * 100) / 100;
         const lineFinalTotal = Math.round((taxableAmount + lineTax) * 100) / 100;
@@ -371,8 +437,15 @@ export async function completeSaleTransaction(
         saleItems.push(saleItemRecord);
       }
 
+      if (cartDiscountAmount < 0) {
+        throw new Error('قيمة الخصم غير صالحة');
+      }
+
       // Apportion cart level discount if present
       const totalDiscount = Math.round((calculatedLineDiscounts + Math.max(0, cartDiscountAmount)) * 100) / 100;
+      if (totalDiscount > calculatedSubtotal) {
+        throw new Error(`قيمة الخصم (${totalDiscount} ج.م) تتجاوز إجمالي الفاتورة (${calculatedSubtotal} ج.م)`);
+      }
       
       const serviceRate = Number(serviceChargeRate) || 0;
       let effectiveServiceAmount = 0;
@@ -690,10 +763,11 @@ export async function completeSaleTransaction(
           quantity: Number(it.quantity || 1),
           total: Number(it.total || 0),
         }));
+        const totalUnitsCount = items.reduce((sum, it) => sum + Number(it.quantity || 1), 0);
         await applySaleToStatsInTransaction(transaction, tenantId, now, {
           grossTotal: finalGrandTotal,
           profit: overallGrossProfit,
-          itemsCount: totalUnitsDeducted,
+          itemsCount: totalUnitsCount,
           itemsSummary,
         });
       } catch (statsErr) {
