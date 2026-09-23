@@ -54,6 +54,8 @@ import {
   Sun,
   Moon,
   X,
+  FolderTree,
+  ArrowRight,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useTheme } from '@/hooks/useTheme';
@@ -76,7 +78,10 @@ import { QuickPaymentModal } from '@/components/retail/pos/QuickPaymentModal';
 import { ReceiptDialog } from '@/components/retail/pos/ReceiptDialog';
 import { CashRegisterModal } from '@/components/retail/pos/CashRegisterModal';
 import { HeldSalesDrawer } from '@/components/retail/pos/HeldSalesDrawer';
-import type { Product, ProductVariant, Sale, PaymentEntry } from '@/types/retail.types';
+import { CategoryVisualGrid } from '@/components/retail/pos/CategoryVisualGrid';
+import { POSCategoryBreadcrumb } from '@/components/retail/pos/POSCategoryBreadcrumb';
+import { CategoryManageDialog } from '@/components/retail/CategoryManageDialog';
+import type { Product, ProductVariant, Sale, PaymentEntry, ProductCategory } from '@/types/retail.types';
 import { toast } from 'sonner';
 import { useNavigate } from 'react-router-dom';
 
@@ -109,16 +114,135 @@ export default function POSPage() {
     closeShift,
   } = useCashRegister();
 
-  // Categories & Products Data
-  const { categories } = useCategories();
-  const [selectedCategory, setSelectedCategory] = useState<string>('all');
+  // Categories & Products Data (Category-First Visual POS)
+  const { categories, loading: categoriesLoading } = useCategories();
+  const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
+  const [categoryPath, setCategoryPath] = useState<ProductCategory[]>([]);
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const [categoryManageOpen, setCategoryManageOpen] = useState(false);
+
+  // Active categories sorted by sortOrder
+  const activeCategories = useMemo(() => {
+    return (categories || [])
+      .filter((c) => c.active !== false)
+      .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+  }, [categories]);
+
+  // Check if current category has children (subcategories)
+  const currentCategoryHasChildren = useMemo(() => {
+    if (selectedCategoryId === null) return true; // At root, show categories grid
+    if (selectedCategoryId === '__ALL__' || selectedCategoryId === '__UNCATEGORIZED__') return false;
+    return activeCategories.some((c) => c.parentId === selectedCategoryId);
+  }, [activeCategories, selectedCategoryId]);
+
+  // Subcategories or root categories to display in the visual grid
+  const visibleCategories = useMemo(() => {
+    if (selectedCategoryId === null) {
+      return activeCategories.filter((c) => !c.parentId || c.parentId === 'none');
+    }
+    if (selectedCategoryId === '__ALL__' || selectedCategoryId === '__UNCATEGORIZED__') {
+      return [];
+    }
+    return activeCategories.filter((c) => c.parentId === selectedCategoryId);
+  }, [activeCategories, selectedCategoryId]);
+
+  const isSearchActive = Boolean(searchQuery && searchQuery.trim().length > 0);
+  const isAllProductsView = selectedCategoryId === '__ALL__';
+  const isUncategorizedView = selectedCategoryId === '__UNCATEGORIZED__';
+  const showProductsView = isSearchActive || isAllProductsView || isUncategorizedView || !currentCategoryHasChildren;
+
+  const effectiveQueryCategoryId = useMemo(() => {
+    if (isSearchActive) return undefined; // Global search across all products (Requirement 18)
+    if (selectedCategoryId === null || isAllProductsView || isUncategorizedView) return undefined;
+    return selectedCategoryId;
+  }, [isSearchActive, selectedCategoryId, isAllProductsView, isUncategorizedView]);
 
   const { products, loading: productsLoading } = useProducts({
     pageSize: 200,
-    search: searchQuery,
-    categoryId: selectedCategory !== 'all' ? selectedCategory : undefined,
+    searchTerm: searchQuery,
+    categoryId: effectiveQueryCategoryId,
   });
+
+  // Displayed products in leaf or special view
+  const displayedProducts = useMemo(() => {
+    if (isSearchActive) return products;
+    if (isAllProductsView) return products;
+    if (isUncategorizedView) {
+      return products.filter((p) => !p.categoryId || p.categoryId === '');
+    }
+    if (selectedCategoryId && !currentCategoryHasChildren) {
+      return products.filter((p) => p.categoryId === selectedCategoryId);
+    }
+    return products;
+  }, [products, isSearchActive, isAllProductsView, isUncategorizedView, selectedCategoryId, currentCategoryHasChildren]);
+
+  // In-memory counts for category badges
+  const { productCountsMap, uncategorizedCount, subCategoryCountsMap } = useMemo(() => {
+    const counts: Record<string, number> = {};
+    let uncat = 0;
+    for (const p of products) {
+      if (p.categoryId) {
+        counts[p.categoryId] = (counts[p.categoryId] || 0) + 1;
+      } else {
+        uncat++;
+      }
+    }
+
+    const subCounts: Record<string, number> = {};
+    for (const c of activeCategories) {
+      if (c.parentId && c.parentId !== 'none') {
+        subCounts[c.parentId] = (subCounts[c.parentId] || 0) + 1;
+      }
+    }
+
+    return { productCountsMap: counts, uncategorizedCount: uncat, subCategoryCountsMap: subCounts };
+  }, [products, activeCategories]);
+
+  // Navigation handlers
+  const handleSelectCategory = (cat: ProductCategory) => {
+    setSelectedCategoryId(cat.id);
+    setCategoryPath((prev) => [...prev, cat]);
+  };
+
+  const handleSelectAllProducts = () => {
+    setSelectedCategoryId('__ALL__');
+  };
+
+  const handleSelectUncategorized = () => {
+    setSelectedCategoryId('__UNCATEGORIZED__');
+  };
+
+  const handleGoToRootCategories = () => {
+    setSelectedCategoryId(null);
+    setCategoryPath([]);
+    if (searchQuery) setSearchQuery('');
+  };
+
+  const handleBreadcrumbClick = (index: number) => {
+    if (searchQuery) setSearchQuery('');
+    const target = categoryPath[index];
+    setSelectedCategoryId(target.id);
+    setCategoryPath((prev) => prev.slice(0, index + 1));
+  };
+
+  const handleBackOneLevel = () => {
+    if (isSearchActive) {
+      setSearchQuery('');
+      return;
+    }
+    if (isAllProductsView || isUncategorizedView) {
+      handleGoToRootCategories();
+      return;
+    }
+    if (categoryPath.length <= 1) {
+      handleGoToRootCategories();
+    } else {
+      const newPath = categoryPath.slice(0, -1);
+      const parentCat = newPath[newPath.length - 1];
+      setCategoryPath(newPath);
+      setSelectedCategoryId(parentCat.id);
+    }
+  };
 
   const { customers } = useCustomers();
 
@@ -291,6 +415,18 @@ export default function POSPage() {
         handleOpenCashDrawer();
         return;
       }
+      if (e.key === 'Escape') {
+        if (searchQuery) {
+          e.preventDefault();
+          setSearchQuery('');
+          return;
+        }
+        if (selectedCategoryId !== null) {
+          e.preventDefault();
+          handleBackOneLevel();
+          return;
+        }
+      }
 
       // Barcode Wedge Scanner Detection:
       // Scanners rapidly type characters (<50ms between keys) ending with Enter.
@@ -325,7 +461,7 @@ export default function POSPage() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [cartItems, settings.openDrawerPassword, canManageRegister]);
+  }, [cartItems, settings.openDrawerPassword, canManageRegister, searchQuery, selectedCategoryId, handleBackOneLevel]);
 
   const handleScanBarcode = async (barcode: string) => {
     const raw = (barcode || '').trim();
@@ -840,87 +976,155 @@ export default function POSPage() {
                 </Button>
               </div>
 
-              {/* Categories Scrollable Pills */}
-              <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
-                <Button
-                  size="sm"
-                  variant={selectedCategory === 'all' ? 'default' : 'outline'}
-                  className="rounded-xl text-xs h-8 px-3.5 shrink-0 font-bold"
-                  onClick={() => setSelectedCategory('all')}
-                >
-                  الكل ({products.length})
-                </Button>
-                {categories.map((cat) => (
-                  <Button
-                    key={cat.id}
-                    size="sm"
-                    variant={selectedCategory === cat.id ? 'default' : 'outline'}
-                    className="rounded-xl text-xs h-8 px-3.5 shrink-0 font-bold"
-                    onClick={() => setSelectedCategory(cat.id)}
-                  >
-                    {cat.name}
-                  </Button>
-                ))}
-              </div>
+              {/* Category Breadcrumb Navigation Context */}
+              <POSCategoryBreadcrumb
+                categoryPath={categoryPath}
+                isAllProducts={isAllProductsView}
+                isUncategorized={isUncategorizedView}
+                searchQuery={searchQuery}
+                searchResultsCount={displayedProducts.length}
+                onGoToRoot={handleGoToRootCategories}
+                onGoToBreadcrumbIndex={handleBreadcrumbClick}
+                onBackOneLevel={handleBackOneLevel}
+                onClearSearch={() => setSearchQuery('')}
+              />
             </div>
 
-            {/* Product Cards Grid: Scrolls INSIDE its container only */}
+            {/* Catalog Main Body: Either Visual Categories Grid OR Products View */}
             <div className="flex-1 min-h-0 overflow-y-auto pr-1">
-              {productsLoading ? (
-                <div className="flex items-center justify-center h-48 text-muted-foreground text-sm font-semibold">
-                  جاري تحميل المنتجات...
-                </div>
-              ) : products.length === 0 ? (
-                <div className="flex flex-col items-center justify-center h-48 text-muted-foreground text-sm gap-2">
-                  <BookOpen className="w-8 h-8 opacity-30" />
-                  <span className="font-semibold">لا توجد منتجات مطابقة للبحث</span>
-                </div>
+              {!showProductsView ? (
+                /* 1. Category-First Visual Grid */
+                <CategoryVisualGrid
+                  categories={visibleCategories}
+                  loading={categoriesLoading}
+                  totalProductsCount={products.length}
+                  uncategorizedCount={uncategorizedCount}
+                  productCountsMap={productCountsMap}
+                  subCategoryCountsMap={subCategoryCountsMap}
+                  showAllProductsCard={selectedCategoryId === null}
+                  showUncategorizedCard={selectedCategoryId === null && uncategorizedCount > 0}
+                  onSelectCategory={handleSelectCategory}
+                  onSelectAllProducts={handleSelectAllProducts}
+                  onSelectUncategorized={handleSelectUncategorized}
+                  onOpenManageCategories={() => setCategoryManageOpen(true)}
+                />
               ) : (
-                <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-2 sm:gap-2.5 pb-2">
-                  {products.map((prod) => {
-                    const displayPrice = isWholesale
-                      ? (prod.wholesalePrice || prod.sellingPrice)
-                      : prod.sellingPrice;
-
-                    return (
-                      <Card
-                        key={prod.id}
-                        className="cursor-pointer hover:border-primary/80 hover:shadow-md transition-all duration-200 bg-card/90 border-border/80 overflow-hidden flex flex-col justify-between active:scale-[0.98] rounded-xl group"
-                        onClick={() => handleProductCardClick(prod)}
+                /* 2. Products View (for selected category, search results, or all products) */
+                productsLoading ? (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-2 sm:gap-2.5 pb-2">
+                    {Array.from({ length: 8 }).map((_, i) => (
+                      <div key={i} className="h-36 rounded-xl border border-border/60 bg-card p-3 animate-pulse flex flex-col justify-between">
+                        <div className="h-4 bg-muted rounded w-1/3" />
+                        <div className="space-y-1">
+                          <div className="h-4 bg-muted rounded w-3/4" />
+                          <div className="h-3 bg-muted rounded w-1/2" />
+                        </div>
+                        <div className="h-5 bg-muted rounded w-1/3 mt-2" />
+                      </div>
+                    ))}
+                  </div>
+                ) : displayedProducts.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center min-h-[260px] text-muted-foreground text-sm gap-3 p-6 text-center my-auto">
+                    <BookOpen className="w-10 h-10 opacity-30" />
+                    <span className="font-bold text-foreground">
+                      {isSearchActive ? 'لا توجد أصناف مطابقة للبحث' : 'لا توجد أصناف داخل هذا التصنيف'}
+                    </span>
+                    {isSearchActive ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setSearchQuery('')}
+                        className="gap-1.5 font-bold rounded-xl"
                       >
-                        <CardContent className="p-3 space-y-2 flex flex-col justify-between h-full">
-                          <div>
-                            <div className="flex justify-between items-start gap-1">
-                              <Badge variant="secondary" className="text-[10px] px-1.5 py-0 font-bold bg-muted">
-                                {prod.type === 'book' ? 'كتاب' : 'أدوات'}
-                              </Badge>
-                              {prod.hasVariants && (
-                                <Badge variant="outline" className="text-[9px] px-1 bg-indigo-500/10 text-indigo-600 border-indigo-500/30 font-bold">
-                                  متغيرات
+                        مسح كلمة البحث
+                      </Button>
+                    ) : (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={handleBackOneLevel}
+                        className="gap-1.5 font-bold rounded-xl"
+                      >
+                        <ArrowRight className="w-4 h-4" />
+                        العودة للتصنيفات
+                      </Button>
+                    )}
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-2 sm:gap-2.5 pb-2">
+                    {displayedProducts.map((prod) => {
+                      const displayPrice = isWholesale
+                        ? (prod.wholesalePrice || prod.sellingPrice)
+                        : prod.sellingPrice;
+                      const isOutOfStock = prod.stockQuantity !== undefined && prod.stockQuantity <= 0;
+                      const isLowStock = !isOutOfStock && (prod.isLowStock || (prod.minStock !== undefined && prod.stockQuantity !== undefined && prod.stockQuantity <= prod.minStock));
+
+                      return (
+                        <Card
+                          key={prod.id}
+                          className={cn(
+                            "cursor-pointer hover:border-primary/80 hover:shadow-md transition-all duration-200 bg-card/90 border-border/80 overflow-hidden flex flex-col justify-between active:scale-[0.98] rounded-xl group relative",
+                            isOutOfStock && "opacity-75 bg-muted/30"
+                          )}
+                          onClick={() => handleProductCardClick(prod)}
+                        >
+                          <CardContent className="p-3 space-y-2 flex flex-col justify-between h-full">
+                            <div>
+                              <div className="flex justify-between items-start gap-1">
+                                <Badge variant="secondary" className="text-[10px] px-1.5 py-0 font-bold bg-muted">
+                                  {prod.type === 'book' ? 'كتاب' : 'أدوات'}
                                 </Badge>
+                                <div className="flex items-center gap-1">
+                                  {prod.hasVariants && (
+                                    <Badge variant="outline" className="text-[9px] px-1 bg-indigo-500/10 text-indigo-600 border-indigo-500/30 font-bold">
+                                      متغيرات
+                                    </Badge>
+                                  )}
+                                  {isOutOfStock ? (
+                                    <Badge variant="destructive" className="text-[9px] px-1 font-bold">
+                                      نفذت الكمية
+                                    </Badge>
+                                  ) : isLowStock ? (
+                                    <Badge variant="outline" className="text-[9px] px-1 bg-amber-500/10 text-amber-600 border-amber-500/30 font-bold">
+                                      مخزون منخفض
+                                    </Badge>
+                                  ) : null}
+                                </div>
+                              </div>
+                              <h3 className="font-bold text-xs sm:text-sm text-foreground line-clamp-2 mt-1.5 group-hover:text-primary transition-colors">
+                                {prod.name}
+                              </h3>
+                              {prod.author && (
+                                <p className="text-[10px] text-muted-foreground truncate">{prod.author}</p>
                               )}
                             </div>
-                            <h3 className="font-bold text-xs sm:text-sm text-foreground line-clamp-2 mt-1.5 group-hover:text-primary transition-colors">
-                              {prod.name}
-                            </h3>
-                            {prod.author && (
-                              <p className="text-[10px] text-muted-foreground truncate">{prod.author}</p>
-                            )}
-                          </div>
 
-                          <div className="pt-2 border-t border-border/60 flex items-center justify-between">
-                            <span className="font-mono text-[10px] text-muted-foreground truncate max-w-[70px]">
-                              {prod.sku}
-                            </span>
-                            <span className="font-black text-sm sm:text-base text-primary font-mono">
-                              {number(displayPrice)} ج.م
-                            </span>
-                          </div>
-                        </CardContent>
-                      </Card>
-                    );
-                  })}
-                </div>
+                            <div className="pt-2 border-t border-border/60 flex items-center justify-between">
+                              <div className="flex flex-col">
+                                <span className="font-mono text-[10px] text-muted-foreground truncate max-w-[70px]">
+                                  {prod.sku}
+                                </span>
+                                {prod.stockQuantity !== undefined && (
+                                  <span className={cn(
+                                    "text-[9px] font-bold",
+                                    isOutOfStock ? "text-destructive" : isLowStock ? "text-amber-600" : "text-muted-foreground"
+                                  )}>
+                                    {prod.stockQuantity} متاح
+                                  </span>
+                                )}
+                              </div>
+                              <span className="font-black text-sm sm:text-base text-primary font-mono">
+                                {number(displayPrice)} ج.م
+                              </span>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      );
+                    })}
+                  </div>
+                )
               )}
             </div>
 
@@ -1647,6 +1851,12 @@ export default function POSPage() {
         onScan={handleScanBarcode}
         cartTotalCount={cartItems.reduce((acc, i) => acc + i.quantity, 0)}
         availableProducts={products}
+      />
+
+      {/* Category Management Dialog */}
+      <CategoryManageDialog
+        open={categoryManageOpen}
+        onOpenChange={setCategoryManageOpen}
       />
     </MainLayout>
   );

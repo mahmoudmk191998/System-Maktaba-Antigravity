@@ -187,7 +187,13 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
-    // Menu Catalog, Items, Categories, Addons
+    // Retail Categories, Brands, Catalog & Items
+    match /categories/{categoryId} {
+      allow read, write: if isAuthenticated();
+    }
+    match /brands/{brandId} {
+      allow read, write: if isAuthenticated();
+    }
     match /menu_categories/{categoryId} {
       allow read, write: if isAuthenticated();
     }
