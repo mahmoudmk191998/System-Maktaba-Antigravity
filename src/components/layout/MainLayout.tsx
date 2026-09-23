@@ -23,6 +23,9 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { ConnectivityBanner } from '@/components/retail/ConnectivityBanner';
+import { offlineQueueService } from '@/services/offline';
+import { toast } from 'sonner';
 
 interface MainLayoutProps {
   children: ReactNode;
@@ -137,6 +140,15 @@ export function MainLayout({ children, title, subtitle, actions, showBack, onBac
   };
 
   const handleSignOut = async () => {
+    try {
+      const counts = await offlineQueueService.getCounts();
+      const pendingTotal = counts.pending + counts.syncing + counts.awaiting_confirmation;
+      if (pendingTotal > 0) {
+        toast.warning(
+          `تنبيه: يوجد ${pendingTotal} عملية غير متزامنة على هذا الجهاز. تم الاحتفاظ بالبيانات محلياً ولن تُحذف.`
+        );
+      }
+    } catch {}
     await signOut();
     navigate('/auth');
   };
@@ -148,6 +160,7 @@ export function MainLayout({ children, title, subtitle, actions, showBack, onBac
   return (
     <div className={cn("bg-background", isPOS ? "h-[100dvh] max-h-[100dvh] overflow-hidden" : "min-h-[100dvh]")}>
       {!isPOS && <Sidebar />}
+      {!isPOS && <ConnectivityBanner />}
 
       <motion.main
         initial={{ opacity: 0 }}
@@ -217,28 +230,8 @@ export function MainLayout({ children, title, subtitle, actions, showBack, onBac
                 {/* Live Clock Component */}
                 <LiveClock />
 
-                {/* Connection Status Pill */}
-                <div className={cn(
-                  'flex items-center gap-2 px-3 py-1.5 rounded-full text-[13px] font-bold shadow-sm border transition-all duration-300', 
-                  isOnline 
-                    ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20' 
-                    : 'bg-red-500/10 text-red-600 border-red-500/20'
-                )}>
-                  {isOnline ? (
-                    <>
-                      <span className="relative flex h-2 w-2">
-                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                        <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-                      </span>
-                      <span>متصل</span>
-                    </>
-                  ) : (
-                    <>
-                      <WifiOff className="w-3.5 h-3.5" />
-                      <span>غير متصل</span>
-                    </>
-                  )}
-                </div>
+                {/* Connection Status Pill with Sync Center Trigger */}
+                <ConnectivityBanner compact />
               </div>
 
               {/* Install App Button */}

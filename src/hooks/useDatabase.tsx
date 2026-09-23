@@ -11,6 +11,7 @@ import { isStatsMigrationComplete, runStatsBackfill } from '@/services/analytics
 import { getTenantDateString, getTenantYesterdayString } from '@/lib/reportingTimezone';
 import { firestoreLogger } from '@/lib/firestoreLogger';
 import { wipeAndReinitializeTenantData } from '@/services/admin/dataReset.service';
+import { offlineCacheService, isGenuineTransportError } from '@/services/offline';
 
 const fetchCollection = async (
   colPath: string, 
@@ -43,17 +44,64 @@ const fetchCollection = async (
   return data;
 };
 
+// Helper to read cached tenant/branch snapshot immediately on boot
+const getInitialTenantBranch = () => {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem('alwan_cached_tenant_branch');
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+};
+
 // Get or create tenant and branch for current user
 export function useTenantBranch() {
   const { user } = useAuth();
-  const [tenantId, setTenantId] = useState<string | null>(null);
-  const [branchId, setBranchId] = useState<string | null>(null);
+  const cached = getInitialTenantBranch();
+  const [tenantId, setTenantId] = useState<string | null>(cached?.tenantId || null);
+  const [branchId, setBranchId] = useState<string | null>(cached?.branchId || null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     if (!user) { setLoading(false); return; }
 
     const init = async () => {
+      // 1. If currently offline, hydrate from cache immediately without blocking on Firestore
+      if (!navigator.onLine) {
+        const local = getInitialTenantBranch();
+        if (local?.tenantId) {
+          setTenantId(local.tenantId);
+          setBranchId(local.branchId);
+          if (local.currentTenant) useAppStore.getState().setCurrentTenant(local.currentTenant);
+          if (local.currentBranch) useAppStore.getState().setCurrentBranch(local.currentBranch);
+          if (local.settings) useAppStore.getState().updateSettings(local.settings);
+          setLoading(false);
+          return;
+        }
+
+        // Try IndexedDB active offline device
+        const activeDevice = await offlineCacheService.getActiveOfflineDevice();
+        if (activeDevice) {
+          const readiness = await offlineCacheService.getDeviceReadiness(activeDevice.tenantId, activeDevice.branchId);
+          setTenantId(activeDevice.tenantId);
+          setBranchId(activeDevice.branchId);
+          useAppStore.getState().setCurrentTenant({ id: activeDevice.tenantId, name: readiness?.tenantName || 'MK' });
+          useAppStore.getState().setCurrentBranch({
+            id: activeDevice.branchId,
+            tenantId: activeDevice.tenantId,
+            name: readiness?.branchName || 'الفرع الرئيسي',
+            address: '',
+            phone: '',
+            isActive: true,
+          });
+          const cachedSettings = await offlineCacheService.getCachedSettings(activeDevice.tenantId);
+          if (cachedSettings) useAppStore.getState().updateSettings(cachedSettings);
+          setLoading(false);
+          return;
+        }
+      }
+
       try {
         const profileRef = doc(db, 'profiles', user.uid);
         const profileSnap = await getDoc(profileRef);
@@ -137,13 +185,14 @@ export function useTenantBranch() {
             });
             if (tData.settings) {
               useAppStore.getState().updateSettings(tData.settings);
+              offlineCacheService.cacheSettings(effectiveTenantId, tData.settings).catch(() => {});
             }
           }
 
           if (resolvedBranchId) {
             useAppStore.getState().setCurrentBranch({ 
               id: resolvedBranchId, 
-              tenantId: profile.tenant_id, 
+              tenantId: effectiveTenantId, 
               name: branchName, 
               address: branchAddress, 
               phone: branchPhone, 
@@ -152,7 +201,32 @@ export function useTenantBranch() {
               isActive: true 
             });
           }
+
+          // Persist durable session snapshot for zero-latency offline boots
+          const tenantPayload = {
+            tenantId: effectiveTenantId,
+            branchId: resolvedBranchId,
+            currentTenant: useAppStore.getState().currentTenant,
+            currentBranch: useAppStore.getState().currentBranch,
+            settings: useAppStore.getState().settings,
+          };
+          try {
+            localStorage.setItem('alwan_cached_tenant_branch', JSON.stringify(tenantPayload));
+          } catch {}
+
+          if (resolvedBranchId) {
+            offlineCacheService.persistDeviceReadiness(effectiveTenantId, resolvedBranchId, {
+              tenantName: tenantPayload.currentTenant?.name,
+              branchName: tenantPayload.currentBranch?.name,
+            }).catch(() => {});
+          }
         } else {
+          // If offline, do NOT attempt network addDoc
+          if (!navigator.onLine) {
+            setLoading(false);
+            return;
+          }
+
           // Create tenant, branch, assign to profile
           const newTenant = await addDoc(collection(db, 'tenants'), { name: 'MK' });
           setTenantId(newTenant.id);
@@ -218,8 +292,25 @@ export function useTenantBranch() {
           ];
           for (const p of allPerms) await addDoc(collection(db, 'user_permissions'), { user_id: user.uid, permission: p, granted_by: user.uid });
         }
-      } catch (e) {
+      } catch (e: any) {
         console.error('Init error:', e);
+        // Fall back to cached tenant & branch if transport/offline failure
+        if (!navigator.onLine || isGenuineTransportError(e) || e?.code === 'unavailable') {
+          const local = getInitialTenantBranch();
+          if (local?.tenantId) {
+            setTenantId(local.tenantId);
+            setBranchId(local.branchId);
+            if (local.currentTenant) useAppStore.getState().setCurrentTenant(local.currentTenant);
+            if (local.currentBranch) useAppStore.getState().setCurrentBranch(local.currentBranch);
+            if (local.settings) useAppStore.getState().updateSettings(local.settings);
+          } else {
+            const activeDevice = await offlineCacheService.getActiveOfflineDevice();
+            if (activeDevice) {
+              setTenantId(activeDevice.tenantId);
+              setBranchId(activeDevice.branchId);
+            }
+          }
+        }
       } finally {
         setLoading(false);
       }

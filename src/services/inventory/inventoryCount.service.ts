@@ -32,6 +32,8 @@ import type {
 import { applyStockMovement, fetchStockBalancesFromDb } from './retailInventory.service';
 import { findProductOrVariantByBarcode } from '../products/products.repository';
 import { getNextAtomicSequence } from '../sales/invoiceNumber.service';
+import { getOfflineDB } from '../offline/offlineDb';
+import { offlineCacheService } from '../offline/offlineCache.service';
 
 export interface StartCountSessionInput {
   tenantId: string;
@@ -104,11 +106,10 @@ export async function startInventoryCountSession(
       updatedAt: now,
     };
 
-    // Save locally
+    // Save locally in IndexedDB
     try {
-      const raw = localStorage.getItem('pos_inventory_counts');
-      const list = raw ? JSON.parse(raw) : [];
-      localStorage.setItem('pos_inventory_counts', JSON.stringify([session, ...list.filter((s: any) => s.id !== session.id)]));
+      const dbLocal = await getOfflineDB();
+      await dbLocal.put('offline_counts', session);
     } catch {}
 
     await setDoc(sessionRef, session);
@@ -121,7 +122,7 @@ export async function startInventoryCountSession(
 
 /**
  * Scans a barcode or SKU and increments the counted quantity for the item.
- * Strictly verifies barcode existence in product catalog.
+ * Strictly verifies barcode existence in product catalog (online or offline cache).
  */
 export async function recordBarcodeScanInCount(
   tenantId: string,
@@ -133,26 +134,63 @@ export async function recordBarcodeScanInCount(
     return { success: false, error: 'الباركود مطلوب' };
   }
 
-  // 1. Verify existence in product catalog
-  const found = await findProductOrVariantByBarcode(tenantId, barcode);
-  if (!found) {
+  // 1. Verify existence in product catalog (online first, fallback to offlineCacheService)
+  let pId = '';
+  let vId: string | null = null;
+  let productName = '';
+  let sku = '';
+  let cost = 0;
+
+  try {
+    const found = await findProductOrVariantByBarcode(tenantId, barcode);
+    if (found) {
+      pId = found.product.id;
+      vId = found.variant?.id || null;
+      productName = found.variant ? `${found.product.name} (${found.variant.name})` : found.product.name;
+      sku = found.variant?.sku || found.product.sku;
+      cost = found.variant?.cost || found.product.purchasePrice || 0;
+    }
+  } catch (e) {}
+
+  if (!pId) {
+    const offlineFound = await offlineCacheService.findOfflineProductByBarcode(tenantId, barcode);
+    if (offlineFound) {
+      pId = offlineFound.productId;
+      vId = offlineFound.variantId;
+      productName = offlineFound.name;
+      sku = offlineFound.sku;
+      cost = offlineFound.cost || 0;
+    }
+  }
+
+  if (!pId) {
     return {
       success: false,
       error: `الباركود "${barcode}" غير مسجل في فهرس المنتجات. يرجى إضافته إلى الفهرس أولاً.`,
     };
   }
 
+  // 2. Read session from Firestore or IndexedDB
+  let session: InventoryCountSession | null = null;
   const sessionRef = doc(db, 'inventory_counts', sessionId);
-  const snap = await getDoc(sessionRef);
-  if (!snap.exists()) return { success: false, error: 'جلسة الجرد غير موجودة' };
+  try {
+    const snap = await getDoc(sessionRef);
+    if (snap.exists()) {
+      session = snap.data() as InventoryCountSession;
+    }
+  } catch {}
 
-  const session = snap.data() as InventoryCountSession;
+  if (!session) {
+    try {
+      const dbLocal = await getOfflineDB();
+      session = await dbLocal.get('offline_counts', sessionId);
+    } catch {}
+  }
+
+  if (!session) return { success: false, error: 'جلسة الجرد غير موجودة' };
   if (session.status !== 'in_progress') {
     return { success: false, error: `لا يمكن تسجيل قراءات لجلسة بحالة "${session.status}"` };
   }
-
-  const pId = found.product.id;
-  const vId = found.variant?.id || null;
 
   const items = [...session.items];
   let targetItem = items.find(
@@ -161,12 +199,11 @@ export async function recordBarcodeScanInCount(
 
   if (!targetItem) {
     // Product exists in catalog but had 0 stock snapshot in this location
-    const cost = found.variant?.cost || found.product.purchasePrice || 0;
     targetItem = {
       productId: pId,
       variantId: vId,
-      productNameSnapshot: found.variant ? `${found.product.name} (${found.variant.name})` : found.product.name,
-      skuSnapshot: found.variant?.sku || found.product.sku,
+      productNameSnapshot: productName,
+      skuSnapshot: sku,
       barcodeSnapshot: barcode,
       expectedQuantity: 0,
       countedQuantity: incrementQty,
@@ -186,12 +223,24 @@ export async function recordBarcodeScanInCount(
 
   const totalVariance = items.reduce((acc, i) => acc + (i.financialVariance || 0), 0);
   const now = new Date().toISOString();
+  session.items = items;
+  session.totalDifferenceValue = Math.round(totalVariance * 100) / 100;
+  session.updatedAt = now;
 
-  await updateDoc(sessionRef, {
-    items,
-    totalDifferenceValue: Math.round(totalVariance * 100) / 100,
-    updatedAt: now,
-  });
+  // Persist locally in IndexedDB
+  try {
+    const dbLocal = await getOfflineDB();
+    await dbLocal.put('offline_counts', session);
+  } catch {}
+
+  // Update Firestore if available
+  try {
+    await updateDoc(sessionRef, {
+      items,
+      totalDifferenceValue: Math.round(totalVariance * 100) / 100,
+      updatedAt: now,
+    });
+  } catch {}
 
   return { success: true, item: targetItem };
 }
@@ -353,11 +402,11 @@ export async function fetchCountSessionsFromDb(
     console.warn('Firestore fetchCountSessionsFromDb failed, falling back to local cache:', err);
   }
 
-  // Merge with local storage
+  // Merge with local IndexedDB counts store
   let localSessions: InventoryCountSession[] = [];
   try {
-    const raw = localStorage.getItem('pos_inventory_counts');
-    if (raw) localSessions = JSON.parse(raw);
+    const dbLocal = await getOfflineDB();
+    localSessions = await dbLocal.getAll('offline_counts');
   } catch {}
 
   const map = new Map<string, InventoryCountSession>();

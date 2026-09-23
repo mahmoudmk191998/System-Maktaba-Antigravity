@@ -21,9 +21,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Plus, Edit2, Trash2, FolderTree, AlertCircle } from 'lucide-react';
+import { Plus, Edit2, Trash2, FolderTree, AlertCircle, Image as ImageIcon, CheckCircle2 } from 'lucide-react';
 import { useCategories } from '@/hooks/retail/useCategories';
 import type { ProductCategory } from '@/types/retail.types';
+import { isValidImageUrl } from '@/lib/urlValidation';
 import { toast } from 'sonner';
 
 interface CategoryManageDialogProps {
@@ -38,6 +39,8 @@ export function CategoryManageDialog({ open, onOpenChange }: CategoryManageDialo
   const [name, setName] = useState('');
   const [parentId, setParentId] = useState<string>('none');
   const [sortOrder, setSortOrder] = useState('0');
+  const [imageUrl, setImageUrl] = useState('');
+  const [imageError, setImageError] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const resetForm = () => {
@@ -45,6 +48,8 @@ export function CategoryManageDialog({ open, onOpenChange }: CategoryManageDialo
     setName('');
     setParentId('none');
     setSortOrder('0');
+    setImageUrl('');
+    setImageError(false);
   };
 
   const handleEdit = (cat: ProductCategory) => {
@@ -52,12 +57,20 @@ export function CategoryManageDialog({ open, onOpenChange }: CategoryManageDialo
     setName(cat.name);
     setParentId(cat.parentId || 'none');
     setSortOrder((cat.sortOrder || 0).toString());
+    setImageUrl(cat.imageUrl || cat.image || '');
+    setImageError(false);
   };
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) {
       toast.error('اسم التصنيف مطلوب');
+      return;
+    }
+
+    const cleanUrl = imageUrl.trim();
+    if (cleanUrl && !isValidImageUrl(cleanUrl)) {
+      toast.error('رابط الصورة غير صالح. يجب أن يبدأ بـ https:// أو http:// فقط');
       return;
     }
 
@@ -69,6 +82,8 @@ export function CategoryManageDialog({ open, onOpenChange }: CategoryManageDialo
         nameAr: name.trim(),
         parentId: parentId === 'none' ? null : parentId,
         sortOrder: parseInt(sortOrder) || 0,
+        imageUrl: cleanUrl || null,
+        image: cleanUrl || '',
         active: true,
       });
 
@@ -146,6 +161,80 @@ export function CategoryManageDialog({ open, onOpenChange }: CategoryManageDialo
                   </SelectContent>
                 </Select>
               </div>
+            </div>
+
+            {/* Category Image URL Input */}
+            <div>
+              <Label className="text-xs flex items-center justify-between">
+                <span>رابط صورة التصنيف</span>
+                <span className="text-[10px] text-muted-foreground font-normal">اختياري (Direct Image URL)</span>
+              </Label>
+              <Input
+                value={imageUrl}
+                onChange={(e) => {
+                  setImageUrl(e.target.value);
+                  setImageError(false);
+                }}
+                placeholder="https://example.com/category-image.jpg"
+                className="mt-1 font-mono text-xs"
+                dir="ltr"
+              />
+            </div>
+
+            {/* Live Image Preview */}
+            <div className="p-2.5 rounded-xl border border-border/60 bg-background/60">
+              <Label className="text-[11px] text-muted-foreground block mb-1.5 font-medium">معاينة الصورة:</Label>
+              {imageUrl.trim() ? (
+                isValidImageUrl(imageUrl.trim()) ? (
+                  <div className="flex items-center gap-3">
+                    <div className="relative w-20 h-16 rounded-lg overflow-hidden border border-border bg-muted flex items-center justify-center shrink-0">
+                      {imageError ? (
+                        <div className="flex flex-col items-center justify-center p-1 text-center text-destructive">
+                          <AlertCircle className="w-5 h-5 mb-0.5" />
+                          <span className="text-[8px] leading-tight">خطأ في التحميل</span>
+                        </div>
+                      ) : (
+                        <img
+                          src={imageUrl.trim()}
+                          alt="معاينة التصنيف"
+                          loading="lazy"
+                          onLoad={() => setImageError(false)}
+                          onError={() => setImageError(true)}
+                          className="w-full h-full object-cover"
+                        />
+                      )}
+                    </div>
+                    <div className="text-xs space-y-0.5">
+                      {imageError ? (
+                        <p className="text-destructive font-semibold flex items-center gap-1">
+                          <AlertCircle className="w-3.5 h-3.5" />
+                          تعذر تحميل الصورة من الرابط المرفق
+                        </p>
+                      ) : (
+                        <p className="text-emerald-600 font-semibold flex items-center gap-1">
+                          <CheckCircle2 className="w-3.5 h-3.5" />
+                          تم تحميل الصورة بنجاح
+                        </p>
+                      )}
+                      <p className="text-[10px] text-muted-foreground truncate max-w-[260px] dir-ltr">
+                        {imageUrl.trim()}
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2 text-xs text-amber-600 bg-amber-500/10 p-2 rounded-lg">
+                    <AlertCircle className="w-4 h-4 shrink-0" />
+                    <span>الرابط غير صالح. يرجى إدخال رابط يبدأ بـ https:// أو http://</span>
+                  </div>
+                )
+              ) : (
+                <div className="flex items-center gap-2 text-xs text-muted-foreground py-1">
+                  <div className="w-12 h-10 rounded-md border border-dashed border-border flex items-center justify-center bg-muted/40">
+                    <ImageIcon className="w-4 h-4 opacity-40" />
+                  </div>
+                  <span className="text-[11px]">لم يتم تحديد صورة بعد (سيتم استخدام الأيقونة الافتراضية)</span>
+                </div>
+              )}
             </div>
 
             <div className="flex items-center justify-end gap-2 pt-1">

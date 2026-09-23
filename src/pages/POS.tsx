@@ -54,6 +54,8 @@ import {
   Sun,
   Moon,
   X,
+  FolderTree,
+  ArrowRight,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useTheme } from '@/hooks/useTheme';
@@ -76,7 +78,18 @@ import { QuickPaymentModal } from '@/components/retail/pos/QuickPaymentModal';
 import { ReceiptDialog } from '@/components/retail/pos/ReceiptDialog';
 import { CashRegisterModal } from '@/components/retail/pos/CashRegisterModal';
 import { HeldSalesDrawer } from '@/components/retail/pos/HeldSalesDrawer';
-import type { Product, ProductVariant, Sale, PaymentEntry } from '@/types/retail.types';
+import { CategoryVisualGrid } from '@/components/retail/pos/CategoryVisualGrid';
+import { POSCategoryBreadcrumb } from '@/components/retail/pos/POSCategoryBreadcrumb';
+import { CategoryManageDialog } from '@/components/retail/CategoryManageDialog';
+import { ConnectivityBanner } from '@/components/retail/ConnectivityBanner';
+import {
+  connectivityService,
+  isGenuineTransportError,
+  offlineCacheService,
+  offlineQueueService,
+  generateTemporaryReceiptNumber,
+} from '@/services/offline';
+import type { Product, ProductVariant, Sale, PaymentEntry, ProductCategory } from '@/types/retail.types';
 import { toast } from 'sonner';
 import { useNavigate } from 'react-router-dom';
 
@@ -109,16 +122,154 @@ export default function POSPage() {
     closeShift,
   } = useCashRegister();
 
-  // Categories & Products Data
-  const { categories } = useCategories();
-  const [selectedCategory, setSelectedCategory] = useState<string>('all');
+  // Categories & Products Data (Category-First Visual POS)
+  const { categories, loading: categoriesLoading } = useCategories();
+  const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
+  const [categoryPath, setCategoryPath] = useState<ProductCategory[]>([]);
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const [categoryManageOpen, setCategoryManageOpen] = useState(false);
+
+  // Active categories sorted by sortOrder
+  const activeCategories = useMemo(() => {
+    return (categories || [])
+      .filter((c) => c.active !== false)
+      .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+  }, [categories]);
+
+  // Check if current category has children (subcategories)
+  const currentCategoryHasChildren = useMemo(() => {
+    if (selectedCategoryId === null) return true; // At root, show categories grid
+    if (selectedCategoryId === '__ALL__' || selectedCategoryId === '__UNCATEGORIZED__') return false;
+    return activeCategories.some((c) => c.parentId === selectedCategoryId);
+  }, [activeCategories, selectedCategoryId]);
+
+  // Subcategories or root categories to display in the visual grid
+  const visibleCategories = useMemo(() => {
+    if (selectedCategoryId === null) {
+      return activeCategories.filter((c) => !c.parentId || c.parentId === 'none');
+    }
+    if (selectedCategoryId === '__ALL__' || selectedCategoryId === '__UNCATEGORIZED__') {
+      return [];
+    }
+    return activeCategories.filter((c) => c.parentId === selectedCategoryId);
+  }, [activeCategories, selectedCategoryId]);
+
+  const isSearchActive = Boolean(searchQuery && searchQuery.trim().length > 0);
+  const isAllProductsView = selectedCategoryId === '__ALL__';
+  const isUncategorizedView = selectedCategoryId === '__UNCATEGORIZED__';
+  const showProductsView = isSearchActive || isAllProductsView || isUncategorizedView || !currentCategoryHasChildren;
+
+  const effectiveQueryCategoryId = useMemo(() => {
+    if (isSearchActive) return undefined; // Global search across all products (Requirement 18)
+    if (selectedCategoryId === null || isAllProductsView || isUncategorizedView) return undefined;
+    return selectedCategoryId;
+  }, [isSearchActive, selectedCategoryId, isAllProductsView, isUncategorizedView]);
 
   const { products, loading: productsLoading } = useProducts({
     pageSize: 200,
-    search: searchQuery,
-    categoryId: selectedCategory !== 'all' ? selectedCategory : undefined,
+    searchTerm: searchQuery,
+    categoryId: effectiveQueryCategoryId,
   });
+
+  // Pre-warm offline catalog, categories, and shift cache whenever products, categories or activeShift load
+  useEffect(() => {
+    if (tenantId && products && products.length > 0) {
+      offlineCacheService.cacheProductsCatalog(tenantId, products).catch(() => {});
+    }
+  }, [tenantId, products]);
+
+  useEffect(() => {
+    if (tenantId && categories && categories.length > 0) {
+      offlineCacheService.cacheCategories(tenantId, categories).catch(() => {});
+    }
+  }, [tenantId, categories]);
+
+  useEffect(() => {
+    if (activeShift) {
+      offlineCacheService.cacheActiveShift(activeShift).catch(() => {});
+    }
+  }, [activeShift]);
+
+  // Displayed products in leaf or special view
+  const displayedProducts = useMemo(() => {
+    if (isSearchActive) return products;
+    if (isAllProductsView) return products;
+    if (isUncategorizedView) {
+      return products.filter((p) => !p.categoryId || p.categoryId === '');
+    }
+    if (selectedCategoryId && !currentCategoryHasChildren) {
+      return products.filter((p) => p.categoryId === selectedCategoryId);
+    }
+    return products;
+  }, [products, isSearchActive, isAllProductsView, isUncategorizedView, selectedCategoryId, currentCategoryHasChildren]);
+
+  // In-memory counts for category badges
+  const { productCountsMap, uncategorizedCount, subCategoryCountsMap } = useMemo(() => {
+    const counts: Record<string, number> = {};
+    let uncat = 0;
+    for (const p of products) {
+      if (p.categoryId) {
+        counts[p.categoryId] = (counts[p.categoryId] || 0) + 1;
+      } else {
+        uncat++;
+      }
+    }
+
+    const subCounts: Record<string, number> = {};
+    for (const c of activeCategories) {
+      if (c.parentId && c.parentId !== 'none') {
+        subCounts[c.parentId] = (subCounts[c.parentId] || 0) + 1;
+      }
+    }
+
+    return { productCountsMap: counts, uncategorizedCount: uncat, subCategoryCountsMap: subCounts };
+  }, [products, activeCategories]);
+
+  // Navigation handlers
+  const handleSelectCategory = (cat: ProductCategory) => {
+    setSelectedCategoryId(cat.id);
+    setCategoryPath((prev) => [...prev, cat]);
+  };
+
+  const handleSelectAllProducts = () => {
+    setSelectedCategoryId('__ALL__');
+  };
+
+  const handleSelectUncategorized = () => {
+    setSelectedCategoryId('__UNCATEGORIZED__');
+  };
+
+  const handleGoToRootCategories = () => {
+    setSelectedCategoryId(null);
+    setCategoryPath([]);
+    if (searchQuery) setSearchQuery('');
+  };
+
+  const handleBreadcrumbClick = (index: number) => {
+    if (searchQuery) setSearchQuery('');
+    const target = categoryPath[index];
+    setSelectedCategoryId(target.id);
+    setCategoryPath((prev) => prev.slice(0, index + 1));
+  };
+
+  const handleBackOneLevel = () => {
+    if (isSearchActive) {
+      setSearchQuery('');
+      return;
+    }
+    if (isAllProductsView || isUncategorizedView) {
+      handleGoToRootCategories();
+      return;
+    }
+    if (categoryPath.length <= 1) {
+      handleGoToRootCategories();
+    } else {
+      const newPath = categoryPath.slice(0, -1);
+      const parentCat = newPath[newPath.length - 1];
+      setCategoryPath(newPath);
+      setSelectedCategoryId(parentCat.id);
+    }
+  };
 
   const { customers } = useCustomers();
 
@@ -291,6 +442,18 @@ export default function POSPage() {
         handleOpenCashDrawer();
         return;
       }
+      if (e.key === 'Escape') {
+        if (searchQuery) {
+          e.preventDefault();
+          setSearchQuery('');
+          return;
+        }
+        if (selectedCategoryId !== null) {
+          e.preventDefault();
+          handleBackOneLevel();
+          return;
+        }
+      }
 
       // Barcode Wedge Scanner Detection:
       // Scanners rapidly type characters (<50ms between keys) ending with Enter.
@@ -325,7 +488,7 @@ export default function POSPage() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [cartItems, settings.openDrawerPassword, canManageRegister]);
+  }, [cartItems, settings.openDrawerPassword, canManageRegister, searchQuery, selectedCategoryId, handleBackOneLevel]);
 
   const handleScanBarcode = async (barcode: string) => {
     const raw = (barcode || '').trim();
@@ -376,12 +539,93 @@ export default function POSPage() {
       return { success: true, product: inMemoryMatch, variant: matchedVariant || undefined };
     }
 
-    // 2. Comprehensive database lookup (handles URLs, JSONs, variants, and indexes)
+    // 2. Offline Mode: Instant lookup from local IndexedDB catalog cache
+    if (!connectivityService.isOnline()) {
+      const offlineItem = await offlineCacheService.findOfflineProductByBarcode(tenantId, raw);
+      if (offlineItem) {
+        const prod: Product = {
+          id: offlineItem.productId,
+          tenantId,
+          name: offlineItem.name,
+          sku: offlineItem.sku,
+          barcode: offlineItem.barcode,
+          retailPrice: offlineItem.sellingPrice,
+          wholesalePrice: offlineItem.wholesalePrice || offlineItem.sellingPrice,
+          purchasePrice: offlineItem.cost || 0,
+          minimumPrice: offlineItem.minimumPrice,
+          taxRate: offlineItem.taxRate,
+          categoryId: offlineItem.categoryId || '',
+          baseUnitId: offlineItem.unitId || 'piece',
+          baseUnitName: offlineItem.unitName || 'قطعة',
+          hasVariants: offlineItem.hasVariants,
+          active: true,
+          status: 'active',
+        } as any;
+
+        let matchedVariant: ProductVariant | null = null;
+        if (offlineItem.variantId) {
+          matchedVariant = {
+            id: offlineItem.variantId,
+            productId: offlineItem.productId,
+            name: offlineItem.name,
+            sku: offlineItem.sku,
+            barcode: offlineItem.barcode,
+            price: offlineItem.sellingPrice,
+            cost: offlineItem.cost || 0,
+            active: true,
+          } as any;
+        }
+
+        addToCart(prod, matchedVariant, 1);
+        toast.success(`تمت إضافة ${prod.name} (محلياً) إلى السلة بنجاح`);
+        return { success: true, product: prod, variant: matchedVariant || undefined };
+      }
+    }
+
+    // 3. Comprehensive database lookup (handles URLs, JSONs, variants, and indexes)
     toast.loading(`جاري فحص الرمز: ${raw}...`, { id: 'barcode_scan' });
     const res = await addByBarcode(raw);
     if (res.success) {
       toast.success(`تمت إضافة ${res.product?.name || 'الصنف'} إلى السلة بنجاح`, { id: 'barcode_scan' });
     } else {
+      // If network failed during online lookup, check offline cache as resilient safety net
+      const offlineFallback = await offlineCacheService.findOfflineProductByBarcode(tenantId, raw);
+      if (offlineFallback) {
+        const prod: Product = {
+          id: offlineFallback.productId,
+          tenantId,
+          name: offlineFallback.name,
+          sku: offlineFallback.sku,
+          barcode: offlineFallback.barcode,
+          retailPrice: offlineFallback.sellingPrice,
+          wholesalePrice: offlineFallback.wholesalePrice || offlineFallback.sellingPrice,
+          purchasePrice: offlineFallback.cost || 0,
+          minimumPrice: offlineFallback.minimumPrice,
+          taxRate: offlineFallback.taxRate,
+          categoryId: offlineFallback.categoryId || '',
+          baseUnitId: offlineFallback.unitId || 'piece',
+          baseUnitName: offlineFallback.unitName || 'قطعة',
+          hasVariants: offlineFallback.hasVariants,
+          active: true,
+          status: 'active',
+        } as any;
+        let matchedVariant: ProductVariant | null = null;
+        if (offlineFallback.variantId) {
+          matchedVariant = {
+            id: offlineFallback.variantId,
+            productId: offlineFallback.productId,
+            name: offlineFallback.name,
+            sku: offlineFallback.sku,
+            barcode: offlineFallback.barcode,
+            price: offlineFallback.sellingPrice,
+            cost: offlineFallback.cost || 0,
+            active: true,
+          } as any;
+        }
+        addToCart(prod, matchedVariant, 1);
+        toast.success(`تمت إضافة ${prod.name} (محلياً) إلى السلة بنجاح`, { id: 'barcode_scan' });
+        return { success: true, product: prod, variant: matchedVariant || undefined };
+      }
       toast.error(res.error || 'تعذر العثور على الصنف', { id: 'barcode_scan' });
     }
     return res;
@@ -420,7 +664,188 @@ export default function POSPage() {
     payments: PaymentEntry[],
     clientCheckoutId: string
   ): Promise<Sale | null> => {
-    const saleResult = await completeSaleTransaction({
+    const isCurrentlyOnline = connectivityService.isOnline();
+
+    // 1. ONLINE PATH
+    if (isCurrentlyOnline) {
+      try {
+        const saleResult = await completeSaleTransaction({
+          tenantId,
+          branchId,
+          branchCode,
+          cashierId,
+          cashierNameSnapshot: cashierName,
+          customerId: selectedCustomer?.id || null,
+          customerNameSnapshot: selectedCustomer?.name || 'عميل نقدي (Walk-in)',
+          customerPhoneSnapshot: selectedCustomer?.phone || '',
+          shiftId: activeShift?.id || null,
+          saleType: isWholesale ? 'wholesale' : 'retail',
+          items: cartItems.map((item) => ({
+            productId: item.productId,
+            variantId: item.variantId,
+            productName: item.productName,
+            variantName: item.variantName,
+            sku: item.sku,
+            barcode: item.barcode,
+            categoryName: item.categoryName,
+            brandName: item.brandName,
+            quantity: item.quantity,
+            inputUnitId: item.inputUnitId,
+            conversionFactor: item.conversionFactor,
+            unitSellingPrice: item.unitSellingPrice,
+            originalUnitPrice: item.originalUnitPrice,
+            discountAmount: item.discountAmount,
+            taxRate: item.taxRate,
+            priceSource: item.priceSource,
+            minimumSellingPrice: item.minimumSellingPrice,
+          })),
+          payments,
+          cartDiscountAmount: totals.cartDiscount,
+          discountType: cartDiscountType,
+          discountValue: cartDiscountValue,
+          serviceChargeRate: totals.serviceChargeRate,
+          serviceChargeAmount: totals.totalServiceCharge,
+          taxIncluded: totals.taxIncluded,
+          serviceChargeIncluded: totals.serviceChargeIncluded,
+          clientCheckoutId,
+          allowBelowMinimum: isAdmin,
+        });
+
+        if (saleResult.success && saleResult.sale) {
+          toast.success(`تم إتمام الفاتورة بنجاح برقم: ${saleResult.sale.invoiceNumber}`);
+          setCompletedSale(saleResult.sale);
+          clearCart();
+          refreshShift();
+          setReceiptModalOpen(true);
+          return saleResult.sale;
+        } else {
+          toast.error(saleResult.error || 'فشلت عملية إتمام البيع');
+          return null;
+        }
+      } catch (err: any) {
+        // Safeguard 4: Distinguish transport failure from business/auth error
+        if (isGenuineTransportError(err)) {
+          // Transport dropped mid-transaction!
+          // Safeguard 1: Status must be 'awaiting_confirmation'
+          const tempReceiptNumber = await generateTemporaryReceiptNumber(tenantId, branchCode);
+          const offlinePayload = {
+            tenantId,
+            branchId,
+            branchCode,
+            cashierId,
+            cashierNameSnapshot: cashierName,
+            customerId: selectedCustomer?.id || null,
+            customerNameSnapshot: selectedCustomer?.name || 'عميل نقدي (Walk-in)',
+            customerPhoneSnapshot: selectedCustomer?.phone || '',
+            shiftId: activeShift?.id || null,
+            saleType: (isWholesale ? 'wholesale' : 'retail') as const,
+            items: cartItems.map((item) => ({
+              productId: item.productId,
+              variantId: item.variantId,
+              productName: item.productName,
+              variantName: item.variantName,
+              sku: item.sku,
+              barcode: item.barcode,
+              categoryName: item.categoryName,
+              brandName: item.brandName,
+              quantity: item.quantity,
+              inputUnitId: item.inputUnitId,
+              conversionFactor: item.conversionFactor,
+              unitSellingPrice: item.unitSellingPrice,
+              originalUnitPrice: item.originalUnitPrice,
+              discountAmount: item.discountAmount,
+              taxRate: item.taxRate,
+              priceSource: item.priceSource,
+              minimumSellingPrice: item.minimumSellingPrice,
+            })),
+            payments,
+            cartDiscountAmount: totals.cartDiscount,
+            discountType: cartDiscountType,
+            discountValue: cartDiscountValue,
+            serviceChargeRate: totals.serviceChargeRate,
+            serviceChargeAmount: totals.totalServiceCharge,
+            taxIncluded: totals.taxIncluded,
+            serviceChargeIncluded: totals.serviceChargeIncluded,
+            clientCheckoutId,
+            temporaryReceiptNumber,
+          };
+
+          const enqueueRes = await offlineQueueService.enqueueOfflineSale(
+            offlinePayload,
+            'awaiting_confirmation'
+          );
+
+          // Safeguard 3: Only clear cart if IndexedDB committed
+          if (enqueueRes.success) {
+            const provisionalSale: Sale = {
+              id: tempReceiptNumber,
+              invoiceNumber: tempReceiptNumber,
+              tenantId,
+              branchId,
+              cashierId,
+              cashierNameSnapshot: cashierName,
+              customerNameSnapshot: selectedCustomer?.name || 'عميل نقدي',
+              items: cartItems as any,
+              payments,
+              subtotal: totals.subtotal,
+              total: totals.grandTotal,
+              totalDiscount: totals.totalDiscount,
+              totalTax: totals.totalTax,
+              status: 'local_pending' as any,
+              createdAt: new Date().toISOString(),
+              paymentStatus: 'paid',
+              clientCheckoutId,
+            } as any;
+
+            clearCart();
+            setCompletedSale(provisionalSale);
+            setReceiptModalOpen(true);
+            toast.warning(`انقطع الاتصال أثناء الإرسال. تم حفظ الفاتورة محلياً برقم مؤقت: ${tempReceiptNumber} (بانتظار التأكيد) لمنع الازدواجية.`);
+            return provisionalSale;
+          } else {
+            toast.error(enqueueRes.error || 'تعذر حفظ العملية محلياً بعد سقوط الشبكة');
+            return null;
+          }
+        } else {
+          // Hard / Business error
+          toast.error(err?.message || 'فشلت عملية إتمام البيع');
+          return null;
+        }
+      }
+    }
+
+    // 2. OFFLINE PATH
+    // Safeguard 5 & 19: Cache Health & First-Time Offline Block
+    const cacheHealth = await offlineCacheService.checkCacheHealth(tenantId, branchId);
+    if (!cacheHealth.isReady) {
+      toast.error(cacheHealth.reason || 'يلزم الاتصال بالإنترنت مرة واحدة لتحميل بيانات الفرع قبل استخدام وضع عدم الاتصال.');
+      return null;
+    }
+
+    // Safeguard 17 & 18: Stale Cache Warning
+    if (cacheHealth.isStale) {
+      toast.warning(`تنبيه: آخر مزامنة لبيانات الفرع منذ ${cacheHealth.staleHours} ساعة.`);
+    }
+
+    // Shift check
+    let resolvedShiftId = activeShift?.id || null;
+    if (!isShiftOpen && !activeShift) {
+      const cachedShift = await offlineCacheService.getCachedActiveShift(tenantId, branchId);
+      if (!cachedShift) {
+        toast.error('يجب فتح الوردية أثناء الاتصال أولاً قبل العمل دون اتصال');
+        return null;
+      }
+      resolvedShiftId = cachedShift.shiftId;
+    }
+
+    // Safeguard 15 & 16: External Card Offline Policy
+    const nonCashPayment = payments.find((p) => p.method !== 'cash');
+    const hasNonCash = Boolean(nonCashPayment);
+    const externalReference = nonCashPayment?.referenceNumber || 'EXT-CARD-OFFLINE';
+
+    // Generate high-entropy provisional receipt number (Safeguard 13)
+    const tempReceiptNumber = await generateTemporaryReceiptNumber(tenantId, branchCode);
+    const offlinePayload = {
       tenantId,
       branchId,
       branchCode,
@@ -429,8 +854,8 @@ export default function POSPage() {
       customerId: selectedCustomer?.id || null,
       customerNameSnapshot: selectedCustomer?.name || 'عميل نقدي (Walk-in)',
       customerPhoneSnapshot: selectedCustomer?.phone || '',
-      shiftId: activeShift?.id || null,
-      saleType: isWholesale ? 'wholesale' : 'retail',
+      shiftId: resolvedShiftId,
+      saleType: (isWholesale ? 'wholesale' : 'retail') as const,
       items: cartItems.map((item) => ({
         productId: item.productId,
         variantId: item.variantId,
@@ -459,18 +884,46 @@ export default function POSPage() {
       taxIncluded: totals.taxIncluded,
       serviceChargeIncluded: totals.serviceChargeIncluded,
       clientCheckoutId,
-      allowBelowMinimum: isAdmin,
-    });
+      temporaryReceiptNumber,
+      externalPaymentConfirmed: hasNonCash ? true : undefined,
+      externalReference: hasNonCash ? externalReference : undefined,
+      notes: hasNonCash ? 'تم التحصيل بواسطة جهاز دفع خارجي' : undefined,
+    };
 
-    if (saleResult.success && saleResult.sale) {
-      toast.success(`تم إتمام الفاتورة بنجاح برقم: ${saleResult.sale.invoiceNumber}`);
-      setCompletedSale(saleResult.sale);
+    const enqueueRes = await offlineQueueService.enqueueOfflineSale(
+      offlinePayload,
+      'pending'
+    );
+
+    // Safeguard 3: Never clear cart until IndexedDB transaction committed
+    if (enqueueRes.success) {
+      const provisionalSale: Sale = {
+        id: tempReceiptNumber,
+        invoiceNumber: tempReceiptNumber,
+        tenantId,
+        branchId,
+        cashierId,
+        cashierNameSnapshot: cashierName,
+        customerNameSnapshot: selectedCustomer?.name || 'عميل نقدي',
+        items: cartItems as any,
+        payments,
+        subtotal: totals.subtotal,
+        total: totals.grandTotal,
+        totalDiscount: totals.totalDiscount,
+        totalTax: totals.totalTax,
+        status: 'local_pending' as any,
+        createdAt: new Date().toISOString(),
+        paymentStatus: 'paid',
+        clientCheckoutId,
+      } as any;
+
       clearCart();
-      refreshShift();
+      setCompletedSale(provisionalSale);
       setReceiptModalOpen(true);
-      return saleResult.sale;
+      toast.success(`تم حفظ الفاتورة محلياً بنجاح (رقم مؤقت: ${tempReceiptNumber}) — بانتظار المزامنة`);
+      return provisionalSale;
     } else {
-      toast.error(saleResult.error || 'فشلت عملية إتمام البيع');
+      toast.error(enqueueRes.error || 'فشل حفظ الفاتورة محلياً');
       return null;
     }
   };
@@ -609,6 +1062,9 @@ export default function POSPage() {
 
           {/* Left: Action buttons (Shift, Wholesale, Held Carts with Live Badge, Returns, Camera, Drawer, Shortcuts, Theme, Fullscreen) */}
           <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap justify-end">
+            {/* Offline Connectivity & Sync Status Pill */}
+            <ConnectivityBanner compact />
+
             {/* Shift Status Button */}
             <Button
               size="sm"
@@ -840,87 +1296,155 @@ export default function POSPage() {
                 </Button>
               </div>
 
-              {/* Categories Scrollable Pills */}
-              <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
-                <Button
-                  size="sm"
-                  variant={selectedCategory === 'all' ? 'default' : 'outline'}
-                  className="rounded-xl text-xs h-8 px-3.5 shrink-0 font-bold"
-                  onClick={() => setSelectedCategory('all')}
-                >
-                  الكل ({products.length})
-                </Button>
-                {categories.map((cat) => (
-                  <Button
-                    key={cat.id}
-                    size="sm"
-                    variant={selectedCategory === cat.id ? 'default' : 'outline'}
-                    className="rounded-xl text-xs h-8 px-3.5 shrink-0 font-bold"
-                    onClick={() => setSelectedCategory(cat.id)}
-                  >
-                    {cat.name}
-                  </Button>
-                ))}
-              </div>
+              {/* Category Breadcrumb Navigation Context */}
+              <POSCategoryBreadcrumb
+                categoryPath={categoryPath}
+                isAllProducts={isAllProductsView}
+                isUncategorized={isUncategorizedView}
+                searchQuery={searchQuery}
+                searchResultsCount={displayedProducts.length}
+                onGoToRoot={handleGoToRootCategories}
+                onGoToBreadcrumbIndex={handleBreadcrumbClick}
+                onBackOneLevel={handleBackOneLevel}
+                onClearSearch={() => setSearchQuery('')}
+              />
             </div>
 
-            {/* Product Cards Grid: Scrolls INSIDE its container only */}
+            {/* Catalog Main Body: Either Visual Categories Grid OR Products View */}
             <div className="flex-1 min-h-0 overflow-y-auto pr-1">
-              {productsLoading ? (
-                <div className="flex items-center justify-center h-48 text-muted-foreground text-sm font-semibold">
-                  جاري تحميل المنتجات...
-                </div>
-              ) : products.length === 0 ? (
-                <div className="flex flex-col items-center justify-center h-48 text-muted-foreground text-sm gap-2">
-                  <BookOpen className="w-8 h-8 opacity-30" />
-                  <span className="font-semibold">لا توجد منتجات مطابقة للبحث</span>
-                </div>
+              {!showProductsView ? (
+                /* 1. Category-First Visual Grid */
+                <CategoryVisualGrid
+                  categories={visibleCategories}
+                  loading={categoriesLoading}
+                  totalProductsCount={products.length}
+                  uncategorizedCount={uncategorizedCount}
+                  productCountsMap={productCountsMap}
+                  subCategoryCountsMap={subCategoryCountsMap}
+                  showAllProductsCard={selectedCategoryId === null}
+                  showUncategorizedCard={selectedCategoryId === null && uncategorizedCount > 0}
+                  onSelectCategory={handleSelectCategory}
+                  onSelectAllProducts={handleSelectAllProducts}
+                  onSelectUncategorized={handleSelectUncategorized}
+                  onOpenManageCategories={() => setCategoryManageOpen(true)}
+                />
               ) : (
-                <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-2 sm:gap-2.5 pb-2">
-                  {products.map((prod) => {
-                    const displayPrice = isWholesale
-                      ? (prod.wholesalePrice || prod.sellingPrice)
-                      : prod.sellingPrice;
-
-                    return (
-                      <Card
-                        key={prod.id}
-                        className="cursor-pointer hover:border-primary/80 hover:shadow-md transition-all duration-200 bg-card/90 border-border/80 overflow-hidden flex flex-col justify-between active:scale-[0.98] rounded-xl group"
-                        onClick={() => handleProductCardClick(prod)}
+                /* 2. Products View (for selected category, search results, or all products) */
+                productsLoading ? (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-2 sm:gap-2.5 pb-2">
+                    {Array.from({ length: 8 }).map((_, i) => (
+                      <div key={i} className="h-36 rounded-xl border border-border/60 bg-card p-3 animate-pulse flex flex-col justify-between">
+                        <div className="h-4 bg-muted rounded w-1/3" />
+                        <div className="space-y-1">
+                          <div className="h-4 bg-muted rounded w-3/4" />
+                          <div className="h-3 bg-muted rounded w-1/2" />
+                        </div>
+                        <div className="h-5 bg-muted rounded w-1/3 mt-2" />
+                      </div>
+                    ))}
+                  </div>
+                ) : displayedProducts.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center min-h-[260px] text-muted-foreground text-sm gap-3 p-6 text-center my-auto">
+                    <BookOpen className="w-10 h-10 opacity-30" />
+                    <span className="font-bold text-foreground">
+                      {isSearchActive ? 'لا توجد أصناف مطابقة للبحث' : 'لا توجد أصناف داخل هذا التصنيف'}
+                    </span>
+                    {isSearchActive ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setSearchQuery('')}
+                        className="gap-1.5 font-bold rounded-xl"
                       >
-                        <CardContent className="p-3 space-y-2 flex flex-col justify-between h-full">
-                          <div>
-                            <div className="flex justify-between items-start gap-1">
-                              <Badge variant="secondary" className="text-[10px] px-1.5 py-0 font-bold bg-muted">
-                                {prod.type === 'book' ? 'كتاب' : 'أدوات'}
-                              </Badge>
-                              {prod.hasVariants && (
-                                <Badge variant="outline" className="text-[9px] px-1 bg-indigo-500/10 text-indigo-600 border-indigo-500/30 font-bold">
-                                  متغيرات
+                        مسح كلمة البحث
+                      </Button>
+                    ) : (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={handleBackOneLevel}
+                        className="gap-1.5 font-bold rounded-xl"
+                      >
+                        <ArrowRight className="w-4 h-4" />
+                        العودة للتصنيفات
+                      </Button>
+                    )}
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-2 sm:gap-2.5 pb-2">
+                    {displayedProducts.map((prod) => {
+                      const displayPrice = isWholesale
+                        ? (prod.wholesalePrice || prod.sellingPrice)
+                        : prod.sellingPrice;
+                      const isOutOfStock = prod.stockQuantity !== undefined && prod.stockQuantity <= 0;
+                      const isLowStock = !isOutOfStock && (prod.isLowStock || (prod.minStock !== undefined && prod.stockQuantity !== undefined && prod.stockQuantity <= prod.minStock));
+
+                      return (
+                        <Card
+                          key={prod.id}
+                          className={cn(
+                            "cursor-pointer hover:border-primary/80 hover:shadow-md transition-all duration-200 bg-card/90 border-border/80 overflow-hidden flex flex-col justify-between active:scale-[0.98] rounded-xl group relative",
+                            isOutOfStock && "opacity-75 bg-muted/30"
+                          )}
+                          onClick={() => handleProductCardClick(prod)}
+                        >
+                          <CardContent className="p-3 space-y-2 flex flex-col justify-between h-full">
+                            <div>
+                              <div className="flex justify-between items-start gap-1">
+                                <Badge variant="secondary" className="text-[10px] px-1.5 py-0 font-bold bg-muted">
+                                  {prod.type === 'book' ? 'كتاب' : 'أدوات'}
                                 </Badge>
+                                <div className="flex items-center gap-1">
+                                  {prod.hasVariants && (
+                                    <Badge variant="outline" className="text-[9px] px-1 bg-indigo-500/10 text-indigo-600 border-indigo-500/30 font-bold">
+                                      متغيرات
+                                    </Badge>
+                                  )}
+                                  {isOutOfStock ? (
+                                    <Badge variant="destructive" className="text-[9px] px-1 font-bold">
+                                      نفذت الكمية
+                                    </Badge>
+                                  ) : isLowStock ? (
+                                    <Badge variant="outline" className="text-[9px] px-1 bg-amber-500/10 text-amber-600 border-amber-500/30 font-bold">
+                                      مخزون منخفض
+                                    </Badge>
+                                  ) : null}
+                                </div>
+                              </div>
+                              <h3 className="font-bold text-xs sm:text-sm text-foreground line-clamp-2 mt-1.5 group-hover:text-primary transition-colors">
+                                {prod.name}
+                              </h3>
+                              {prod.author && (
+                                <p className="text-[10px] text-muted-foreground truncate">{prod.author}</p>
                               )}
                             </div>
-                            <h3 className="font-bold text-xs sm:text-sm text-foreground line-clamp-2 mt-1.5 group-hover:text-primary transition-colors">
-                              {prod.name}
-                            </h3>
-                            {prod.author && (
-                              <p className="text-[10px] text-muted-foreground truncate">{prod.author}</p>
-                            )}
-                          </div>
 
-                          <div className="pt-2 border-t border-border/60 flex items-center justify-between">
-                            <span className="font-mono text-[10px] text-muted-foreground truncate max-w-[70px]">
-                              {prod.sku}
-                            </span>
-                            <span className="font-black text-sm sm:text-base text-primary font-mono">
-                              {number(displayPrice)} ج.م
-                            </span>
-                          </div>
-                        </CardContent>
-                      </Card>
-                    );
-                  })}
-                </div>
+                            <div className="pt-2 border-t border-border/60 flex items-center justify-between">
+                              <div className="flex flex-col">
+                                <span className="font-mono text-[10px] text-muted-foreground truncate max-w-[70px]">
+                                  {prod.sku}
+                                </span>
+                                {prod.stockQuantity !== undefined && (
+                                  <span className={cn(
+                                    "text-[9px] font-bold",
+                                    isOutOfStock ? "text-destructive" : isLowStock ? "text-amber-600" : "text-muted-foreground"
+                                  )}>
+                                    {prod.stockQuantity} متاح
+                                  </span>
+                                )}
+                              </div>
+                              <span className="font-black text-sm sm:text-base text-primary font-mono">
+                                {number(displayPrice)} ج.م
+                              </span>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      );
+                    })}
+                  </div>
+                )
               )}
             </div>
 
@@ -1542,6 +2066,25 @@ export default function POSPage() {
           return false;
         }}
         onConfirmClose={async (actualCash, notes) => {
+          // Safeguard 24: Shift Safety - Block closing shift if pending sales exist
+          try {
+            const pendingOps = await offlineQueueService.getAllOperations(tenantId);
+            const shiftPendingSales = pendingOps.filter(
+              (op) =>
+                (op.status === 'pending' || op.status === 'syncing' || op.status === 'awaiting_confirmation') &&
+                op.operationType === 'pos_sale' &&
+                (op.payload as any)?.shiftId === activeShift?.id
+            );
+            if (shiftPendingSales.length > 0) {
+              toast.error(
+                `لا يمكن إغلاق الوردية حالياً: يوجد ${shiftPendingSales.length} عملية بيع معلقة دون اتصال مرتبطة بهذه الوردية. يرجى المزامنة أولاً.`
+              );
+              return false;
+            }
+          } catch (e) {
+            console.warn('Could not verify offline pending shift sales:', e);
+          }
+
           const res = await closeShift(actualCash, notes);
           if (res.success) {
             toast.success('تم إغلاق الوردية وجرد الدرج بنجاح');
@@ -1647,6 +2190,12 @@ export default function POSPage() {
         onScan={handleScanBarcode}
         cartTotalCount={cartItems.reduce((acc, i) => acc + i.quantity, 0)}
         availableProducts={products}
+      />
+
+      {/* Category Management Dialog */}
+      <CategoryManageDialog
+        open={categoryManageOpen}
+        onOpenChange={setCategoryManageOpen}
       />
     </MainLayout>
   );

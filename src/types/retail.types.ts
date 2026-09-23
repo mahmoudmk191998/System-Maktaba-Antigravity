@@ -119,6 +119,7 @@ export interface ProductCategory {
   parentId?: string | null;
   description?: string;
   image?: string;
+  imageUrl?: string | null;
   sortOrder: number;
   active: boolean;
   createdAt: string;

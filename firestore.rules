@@ -187,7 +187,13 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
-    // Menu Catalog, Items, Categories, Addons
+    // Retail Categories, Brands, Catalog & Items
+    match /categories/{categoryId} {
+      allow read, write: if isAuthenticated();
+    }
+    match /brands/{brandId} {
+      allow read, write: if isAuthenticated();
+    }
     match /menu_categories/{categoryId} {
       allow read, write: if isAuthenticated();
     }
@@ -489,6 +495,9 @@ service cloud.firestore {
       allow write: if isAuthenticated() && (
         (resource == null && hasTenantAccess(request.resource.data.tenantId)) ||
         (resource != null && hasTenantAccess(resource.data.tenantId))
+      ) && (
+        request.resource.data.onHandQuantity >= 0 &&
+        (!('averageCost' in request.resource.data) || request.resource.data.averageCost >= 0)
       );
     }
     match /stock_movements/{movementId} {
@@ -687,7 +696,8 @@ service cloud.firestore {
     }
     match /supplier_ledger/{entryId} {
       allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
-      allow create: if isAuthenticated() && hasTenantAccess(request.resource.data.tenantId);
+      allow create: if isAuthenticated() && hasTenantAccess(request.resource.data.tenantId) &&
+        request.resource.data.debit >= 0 && request.resource.data.credit >= 0;
       allow update, delete: if false; // Immutable Supplier Ledger
     }
     match /supplier_payments/{paymentId} {
@@ -712,7 +722,8 @@ service cloud.firestore {
     }
     match /customer_ledger/{entryId} {
       allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
-      allow create: if isAuthenticated() && hasTenantAccess(request.resource.data.tenantId);
+      allow create: if isAuthenticated() && hasTenantAccess(request.resource.data.tenantId) &&
+        request.resource.data.debit >= 0 && request.resource.data.credit >= 0;
       allow update, delete: if false; // Immutable Customer Ledger
     }
     match /customer_receivables/{receivableId} {
@@ -778,7 +789,8 @@ service cloud.firestore {
     match /journal_entries/{entryId} {
       allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
       allow create: if isAuthenticated() && hasTenantAccess(request.resource.data.tenantId);
-      allow update: if isAuthenticated() && hasTenantAccess(resource.data.tenantId);
+      allow update: if isAuthenticated() && hasTenantAccess(resource.data.tenantId) &&
+        (!('status' in resource.data) || resource.data.status != 'posted');
       allow delete: if false; // Immutable General Ledger Journal Entries
     }
     match /journal_lines/{lineId} {

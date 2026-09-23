@@ -6,6 +6,7 @@ import {
   openCashRegisterShift,
   closeCashRegisterShift,
 } from '@/services/sales/cashRegister.service';
+import { offlineCacheService, isGenuineTransportError } from '@/services/offline';
 import type { CashierShift } from '@/types/retail.types';
 
 export function useCashRegister() {
@@ -28,11 +29,63 @@ export function useCashRegister() {
     }
     setLoading(true);
     setError(null);
+
+    // 1. Zero-latency offline bootstrap
+    if (!navigator.onLine) {
+      try {
+        const cached = await offlineCacheService.getCachedActiveShift(tenantId, branchId);
+        if (cached) {
+          setActiveShift({
+            id: cached.shiftId,
+            shiftNumber: cached.shiftNumber,
+            tenantId: cached.tenantId,
+            branchId: cached.branchId,
+            cashierId: cached.cashierId,
+            cashierName: cached.cashierName,
+            openedAt: cached.openedAt,
+            startingCash: cached.startingCash,
+            expectedCash: cached.shadowExpectedCash,
+            status: 'open',
+          } as any);
+        } else {
+          setActiveShift(null);
+        }
+      } catch {
+        setActiveShift(null);
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
     try {
       const shift = await getActiveCashRegisterShift(tenantId, branchId, cashierId);
       setActiveShift(shift);
+      if (shift) {
+        offlineCacheService.cacheActiveShift(shift).catch(() => {});
+      }
     } catch (err: any) {
-      setError(err.message || 'تعذر التحقق من حالة وردية الكاشير');
+      if (isGenuineTransportError(err) || !navigator.onLine || err?.code === 'unavailable') {
+        const cached = await offlineCacheService.getCachedActiveShift(tenantId, branchId);
+        if (cached) {
+          setActiveShift({
+            id: cached.shiftId,
+            shiftNumber: cached.shiftNumber,
+            tenantId: cached.tenantId,
+            branchId: cached.branchId,
+            cashierId: cached.cashierId,
+            cashierName: cached.cashierName,
+            openedAt: cached.openedAt,
+            startingCash: cached.startingCash,
+            expectedCash: cached.shadowExpectedCash,
+            status: 'open',
+          } as any);
+        } else {
+          setActiveShift(null);
+        }
+      } else {
+        setError(err.message || 'تعذر التحقق من حالة وردية الكاشير');
+      }
     } finally {
       setLoading(false);
     }
