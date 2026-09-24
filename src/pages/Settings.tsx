@@ -226,17 +226,58 @@ export default function Settings() {
 
       if (success) {
         setWipePercent(100);
-        setWipeProgressMsg('تم المسح وإعادة التهيئة بنجاح 100%! جاري التحديث...');
-        toast.success('تم مسح جميع البيانات وإعادة تهيئة النظام بنجاح 100%');
+        setWipeProgressMsg('تم التحقق من قاعدة البيانات ومسح البيانات بنجاح. جاري تنظيف الحالة المحلية...');
+        toast.success('تم مسح بيانات التشغيل والتحقق من الخادم بنجاح');
+
+        // Browser cache is not the source of truth, but clear any operational UI state
+        // so no already-mounted page can display a pre-reset snapshot.
         try {
-          localStorage.removeItem('cached_cart');
-          localStorage.removeItem('cached_pos_state');
-          localStorage.removeItem('held_sales');
-        } catch {}
+          const explicitLocalKeys = [
+            'cached_cart',
+            'cached_pos_state',
+            'held_sales',
+            'sales_cache',
+            'reports_cache',
+            'orders_cache',
+            'inventory_cache',
+          ];
+          explicitLocalKeys.forEach((key) => localStorage.removeItem(key));
+
+          // Keep rms-storage because it contains user appearance/settings only.
+          Object.keys(sessionStorage).forEach((key) => {
+            const normalized = key.toLowerCase();
+            if (
+              normalized.includes('cache') ||
+              normalized.includes('sales') ||
+              normalized.includes('orders') ||
+              normalized.includes('reports') ||
+              normalized.includes('inventory') ||
+              normalized.includes('pos')
+            ) {
+              sessionStorage.removeItem(key);
+            }
+          });
+
+          if ('caches' in window) {
+            const cacheNames = await window.caches.keys();
+            await Promise.all(cacheNames.map((name) => window.caches.delete(name)));
+          }
+        } catch (cacheErr) {
+          console.warn('Operational browser cache cleanup warning:', cacheErr);
+        }
+
+        // Tell any mounted hooks to invalidate immediately before navigation.
+        window.dispatchEvent(new CustomEvent('alwan_data_reset_completed'));
+        window.dispatchEvent(new CustomEvent('alwan_sales_synced'));
+        window.dispatchEvent(new CustomEvent('alwan_inventory_synced'));
+        window.dispatchEvent(new CustomEvent('alwan_shifts_synced'));
+
         setTimeout(() => {
-          window.location.reload();
-        }, 1500);
+          // A hard navigation recreates all React/Zustand in-memory operational state.
+          window.location.replace('/');
+        }, 900);
       } else {
+        setWipeProgressMsg('لم يكتمل المسح. تم إيقاف العملية لأن التحقق من الخادم اكتشف بيانات متبقية أو خطأ صلاحيات.');
         setIsWiping(false);
       }
     } catch (err: any) {
