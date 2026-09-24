@@ -129,7 +129,7 @@ service cloud.firestore {
     // Authenticated users with valid session can interact according to POS workflows.
     // =========================================================================
 
-    // Core Restaurant & Branch Configuration
+    // Core Retail & Branch Configuration
     match /tenants/{tenantId} {
       allow read, write: if isAuthenticated();
     }
