@@ -11,12 +11,31 @@ import { fetchSaleReturnsFromDb } from '@/services/sales/saleReturns.service';
 import type { Sale, SaleReturn } from '@/types/retail.types';
 import type { DocumentSnapshot } from 'firebase/firestore';
 
-export function useSales() {
+export interface UseSalesConfig {
+  /**
+   * branch = preserve the historical branch-scoped behavior.
+   * tenant = show all sales for the tenant, regardless of the currently selected branch.
+   */
+  scope?: 'branch' | 'tenant';
+  cashierId?: string;
+  pageSize?: number;
+}
+
+export function resolveSalesScopeBranchId(
+  scope: 'branch' | 'tenant',
+  currentBranchId: string
+): string | undefined {
+  return scope === 'tenant' ? undefined : (currentBranchId || undefined);
+}
+
+export function useSales(config: UseSalesConfig = {}) {
+  const { scope = 'branch', cashierId, pageSize = 20 } = config;
   const currentTenant = useAppStore((state) => state.currentTenant);
   const currentBranch = useAppStore((state) => state.currentBranch);
   const { tenantId: fallbackTenantId, branchId: fallbackBranchId } = useTenantBranch();
   const tenantId = currentTenant?.id || fallbackTenantId || '';
   const branchId = currentBranch?.id || fallbackBranchId || '';
+  const scopedBranchId = resolveSalesScopeBranchId(scope, branchId);
 
   const [sales, setSales] = useState<Sale[]>([]);
   const [loading, setLoading] = useState(false);
@@ -32,7 +51,9 @@ export function useSales() {
       try {
         const [res, returnsRes] = await Promise.all([
           fetchSalesFromDb(tenantId, {
-            branchId: options.branchId !== undefined ? options.branchId : branchId,
+            branchId: options.branchId !== undefined ? options.branchId : scopedBranchId,
+            cashierId: options.cashierId !== undefined ? options.cashierId : cashierId,
+            pageSize: options.pageSize ?? pageSize,
             ...options,
           }),
           fetchSaleReturnsFromDb(tenantId, { pageSize: 300 }).catch(() => ({ returns: [] })),
@@ -105,7 +126,7 @@ export function useSales() {
         setLoading(false);
       }
     },
-    [tenantId, branchId]
+    [tenantId, scopedBranchId, cashierId, pageSize]
   );
 
   useEffect(() => {
@@ -119,7 +140,7 @@ export function useSales() {
     return () => {
       window.removeEventListener('alwan_sales_synced', handleSalesSync);
     };
-  }, [tenantId, branchId, loadSales]);
+  }, [tenantId, scopedBranchId, cashierId, loadSales]);
 
   const loadMore = useCallback(
     (options: FetchSalesOptions = {}) => {
