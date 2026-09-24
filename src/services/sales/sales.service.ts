@@ -753,6 +753,59 @@ export interface FetchSalesOptions {
   lastVisible?: DocumentSnapshot;
 }
 
+export interface SalesStaffOption {
+  id: string;
+  name: string;
+  email?: string;
+  role?: string;
+  branchId?: string;
+}
+
+/**
+ * Returns authenticated system users for the current tenant.
+ * Profile document IDs are Firebase Auth UIDs, which match Sale.cashierId.
+ * Both camelCase and legacy snake_case tenant fields are supported.
+ */
+export async function fetchSalesStaffFromDb(tenantId: string): Promise<SalesStaffOption[]> {
+  if (!tenantId) return [];
+
+  const byId = new Map<string, SalesStaffOption>();
+  const tenantFields = ['tenantId', 'tenant_id'] as const;
+
+  for (const tenantField of tenantFields) {
+    try {
+      const snap = await getDocs(
+        query(collection(db, 'profiles'), where(tenantField, '==', tenantId))
+      );
+
+      for (const profileDoc of snap.docs) {
+        const data = profileDoc.data() as any;
+        if (byId.has(profileDoc.id)) continue;
+
+        byId.set(profileDoc.id, {
+          id: profileDoc.id,
+          name:
+            data.full_name ||
+            data.fullName ||
+            data.displayName ||
+            data.name ||
+            data.email ||
+            'موظف',
+          email: data.email || undefined,
+          role: data.role || undefined,
+          branchId: data.branchId || data.branch_id || undefined,
+        });
+      }
+    } catch (err) {
+      console.warn(`Unable to load sales staff using ${tenantField}:`, err);
+    }
+  }
+
+  return Array.from(byId.values()).sort((a, b) =>
+    a.name.localeCompare(b.name, 'ar')
+  );
+}
+
 export async function fetchSalesFromDb(
   tenantId: string,
   options: FetchSalesOptions = {}
@@ -812,7 +865,7 @@ export async function fetchSalesFromDb(
   } catch (indexError) {
     console.warn('fetchSalesFromDb indexed query failed, using safe in-memory fallback:', indexError);
     // Fallback: simple query by tenantId to avoid composite index crashes
-    const fallbackQ = query(collection(db, 'sales'), where('tenantId', '==', tenantId), limit(100));
+    const fallbackQ = query(collection(db, 'sales'), where('tenantId', '==', tenantId));
     const snap = await getDocs(fallbackQ);
     let sales = snap.docs.map((d) => ({
       id: d.id,
