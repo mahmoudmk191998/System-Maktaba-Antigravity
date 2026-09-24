@@ -54,6 +54,7 @@ import {
   Sun,
   Moon,
   X,
+  ArrowRight,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useTheme } from '@/hooks/useTheme';
@@ -76,7 +77,7 @@ import { QuickPaymentModal } from '@/components/retail/pos/QuickPaymentModal';
 import { ReceiptDialog } from '@/components/retail/pos/ReceiptDialog';
 import { CashRegisterModal } from '@/components/retail/pos/CashRegisterModal';
 import { HeldSalesDrawer } from '@/components/retail/pos/HeldSalesDrawer';
-import type { Product, ProductVariant, Sale, PaymentEntry } from '@/types/retail.types';
+import type { Product, ProductVariant, ProductCategory, Sale, PaymentEntry } from '@/types/retail.types';
 import { toast } from 'sonner';
 import { useNavigate } from 'react-router-dom';
 
@@ -110,17 +111,57 @@ export default function POSPage() {
   } = useCashRegister();
 
   // Categories & Products Data
-  const { categories } = useCategories();
+  const { categories, loading: categoriesLoading } = useCategories();
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
 
+  const activeCategories = useMemo(
+    () =>
+      categories
+        .filter((category) => category.active !== false)
+        .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0)),
+    [categories]
+  );
+
+  const rootCategories = useMemo(() => {
+    const activeIds = new Set(activeCategories.map((category) => category.id));
+    const roots = activeCategories.filter(
+      (category) => !category.parentId || !activeIds.has(category.parentId)
+    );
+    return roots.length > 0 ? roots : activeCategories;
+  }, [activeCategories]);
+
+  const selectedCategoryData = useMemo(
+    () => activeCategories.find((category) => category.id === selectedCategory) || null,
+    [activeCategories, selectedCategory]
+  );
+
+  const childCategories = useMemo(
+    () =>
+      selectedCategory === 'all'
+        ? []
+        : activeCategories.filter((category) => category.parentId === selectedCategory),
+    [activeCategories, selectedCategory]
+  );
+
+  const isBrowsingRootCategories = selectedCategory === 'all' && searchQuery.trim() === '';
+
   const { products, loading: productsLoading } = useProducts({
     pageSize: 200,
-    search: searchQuery,
+    searchTerm: searchQuery,
     categoryId: selectedCategory !== 'all' ? selectedCategory : undefined,
   });
 
   const { customers } = useCustomers();
+
+  useEffect(() => {
+    if (
+      selectedCategory !== 'all' &&
+      !activeCategories.some((category) => category.id === selectedCategory)
+    ) {
+      setSelectedCategory('all');
+    }
+  }, [activeCategories, selectedCategory]);
 
   // Cart Hook
   const {
@@ -386,6 +427,68 @@ export default function POSPage() {
     }
     return res;
   };
+
+  const handleSelectCategory = (category: ProductCategory) => {
+    setSelectedCategory(category.id);
+    setSearchQuery('');
+  };
+
+  const handleBackFromCategory = () => {
+    if (!selectedCategoryData) {
+      setSelectedCategory('all');
+      return;
+    }
+
+    const parentId = selectedCategoryData.parentId;
+    setSelectedCategory(
+      parentId && activeCategories.some((category) => category.id === parentId)
+        ? parentId
+        : 'all'
+    );
+    setSearchQuery('');
+  };
+
+  const renderCategoryCard = (category: ProductCategory) => (
+    <Card
+      key={category.id}
+      className="cursor-pointer overflow-hidden rounded-2xl border-border/80 bg-card hover:border-primary/60 hover:shadow-lg transition-all duration-200 active:scale-[0.98] group"
+      onClick={() => handleSelectCategory(category)}
+    >
+      <div className="relative aspect-[4/3] overflow-hidden bg-gradient-to-br from-primary/10 via-muted/50 to-primary/5">
+        <div className="absolute inset-0 flex items-center justify-center">
+          <div className="w-14 h-14 rounded-2xl bg-background/75 border border-border/60 shadow-sm flex items-center justify-center">
+            <Layers className="w-7 h-7 text-primary/70" />
+          </div>
+        </div>
+
+        {category.image && (
+          <img
+            src={category.image}
+            alt={category.name}
+            className="relative z-10 w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
+            loading="lazy"
+            decoding="async"
+            onError={(event) => {
+              event.currentTarget.style.display = 'none';
+            }}
+          />
+        )}
+
+        <div className="absolute inset-x-0 bottom-0 z-20 h-14 bg-gradient-to-t from-black/55 to-transparent pointer-events-none" />
+      </div>
+
+      <CardContent className="p-2.5 sm:p-3 text-center">
+        <h3 className="font-black text-sm sm:text-base text-foreground line-clamp-1 group-hover:text-primary transition-colors">
+          {category.name}
+        </h3>
+        {category.description && (
+          <p className="text-[10px] sm:text-[11px] text-muted-foreground line-clamp-1 mt-0.5">
+            {category.description}
+          </p>
+        )}
+      </CardContent>
+    </Card>
+  );
 
   const handleProductCardClick = (product: Product) => {
     if (product.hasVariants && product.variants && product.variants.length > 0) {
@@ -764,7 +867,11 @@ export default function POSPage() {
             onClick={() => setMobileTab('catalog')}
           >
             <BookOpen className="w-4 h-4" />
-            <span>المنتجات والبحث ({products.length})</span>
+            <span>
+              {isBrowsingRootCategories
+                ? `التصنيفات (${rootCategories.length})`
+                : `المنتجات والبحث (${products.length})`}
+            </span>
           </button>
           <button
             type="button"
@@ -840,86 +947,151 @@ export default function POSPage() {
                 </Button>
               </div>
 
-              {/* Categories Scrollable Pills */}
-              <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
-                <Button
-                  size="sm"
-                  variant={selectedCategory === 'all' ? 'default' : 'outline'}
-                  className="rounded-xl text-xs h-8 px-3.5 shrink-0 font-bold"
-                  onClick={() => setSelectedCategory('all')}
-                >
-                  الكل ({products.length})
-                </Button>
-                {categories.map((cat) => (
-                  <Button
-                    key={cat.id}
-                    size="sm"
-                    variant={selectedCategory === cat.id ? 'default' : 'outline'}
-                    className="rounded-xl text-xs h-8 px-3.5 shrink-0 font-bold"
-                    onClick={() => setSelectedCategory(cat.id)}
-                  >
-                    {cat.name}
-                  </Button>
-                ))}
+              {/* Category-first navigation */}
+              <div className="flex items-center justify-between gap-2 min-h-8">
+                {selectedCategory !== 'all' ? (
+                  <>
+                    <div className="flex items-center gap-2 min-w-0">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="rounded-xl text-xs h-8 px-3 shrink-0 font-bold gap-1.5"
+                        onClick={handleBackFromCategory}
+                      >
+                        <ArrowRight className="w-3.5 h-3.5" />
+                        رجوع
+                      </Button>
+                      <div className="min-w-0">
+                        <span className="text-[10px] text-muted-foreground block">التصنيف الحالي</span>
+                        <strong className="text-xs sm:text-sm text-foreground truncate block">
+                          {selectedCategoryData?.name || 'المنتجات'}
+                        </strong>
+                      </div>
+                    </div>
+
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      className="rounded-xl text-xs h-8 px-2.5 text-primary font-bold shrink-0"
+                      onClick={() => {
+                        setSelectedCategory('all');
+                        setSearchQuery('');
+                      }}
+                    >
+                      كل التصنيفات
+                    </Button>
+                  </>
+                ) : (
+                  <div className="flex items-center gap-2 text-xs sm:text-sm font-black text-foreground">
+                    <div className="w-8 h-8 rounded-xl bg-primary/10 flex items-center justify-center">
+                      <Layers className="w-4 h-4 text-primary" />
+                    </div>
+                    <span>
+                      {searchQuery.trim() ? 'نتائج البحث في كل المنتجات' : 'اختر التصنيف لعرض الأصناف'}
+                    </span>
+                  </div>
+                )}
               </div>
             </div>
 
-            {/* Product Cards Grid: Scrolls INSIDE its container only */}
+            {/* Category-first catalog / product cards */}
             <div className="flex-1 min-h-0 overflow-y-auto pr-1">
-              {productsLoading ? (
+              {isBrowsingRootCategories ? (
+                categoriesLoading ? (
+                  <div className="flex items-center justify-center h-48 text-muted-foreground text-sm font-semibold">
+                    جاري تحميل التصنيفات...
+                  </div>
+                ) : rootCategories.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center h-48 text-muted-foreground text-sm gap-2">
+                    <Layers className="w-9 h-9 opacity-30" />
+                    <span className="font-semibold">لا توجد تصنيفات متاحة حالياً</span>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-2.5 sm:gap-3 pb-2">
+                    {rootCategories.map(renderCategoryCard)}
+                  </div>
+                )
+              ) : productsLoading ? (
                 <div className="flex items-center justify-center h-48 text-muted-foreground text-sm font-semibold">
                   جاري تحميل المنتجات...
                 </div>
-              ) : products.length === 0 ? (
-                <div className="flex flex-col items-center justify-center h-48 text-muted-foreground text-sm gap-2">
-                  <BookOpen className="w-8 h-8 opacity-30" />
-                  <span className="font-semibold">لا توجد منتجات مطابقة للبحث</span>
-                </div>
               ) : (
-                <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-2 sm:gap-2.5 pb-2">
-                  {products.map((prod) => {
-                    const displayPrice = isWholesale
-                      ? (prod.wholesalePrice || prod.sellingPrice)
-                      : prod.sellingPrice;
+                <div className="space-y-3 pb-2">
+                  {selectedCategory !== 'all' && !searchQuery.trim() && childCategories.length > 0 && (
+                    <div className="space-y-2.5">
+                      <div className="flex items-center gap-2 px-0.5">
+                        <Layers className="w-4 h-4 text-primary" />
+                        <span className="text-xs font-black text-foreground">تصنيفات فرعية</span>
+                        <Badge variant="secondary" className="text-[10px] h-5 px-1.5">
+                          {childCategories.length}
+                        </Badge>
+                      </div>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-2.5">
+                        {childCategories.map(renderCategoryCard)}
+                      </div>
+                    </div>
+                  )}
 
-                    return (
-                      <Card
-                        key={prod.id}
-                        className="cursor-pointer hover:border-primary/80 hover:shadow-md transition-all duration-200 bg-card/90 border-border/80 overflow-hidden flex flex-col justify-between active:scale-[0.98] rounded-xl group"
-                        onClick={() => handleProductCardClick(prod)}
-                      >
-                        <CardContent className="p-3 space-y-2 flex flex-col justify-between h-full">
-                          <div>
-                            <div className="flex justify-between items-start gap-1">
-                              <Badge variant="secondary" className="text-[10px] px-1.5 py-0 font-bold bg-muted">
-                                {prod.type === 'book' ? 'كتاب' : 'أدوات'}
-                              </Badge>
-                              {prod.hasVariants && (
-                                <Badge variant="outline" className="text-[9px] px-1 bg-indigo-500/10 text-indigo-600 border-indigo-500/30 font-bold">
-                                  متغيرات
-                                </Badge>
-                              )}
-                            </div>
-                            <h3 className="font-bold text-xs sm:text-sm text-foreground line-clamp-2 mt-1.5 group-hover:text-primary transition-colors">
-                              {prod.name}
-                            </h3>
-                            {prod.author && (
-                              <p className="text-[10px] text-muted-foreground truncate">{prod.author}</p>
-                            )}
-                          </div>
+                  {products.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center h-44 text-muted-foreground text-sm gap-2 rounded-2xl border border-dashed border-border/70 bg-muted/10">
+                      <BookOpen className="w-8 h-8 opacity-30" />
+                      <span className="font-semibold">
+                        {childCategories.length > 0 && !searchQuery.trim()
+                          ? 'اختر تصنيفاً فرعياً لعرض الأصناف الموجودة بداخله'
+                          : 'لا توجد منتجات مطابقة'}
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-2 sm:gap-2.5">
+                      {products.map((prod) => {
+                        const displayPrice = isWholesale
+                          ? (prod.wholesalePrice || prod.sellingPrice)
+                          : prod.sellingPrice;
 
-                          <div className="pt-2 border-t border-border/60 flex items-center justify-between">
-                            <span className="font-mono text-[10px] text-muted-foreground truncate max-w-[70px]">
-                              {prod.sku}
-                            </span>
-                            <span className="font-black text-sm sm:text-base text-primary font-mono">
-                              {number(displayPrice)} ج.م
-                            </span>
-                          </div>
-                        </CardContent>
-                      </Card>
-                    );
-                  })}
+                        return (
+                          <Card
+                            key={prod.id}
+                            className="cursor-pointer hover:border-primary/80 hover:shadow-md transition-all duration-200 bg-card/90 border-border/80 overflow-hidden flex flex-col justify-between active:scale-[0.98] rounded-xl group"
+                            onClick={() => handleProductCardClick(prod)}
+                          >
+                            <CardContent className="p-3 space-y-2 flex flex-col justify-between h-full">
+                              <div>
+                                <div className="flex justify-between items-start gap-1">
+                                  <Badge variant="secondary" className="text-[10px] px-1.5 py-0 font-bold bg-muted">
+                                    {prod.productType === 'book' ? 'كتاب' : 'أدوات'}
+                                  </Badge>
+                                  {prod.hasVariants && (
+                                    <Badge variant="outline" className="text-[9px] px-1 bg-indigo-500/10 text-indigo-600 border-indigo-500/30 font-bold">
+                                      متغيرات
+                                    </Badge>
+                                  )}
+                                </div>
+                                <h3 className="font-bold text-xs sm:text-sm text-foreground line-clamp-2 mt-1.5 group-hover:text-primary transition-colors">
+                                  {prod.name}
+                                </h3>
+                                {prod.bookMetadata?.author && (
+                                  <p className="text-[10px] text-muted-foreground truncate">
+                                    {prod.bookMetadata.author}
+                                  </p>
+                                )}
+                              </div>
+
+                              <div className="pt-2 border-t border-border/60 flex items-center justify-between">
+                                <span className="font-mono text-[10px] text-muted-foreground truncate max-w-[70px]">
+                                  {prod.sku}
+                                </span>
+                                <span className="font-black text-sm sm:text-base text-primary font-mono">
+                                  {number(displayPrice)} ج.م
+                                </span>
+                              </div>
+                            </CardContent>
+                          </Card>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
