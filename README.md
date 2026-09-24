@@ -1,13 +1,13 @@
-# RMS — Restaurant Management System & REST API Platform
+# Alwan Retail ERP — Bookstore & Stationery Management Platform
 
-A multi-tenant Restaurant Management System (RMS) with a centralized POS frontend and an enterprise-grade REST API integration layer for external restaurant websites (e.g. Sushi Bar, mobile apps, online ordering portals).
+A multi-tenant bookstore and stationery Retail ERP with a centralized POS frontend and an enterprise-grade REST API integration layer for external retail websites, mobile apps, and online ordering portals.
 
 ---
 
 ## Architecture Overview
 
 ```
-External Restaurant Apps / Websites (e.g. Sushi Bar)
+External Retail Apps / Websites
                   │
                   ▼ (Official RmsApiClient SDK)
       HTTPS REST API (/api/v1)
@@ -33,12 +33,12 @@ import { RmsApiClient } from './server/src/integration/index.js';
 const client = new RmsApiClient({
   baseUrl: process.env.RMS_BASE_URL || 'http://localhost:4000/api/v1',
   apiKey: process.env.RMS_API_KEY || 'rms_live_cli_xxxx.rms_sec_yyyy',
-  branchId: 'branch_sushi_main',
+  branchId: 'branch_main_store',
   timeoutMs: 10000,
 });
 ```
 
-### Complete Integration Flow (Sushi Bar Example)
+### Complete Integration Flow (Retail Store Example)
 
 ```typescript
 // 1. Fetch Menu & Categories
@@ -46,7 +46,7 @@ const menu = await client.getMenu();
 
 // 2. Authoritative Price Preview (Server-Side)
 const pricing = await client.previewPricing({
-  branch_id: 'branch_sushi_main',
+  branch_id: 'branch_main_store',
   order_type: 'delivery',
   delivery_zone_id: 'zone_zamalek',
   coupon_code: 'WELCOME20',
@@ -55,7 +55,7 @@ const pricing = await client.previewPricing({
 
 // 3. Place Order with Idempotency Key
 const order = await client.createOrder({
-  branch_id: 'branch_sushi_main',
+  branch_id: 'branch_main_store',
   order_type: 'delivery',
   delivery: { zone_id: 'zone_zamalek', address: '15 Brazil St, Zamalek' },
   customer: { name: 'Customer Name', phone: '01012345678' },

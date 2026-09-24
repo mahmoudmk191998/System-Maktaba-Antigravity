@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import mkLogo from '@/assets/mk-logo.png';
 import { useAppStore } from '@/lib/store';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useUserPermissions } from '@/hooks/usePermissions';
@@ -237,7 +236,10 @@ export function SidebarContent({ onNavigate, isMobile }: { onNavigate?: () => vo
         <div className="p-5 border-b border-sidebar-border/50 bg-gradient-to-b from-sidebar-accent/20 to-transparent">
           <div className="flex items-center gap-4">
             <div className="w-12 h-12 rounded-2xl bg-white shadow-sm overflow-hidden flex-shrink-0 border-2 border-sidebar-border/50">
-              <img src={mkLogo} alt="MK" className="w-full h-full object-contain p-1" />
+              <div className="w-full h-full bg-gradient-to-br from-primary/15 to-primary/5 flex flex-col items-center justify-center">
+                <BookOpen className="w-5 h-5 text-primary" />
+                <span className="text-[8px] leading-none font-black tracking-wider text-foreground mt-0.5">MK</span>
+              </div>
             </div>
             <div className="overflow-hidden flex-1">
               <h1 className="text-xl font-black text-sidebar-foreground tracking-tight whitespace-nowrap">إم كـي سيستم</h1>
@@ -250,7 +252,10 @@ export function SidebarContent({ onNavigate, isMobile }: { onNavigate?: () => vo
       ) : (
         <div className="p-4 border-b border-sidebar-border/50 bg-sidebar-accent/10 flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl bg-white shadow-sm overflow-hidden flex-shrink-0 border border-sidebar-border/50">
-            <img src={mkLogo} alt="MK" className="w-full h-full object-contain p-1" />
+            <div className="w-full h-full bg-gradient-to-br from-primary/15 to-primary/5 flex flex-col items-center justify-center">
+                <BookOpen className="w-5 h-5 text-primary" />
+                <span className="text-[8px] leading-none font-black tracking-wider text-foreground mt-0.5">MK</span>
+              </div>
           </div>
           <div className="overflow-hidden flex-1">
             <h2 className="font-black text-base text-sidebar-foreground">إم كـي سيستم</h2>
@@ -377,7 +382,9 @@ export function Sidebar() {
             {/* Main Bottom Dock */}
             <div className="bg-card/70 backdrop-blur-[40px] px-4 py-3 rounded-full border border-white/10 shadow-[0_20px_50px_rgba(0,0,0,0.5),inset_0_1px_1px_rgba(255,255,255,0.1)] flex items-center justify-center gap-2">
               <Link to="/" className="w-12 h-12 rounded-full bg-gradient-to-tr from-primary to-primary/80 shadow-[0_0_20px_rgba(var(--primary),0.4)] flex items-center justify-center border border-white/20 hover:scale-110 transition-transform mr-2">
-                <img src={mkLogo} alt="MK" className="w-8 h-8 object-contain bg-white rounded-full p-1" />
+                <div className="w-8 h-8 rounded-full bg-background/90 flex items-center justify-center border border-white/20">
+                  <BookOpen className="w-4 h-4 text-primary" />
+                </div>
               </Link>
               <div className="w-px h-8 bg-white/10 mx-2" />
 

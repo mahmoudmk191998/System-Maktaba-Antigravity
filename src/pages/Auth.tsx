@@ -35,7 +35,6 @@ import {
   Library,
   Bookmark
 } from 'lucide-react';
-import mkLogo from '@/assets/mk-logo.png';
 import { cn } from '@/lib/utils';
 import { LibraryAtmosphere } from '@/components/auth/LibraryAtmosphere';
 
@@ -309,7 +308,10 @@ export default function Auth() {
           <div className="flex lg:hidden flex-col items-center text-center space-y-2 mb-2">
             <div className="relative">
               <div className="w-16 h-16 rounded-2xl bg-gradient-to-b from-[#2d1c12] to-[#1a100a] border-2 border-amber-500/40 flex items-center justify-center p-2 shadow-xl">
-                <img src={mkLogo} alt="MK" className="w-full h-full object-contain brightness-110" />
+                <div className="w-full h-full rounded-xl bg-gradient-to-br from-amber-500/15 to-emerald-500/10 flex flex-col items-center justify-center">
+                  <BookOpen className="w-6 h-6 text-amber-300" />
+                  <span className="text-[10px] font-black tracking-[0.18em] text-amber-100 mt-0.5">MK</span>
+                </div>
               </div>
               <div className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-emerald-600 border border-amber-300/40 flex items-center justify-center shadow-md">
                 <BookOpen className="w-2.5 h-2.5 text-amber-200" />

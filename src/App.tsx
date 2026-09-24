@@ -65,14 +65,7 @@ function ProtectedRoute({ children, requiredPerms }: { children: React.ReactNode
   const { hasAnyPermission, isAdmin, loading: permLoading, hasAnyRole, isDisabled } = useUserPermissions();
 
   if (authLoading || permLoading) {
-    return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="text-center space-y-3">
-          <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto" />
-          <p className="text-muted-foreground">جاري التحميل...</p>
-        </div>
-      </div>
-    );
+    return <BrandLoader message="جاري التحقق من الجلسة والصلاحيات..." />;
   }
   if (!user) return <Navigate to="/auth" replace />;
 

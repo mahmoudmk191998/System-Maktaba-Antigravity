@@ -3,7 +3,7 @@
  * Comprehensive retail sales audit, return/exchange status badges, net financial metrics, and invoice deletion.
  */
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -26,6 +26,13 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog';
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import {
   Receipt,
   Search,
   Printer,
@@ -39,6 +46,7 @@ import {
   RotateCcw,
   ArrowRightLeft,
   AlertTriangle,
+  UsersRound,
 } from 'lucide-react';
 import { useSales } from '@/hooks/retail/useSales';
 import { useFormatters } from '@/lib/formatters';
@@ -47,12 +55,27 @@ import { SaleDetailsDrawer } from '@/components/retail/pos/SaleDetailsDrawer';
 import { ReceiptDialog } from '@/components/retail/pos/ReceiptDialog';
 import type { Sale } from '@/types/retail.types';
 import { useAppStore } from '@/lib/store';
+import {
+  fetchSalesStaffFromDb,
+  type SalesStaffOption,
+} from '@/services/sales/sales.service';
 
 export default function OrdersHistory() {
   const { currentTenant } = useAppStore();
   const { number } = useFormatters();
   const { toast } = useToast();
-  const { sales, loading, hasMore, loadMore, refresh, removeSale } = useSales();
+
+  const [selectedCashierId, setSelectedCashierId] = useState('all');
+  const [staffOptions, setStaffOptions] = useState<SalesStaffOption[]>([]);
+  const [staffLoading, setStaffLoading] = useState(false);
+
+  // Page permission grants tenant-wide invoice visibility. The employee selector
+  // narrows the query by Firebase Auth UID (Sale.cashierId) when requested.
+  const { sales, loading, hasMore, loadMore, refresh, removeSale } = useSales({
+    scope: 'tenant',
+    cashierId: selectedCashierId === 'all' ? undefined : selectedCashierId,
+    pageSize: 50,
+  });
 
   const [searchInvoice, setSearchInvoice] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'completed' | 'returned' | 'exchanged'>('all');
@@ -60,6 +83,49 @@ export default function OrdersHistory() {
   const [selectedSaleForReceipt, setSelectedSaleForReceipt] = useState<Sale | null>(null);
   const [saleToDelete, setSaleToDelete] = useState<Sale | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadStaff = async () => {
+      if (!currentTenant?.id) {
+        setStaffOptions([]);
+        return;
+      }
+
+      setStaffLoading(true);
+      try {
+        const staff = await fetchSalesStaffFromDb(currentTenant.id);
+        if (!cancelled) setStaffOptions(staff);
+      } catch {
+        if (!cancelled) setStaffOptions([]);
+      } finally {
+        if (!cancelled) setStaffLoading(false);
+      }
+    };
+
+    loadStaff();
+    return () => {
+      cancelled = true;
+    };
+  }, [currentTenant?.id]);
+
+  // Include historical/deactivated cashiers that still exist in invoice snapshots,
+  // even if their current profile is no longer returned by the staff query.
+  const cashierOptions = useMemo(() => {
+    const map = new Map<string, SalesStaffOption>();
+    staffOptions.forEach((staff) => map.set(staff.id, staff));
+
+    sales.forEach((sale) => {
+      if (!sale.cashierId || map.has(sale.cashierId)) return;
+      map.set(sale.cashierId, {
+        id: sale.cashierId,
+        name: sale.cashierNameSnapshot || 'موظف سابق',
+      });
+    });
+
+    return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name, 'ar'));
+  }, [staffOptions, sales]);
 
   // Filter sales based on query and status
   const filteredSales = useMemo(() => {
@@ -147,7 +213,7 @@ export default function OrdersHistory() {
   return (
     <MainLayout
       title="سجل فواتير المبيعات (Sales History)"
-      subtitle="استعراض فواتير البيع الصادرة، حالة المرتجعات والاستبدال، وتحديث صافي الأرباح"
+      subtitle="عرض فواتير جميع موظفي وفروع المنشأة مع إمكانية التصفية حسب الموظف وحالة الفاتورة"
       actions={
         <Button
           size="sm"
@@ -231,8 +297,38 @@ export default function OrdersHistory() {
         </div>
 
         {/* Filter & Search Bar */}
-        <div className="p-3 bg-card rounded-xl border border-border flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
-          <div className="relative flex-1">
+        <div className="p-3 bg-card rounded-xl border border-border flex flex-col xl:flex-row items-stretch xl:items-center justify-between gap-3">
+          <div className="flex flex-col sm:flex-row items-stretch gap-2 flex-1">
+            <div className="sm:w-[260px] shrink-0">
+              <Select value={selectedCashierId} onValueChange={setSelectedCashierId}>
+                <SelectTrigger className="h-10 bg-background" aria-label="تصفية الفواتير حسب الموظف">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <UsersRound className="w-4 h-4 text-primary shrink-0" />
+                    <SelectValue placeholder="كل الموظفين" />
+                  </div>
+                </SelectTrigger>
+                <SelectContent dir="rtl">
+                  <SelectItem value="all">كل الموظفين — جميع الفواتير</SelectItem>
+                  {cashierOptions.map((staff) => (
+                    <SelectItem key={staff.id} value={staff.id}>
+                      <div className="flex items-center gap-2">
+                        <span>{staff.name}</span>
+                        {staff.role && (
+                          <span className="text-[10px] text-muted-foreground">({staff.role})</span>
+                        )}
+                      </div>
+                    </SelectItem>
+                  ))}
+                  {staffLoading && cashierOptions.length === 0 && (
+                    <SelectItem value="__loading_staff" disabled>
+                      جاري تحميل الموظفين...
+                    </SelectItem>
+                  )}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="relative flex-1">
             <Search className="w-4 h-4 absolute right-3 top-3 text-muted-foreground" />
             <Input
               value={searchInvoice}
@@ -240,9 +336,10 @@ export default function OrdersHistory() {
               placeholder="ابحث برقم الفاتورة (INV-...) أو اسم العميل أو اسم الكاشير..."
               className="pr-9 h-10 text-sm"
             />
+            </div>
           </div>
 
-          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 md:pb-0">
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 xl:pb-0">
             <Button
               size="sm"
               variant={statusFilter === 'all' ? 'default' : 'outline'}
