@@ -237,6 +237,7 @@ const BRANCH_SCOPED_COLLECTIONS = new Set<string>([
   'attendance',
   'branch_shifts',
   'maintenance_records',
+  'branch_counters',
 ]);
 
 type ParentKey =
@@ -251,7 +252,8 @@ type ParentKey =
   | 'approvalRequests'
   | 'notifications'
   | 'purchaseOrders'
-  | 'goodsReceipts';
+  | 'goodsReceipts'
+  | 'purchaseReturns';
 
 interface RelatedCollectionSpec {
   parent: ParentKey;
@@ -278,7 +280,7 @@ const RELATED_COLLECTIONS: Record<string, RelatedCollectionSpec> = {
   notification_reads: { parent: 'notifications', fields: ['notificationId', 'notification_id'] },
   purchase_order_items: { parent: 'purchaseOrders', fields: ['purchaseOrderId', 'purchase_order_id'] },
   goods_receipt_items: { parent: 'goodsReceipts', fields: ['goodsReceiptId', 'goods_receipt_id'] },
-  purchase_return_items: { parent: 'goodsReceipts', fields: ['goodsReceiptId', 'goods_receipt_id'] },
+  purchase_return_items: { parent: 'purchaseReturns', fields: ['purchaseReturnId', 'purchase_return_id'] },
 };
 
 export const DEFAULT_STANDARD_UNITS = [
@@ -390,6 +392,7 @@ async function buildResetContext(tenantId: string): Promise<ResetContext> {
     notifications,
     purchaseOrders,
     goodsReceipts,
+    purchaseReturns,
   ] = await Promise.all([
     queryIdsByTenant('products', tenantId),
     queryIdsByTenant('orders', tenantId),
@@ -404,6 +407,7 @@ async function buildResetContext(tenantId: string): Promise<ResetContext> {
     queryIdsByTenant('notifications', tenantId),
     queryIdsByTenant('purchase_orders', tenantId),
     queryIdsByTenant('goods_receipts', tenantId),
+    queryIdsByTenant('purchase_returns', tenantId),
   ]);
 
   return {
@@ -422,6 +426,7 @@ async function buildResetContext(tenantId: string): Promise<ResetContext> {
       notifications,
       purchaseOrders,
       goodsReceipts,
+      purchaseReturns,
     },
   };
 }
