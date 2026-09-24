@@ -21,7 +21,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Plus, Edit2, Trash2, FolderTree, AlertCircle } from 'lucide-react';
+import { Plus, Edit2, Trash2, FolderTree, Link2, Image as ImageIcon } from 'lucide-react';
 import { useCategories } from '@/hooks/retail/useCategories';
 import type { ProductCategory } from '@/types/retail.types';
 import { toast } from 'sonner';
@@ -32,12 +32,14 @@ interface CategoryManageDialogProps {
 }
 
 export function CategoryManageDialog({ open, onOpenChange }: CategoryManageDialogProps) {
-  const { categories, tree, loading, saveCategory, deleteCategory } = useCategories();
+  const { categories, loading, saveCategory, deleteCategory } = useCategories();
 
   const [editingCat, setEditingCat] = useState<ProductCategory | null>(null);
   const [name, setName] = useState('');
   const [parentId, setParentId] = useState<string>('none');
   const [sortOrder, setSortOrder] = useState('0');
+  const [imageUrl, setImageUrl] = useState('');
+  const [imagePreviewFailed, setImagePreviewFailed] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const resetForm = () => {
@@ -45,6 +47,8 @@ export function CategoryManageDialog({ open, onOpenChange }: CategoryManageDialo
     setName('');
     setParentId('none');
     setSortOrder('0');
+    setImageUrl('');
+    setImagePreviewFailed(false);
   };
 
   const handleEdit = (cat: ProductCategory) => {
@@ -52,6 +56,8 @@ export function CategoryManageDialog({ open, onOpenChange }: CategoryManageDialo
     setName(cat.name);
     setParentId(cat.parentId || 'none');
     setSortOrder((cat.sortOrder || 0).toString());
+    setImageUrl(cat.image || '');
+    setImagePreviewFailed(false);
   };
 
   const handleSave = async (e: React.FormEvent) => {
@@ -59,6 +65,20 @@ export function CategoryManageDialog({ open, onOpenChange }: CategoryManageDialo
     if (!name.trim()) {
       toast.error('اسم التصنيف مطلوب');
       return;
+    }
+
+    const cleanImageUrl = imageUrl.trim();
+    if (cleanImageUrl) {
+      try {
+        const parsedUrl = new URL(cleanImageUrl);
+        if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
+          toast.error('رابط الصورة يجب أن يبدأ بـ http:// أو https://');
+          return;
+        }
+      } catch {
+        toast.error('رابط الصورة غير صالح. استخدم رابط صورة مباشر يبدأ بـ http:// أو https://');
+        return;
+      }
     }
 
     setIsSubmitting(true);
@@ -69,6 +89,7 @@ export function CategoryManageDialog({ open, onOpenChange }: CategoryManageDialo
         nameAr: name.trim(),
         parentId: parentId === 'none' ? null : parentId,
         sortOrder: parseInt(sortOrder) || 0,
+        image: cleanImageUrl,
         active: true,
       });
 
@@ -148,6 +169,45 @@ export function CategoryManageDialog({ open, onOpenChange }: CategoryManageDialo
               </div>
             </div>
 
+            <div className="space-y-2">
+              <Label className="text-xs flex items-center gap-1.5">
+                <Link2 className="w-3.5 h-3.5 text-primary" />
+                رابط صورة التصنيف المباشر
+              </Label>
+              <Input
+                value={imageUrl}
+                onChange={(e) => {
+                  setImageUrl(e.target.value);
+                  setImagePreviewFailed(false);
+                }}
+                placeholder="https://example.com/category-image.jpg"
+                className="font-mono text-xs"
+                dir="ltr"
+              />
+              <p className="text-[11px] text-muted-foreground">
+                اختياري — الصق رابط الصورة المباشر، وستظهر كبطاقة للتصنيف داخل نقطة البيع.
+              </p>
+
+              {imageUrl.trim() && (
+                <div className="relative h-28 rounded-xl overflow-hidden border border-border/60 bg-muted/30">
+                  {!imagePreviewFailed ? (
+                    <img
+                      src={imageUrl.trim()}
+                      alt={name || 'معاينة صورة التصنيف'}
+                      className="w-full h-full object-cover"
+                      loading="lazy"
+                      onError={() => setImagePreviewFailed(true)}
+                    />
+                  ) : (
+                    <div className="h-full flex flex-col items-center justify-center gap-1.5 text-muted-foreground">
+                      <ImageIcon className="w-7 h-7 opacity-50" />
+                      <span className="text-[11px] font-semibold">تعذر تحميل معاينة الصورة — راجع الرابط المباشر</span>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
             <div className="flex items-center justify-end gap-2 pt-1">
               {editingCat && (
                 <Button type="button" variant="ghost" size="sm" onClick={resetForm}>
@@ -181,13 +241,30 @@ export function CategoryManageDialog({ open, onOpenChange }: CategoryManageDialo
                     key={cat.id}
                     className="flex items-center justify-between p-2.5 bg-card hover:bg-muted/40 rounded-lg border border-border/60 transition-colors text-sm"
                   >
-                    <div>
-                      <span className="font-bold text-foreground">{cat.name}</span>
-                      {parent && (
-                        <span className="text-xs text-muted-foreground mr-2">
-                          (تابع لـ: {parent.name})
-                        </span>
-                      )}
+                    <div className="flex items-center gap-2 min-w-0">
+                      <div className="w-10 h-10 rounded-lg overflow-hidden bg-muted/50 border border-border/50 shrink-0 flex items-center justify-center">
+                        {cat.image ? (
+                          <img
+                            src={cat.image}
+                            alt=""
+                            className="w-full h-full object-cover"
+                            loading="lazy"
+                            onError={(event) => {
+                              event.currentTarget.style.display = 'none';
+                            }}
+                          />
+                        ) : (
+                          <FolderTree className="w-4 h-4 text-muted-foreground/60" />
+                        )}
+                      </div>
+                      <div className="min-w-0">
+                        <span className="font-bold text-foreground block truncate">{cat.name}</span>
+                        {parent && (
+                          <span className="text-xs text-muted-foreground block truncate">
+                            تابع لـ: {parent.name}
+                          </span>
+                        )}
+                      </div>
                     </div>
                     <div className="flex items-center gap-1">
                       <Button
