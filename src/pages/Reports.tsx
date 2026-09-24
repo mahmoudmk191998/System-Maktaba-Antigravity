@@ -93,7 +93,7 @@ export default function Reports() {
   const currentTenant = useAppStore((state) => state.currentTenant);
   const currentBranch = useAppStore((state) => state.currentBranch);
   const { tenantId: hookTenantId, branchId: hookBranchId } = useTenantBranch();
-  const tenantId = currentTenant?.id || hookTenantId || 'default';
+  const tenantId = currentTenant?.id || hookTenantId || '';
   const branchId = currentBranch?.id || hookBranchId || '';
   const { currency, number } = useFormatters();
 
@@ -155,9 +155,6 @@ export default function Reports() {
           if (bSnap.empty) {
             bSnap = await getDocs(query(collection(db, 'branches'), where('tenant_id', '==', tenantId)));
           }
-          if (bSnap.empty) {
-            bSnap = await getDocs(collection(db, 'branches'));
-          }
           return bSnap.docs.map((d) => ({ id: d.id, name: d.data().name || 'فرع' }));
         } catch {
           return [];
@@ -183,19 +180,6 @@ export default function Reports() {
         if (c.id && c.name) cMap.set(c.id, c.name);
         if (c.name) cMap.set(c.name, c.name);
       });
-      if (cMap.size === 0) {
-        try {
-          const snapCats = await getDocs(collection(db, 'categories'));
-          snapCats.docs.forEach((d) => {
-            const data = d.data();
-            const name = data.name || data.nameAr || data.title;
-            if (name) {
-              cMap.set(d.id, name);
-              if (data.id) cMap.set(data.id, name);
-            }
-          });
-        } catch {}
-      }
       setCategoriesMap(cMap);
 
       // Filter expenses for current date range

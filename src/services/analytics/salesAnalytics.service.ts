@@ -204,42 +204,22 @@ export async function fetchSalesPeriodData(
     }
   };
 
-  // Fetch from 'sales', 'orders', and 'invoices' across all naming conventions
+  // Fetch only documents explicitly owned by the current tenant.
+  // Never fall back to "default" or an unfiltered collection read: that can resurrect
+  // deleted test data in reports and can leak records across tenants.
   for (const collName of ['sales', 'orders', 'invoices']) {
-    let collFound = 0;
-    if (tenantId) {
-      try {
-        const snap1 = await getDocs(query(collection(db, collName), where('tenantId', '==', tenantId)));
-        snap1.docs.forEach((d) => { safeAddDoc(d.id, d.data()); collFound++; });
-      } catch (e) {}
-      try {
-        const snap2 = await getDocs(query(collection(db, collName), where('tenant_id', '==', tenantId)));
-        snap2.docs.forEach((d) => { safeAddDoc(d.id, d.data()); collFound++; });
-      } catch (e) {}
+    try {
+      const snap1 = await getDocs(query(collection(db, collName), where('tenantId', '==', tenantId)));
+      snap1.docs.forEach((d) => safeAddDoc(d.id, d.data()));
+    } catch (e) {
+      console.warn(`Unable to query ${collName}.tenantId for reporting:`, e);
     }
-    // If no docs found with primary tenant, also check default tenant
-    if (collFound === 0 && tenantId && tenantId !== 'default') {
-      try {
-        const snap1 = await getDocs(query(collection(db, collName), where('tenantId', '==', 'default')));
-        snap1.docs.forEach((d) => { safeAddDoc(d.id, d.data()); collFound++; });
-      } catch (e) {}
-      try {
-        const snap2 = await getDocs(query(collection(db, collName), where('tenant_id', '==', 'default')));
-        snap2.docs.forEach((d) => { safeAddDoc(d.id, d.data()); collFound++; });
-      } catch (e) {}
-    }
-    // If still no docs found, try general collection read
-    if (collFound === 0) {
-      try {
-        const snap = await getDocs(collection(db, collName));
-        snap.docs.forEach((d) => {
-          const data = d.data();
-          const docTenant = data.tenantId || data.tenant_id;
-          if (!tenantId || tenantId === 'default' || !docTenant || docTenant === tenantId || docTenant === 'default') {
-            safeAddDoc(d.id, data);
-          }
-        });
-      } catch (e) {}
+
+    try {
+      const snap2 = await getDocs(query(collection(db, collName), where('tenant_id', '==', tenantId)));
+      snap2.docs.forEach((d) => safeAddDoc(d.id, d.data()));
+    } catch (e) {
+      console.warn(`Unable to query ${collName}.tenant_id for reporting:`, e);
     }
   }
 
@@ -323,38 +303,18 @@ export async function fetchSalesPeriodData(
   };
 
   for (const collName of ['sale_returns', 'sales_returns']) {
-    let collFound = 0;
-    if (tenantId) {
-      try {
-        const snap1 = await getDocs(query(collection(db, collName), where('tenantId', '==', tenantId)));
-        snap1.docs.forEach((d) => { safeAddReturn(d.id, d.data()); collFound++; });
-      } catch {}
-      try {
-        const snap2 = await getDocs(query(collection(db, collName), where('tenant_id', '==', tenantId)));
-        snap2.docs.forEach((d) => { safeAddReturn(d.id, d.data()); collFound++; });
-      } catch {}
+    try {
+      const snap1 = await getDocs(query(collection(db, collName), where('tenantId', '==', tenantId)));
+      snap1.docs.forEach((d) => safeAddReturn(d.id, d.data()));
+    } catch (e) {
+      console.warn(`Unable to query ${collName}.tenantId for returns reporting:`, e);
     }
-    if (collFound === 0 && tenantId && tenantId !== 'default') {
-      try {
-        const snap1 = await getDocs(query(collection(db, collName), where('tenantId', '==', 'default')));
-        snap1.docs.forEach((d) => { safeAddReturn(d.id, d.data()); collFound++; });
-      } catch {}
-      try {
-        const snap2 = await getDocs(query(collection(db, collName), where('tenant_id', '==', 'default')));
-        snap2.docs.forEach((d) => { safeAddReturn(d.id, d.data()); collFound++; });
-      } catch {}
-    }
-    if (collFound === 0) {
-      try {
-        const snap = await getDocs(collection(db, collName));
-        snap.docs.forEach((d) => {
-          const data = d.data();
-          const docTenant = data.tenantId || data.tenant_id;
-          if (!tenantId || tenantId === 'default' || !docTenant || docTenant === tenantId || docTenant === 'default') {
-            safeAddReturn(d.id, data);
-          }
-        });
-      } catch {}
+
+    try {
+      const snap2 = await getDocs(query(collection(db, collName), where('tenant_id', '==', tenantId)));
+      snap2.docs.forEach((d) => safeAddReturn(d.id, d.data()));
+    } catch (e) {
+      console.warn(`Unable to query ${collName}.tenant_id for returns reporting:`, e);
     }
   }
 

@@ -75,41 +75,26 @@ export async function fetchTenantStockBalances(
   tenantId: string,
   branchId?: string
 ): Promise<BranchStockRecord[]> {
-  const records: BranchStockRecord[] = [];
-  try {
-    const stockRef = collection(db, 'branch_stock');
-    let q = query(stockRef, where('tenantId', '==', tenantId));
-    let snap = await getDocs(q);
-    
-    // Check tenant_id alternative
-    if (snap.empty) {
-      snap = await getDocs(query(stockRef, where('tenant_id', '==', tenantId)));
-    }
-    
-    // If still empty and tenantId is provided, check without tenant filter as safe fallback
-    if (snap.empty) {
-      snap = await getDocs(query(stockRef));
-    }
+  if (!tenantId) return [];
 
-    snap.forEach((doc) => {
-      const d = doc.data();
-      if (branchId && branchId !== 'all' && (d.branchId || d.branch_id) && (d.branchId || d.branch_id) !== branchId) return;
-      records.push({ id: doc.id, ...d } as BranchStockRecord);
-    });
-  } catch (err) {
-    console.warn('fetchTenantStockBalances query failed, trying safe fallback:', err);
+  const recordsById = new Map<string, BranchStockRecord>();
+  const stockRef = collection(db, 'branch_stock');
+
+  for (const tenantField of ['tenantId', 'tenant_id'] as const) {
     try {
-      const snap = await getDocs(collection(db, 'branch_stock'));
-      snap.forEach((doc) => {
-        const d = doc.data();
-        if (branchId && branchId !== 'all' && (d.branchId || d.branch_id) && (d.branchId || d.branch_id) !== branchId) return;
-        records.push({ id: doc.id, ...d } as BranchStockRecord);
+      const snap = await getDocs(query(stockRef, where(tenantField, '==', tenantId)));
+      snap.forEach((stockDoc) => {
+        const data = stockDoc.data();
+        const docBranchId = data.branchId || data.branch_id;
+        if (branchId && branchId !== 'all' && docBranchId && docBranchId !== branchId) return;
+        recordsById.set(stockDoc.id, { id: stockDoc.id, ...data } as BranchStockRecord);
       });
-    } catch (fbErr) {
-      console.warn('fetchTenantStockBalances fallback failed:', fbErr);
+    } catch (err) {
+      console.warn(`fetchTenantStockBalances failed for ${tenantField}:`, err);
     }
   }
-  return records;
+
+  return Array.from(recordsById.values());
 }
 
 /**
@@ -117,31 +102,23 @@ export async function fetchTenantStockBalances(
  */
 export async function fetchProductsCatalog(tenantId: string): Promise<Map<string, Product>> {
   const catalog = new Map<string, Product>();
-  try {
-    const prodRef = collection(db, 'products');
-    let snap = await getDocs(query(prodRef, where('tenantId', '==', tenantId)));
-    
-    if (snap.empty) {
-      snap = await getDocs(query(prodRef, where('tenant_id', '==', tenantId)));
-    }
-    
-    if (snap.empty) {
-      snap = await getDocs(query(prodRef));
-    }
-    
-    snap.forEach((doc) => {
-      const data = doc.data();
-      catalog.set(doc.id, { id: doc.id, ...data } as Product);
-    });
-  } catch (err) {
-    console.warn('fetchProductsCatalog failed, trying fallback:', err);
+  if (!tenantId) return catalog;
+
+  const prodRef = collection(db, 'products');
+  for (const tenantField of ['tenantId', 'tenant_id'] as const) {
     try {
-      const snap = await getDocs(collection(db, 'products'));
-      snap.forEach((doc) => {
-        catalog.set(doc.id, { id: doc.id, ...doc.data() } as Product);
+      const snap = await getDocs(query(prodRef, where(tenantField, '==', tenantId)));
+      snap.forEach((productDoc) => {
+        catalog.set(productDoc.id, {
+          id: productDoc.id,
+          ...productDoc.data(),
+        } as Product);
       });
-    } catch {}
+    } catch (err) {
+      console.warn(`fetchProductsCatalog failed for ${tenantField}:`, err);
+    }
   }
+
   return catalog;
 }
 
