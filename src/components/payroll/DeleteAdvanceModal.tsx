@@ -69,7 +69,7 @@ export const DeleteAdvanceModal: React.FC<DeleteAdvanceModalProps> = ({
         }
       }}
     >
-      <DialogContent className="max-w-md bg-slate-950 border-slate-800 text-slate-100 p-5">
+      <DialogContent className="max-w-md bg-background dark:bg-slate-950 border-border dark:border-slate-800 text-foreground dark:text-slate-100 p-5">
         <DialogHeader className="space-y-2">
           <div className="w-10 h-10 rounded-full bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400 mb-1">
             <Trash2 className="w-5 h-5" />
@@ -85,23 +85,23 @@ export const DeleteAdvanceModal: React.FC<DeleteAdvanceModalProps> = ({
         </DialogHeader>
 
         {/* Advance Financial Details Card */}
-        <div className="my-3 p-3.5 bg-slate-900/80 rounded-lg border border-slate-800/80 space-y-2 text-xs">
-          <div className="flex justify-between items-center py-0.5 border-b border-slate-800">
+        <div className="my-3 p-3.5 bg-muted/80 dark:bg-slate-900/80 rounded-lg border border-border/80 dark:border-slate-800/80 space-y-2 text-xs">
+          <div className="flex justify-between items-center py-0.5 border-b border-border dark:border-slate-800">
             <span className="text-muted-foreground flex items-center gap-1.5">
               <User className="w-3.5 h-3.5" />
               الموظف:
             </span>
-            <span className="font-bold text-slate-200">
+            <span className="font-bold text-foreground/90 dark:text-slate-200">
               {advance.employeeName}
             </span>
           </div>
 
-          <div className="flex justify-between items-center py-0.5 border-b border-slate-800">
+          <div className="flex justify-between items-center py-0.5 border-b border-border dark:border-slate-800">
             <span className="text-muted-foreground flex items-center gap-1.5">
               <HandCoins className="w-3.5 h-3.5" />
               المبلغ:
             </span>
-            <span className="font-mono font-bold text-slate-200">
+            <span className="font-mono font-bold text-foreground/90 dark:text-slate-200">
               {advance.amount.toLocaleString('ar-EG')} ج.م
             </span>
           </div>
@@ -145,8 +145,8 @@ export const DeleteAdvanceModal: React.FC<DeleteAdvanceModalProps> = ({
             )}
           </div>
         ) : (
-          <div className="p-2.5 rounded-md bg-slate-900 border border-slate-800 text-slate-300 text-[11px] leading-relaxed flex items-center gap-2">
-            <AlertCircle className="w-4 h-4 text-slate-400 shrink-0" />
+          <div className="p-2.5 rounded-md bg-muted dark:bg-slate-900 border border-border dark:border-slate-800 text-muted-foreground dark:text-slate-300 text-[11px] leading-relaxed flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-muted-foreground dark:text-slate-400 shrink-0" />
             <span>سيتم حذف السلفة من السلف القائمة ولن تؤثر على أي مسير رواتب قادم.</span>
           </div>
         )}
@@ -154,7 +154,7 @@ export const DeleteAdvanceModal: React.FC<DeleteAdvanceModalProps> = ({
         {/* Mandatory Reason */}
         {!hasFinancialActivity && (
           <div className="space-y-1.5 pt-1">
-            <Label className="text-xs font-bold text-slate-200 flex items-center justify-between">
+            <Label className="text-xs font-bold text-foreground/90 dark:text-slate-200 flex items-center justify-between">
               <span>سبب الحذف <span className="text-rose-400">* (إجباري)</span></span>
             </Label>
             <Textarea
@@ -164,7 +164,7 @@ export const DeleteAdvanceModal: React.FC<DeleteAdvanceModalProps> = ({
                 if (e.target.value.trim()) setError('');
               }}
               placeholder="مثال: تم تسجيل السلفة بالخطأ..."
-              className="text-xs bg-slate-900 border-slate-700 min-h-[75px] resize-none"
+              className="text-xs bg-muted dark:bg-slate-900 border-border dark:border-slate-700 min-h-[75px] resize-none"
               disabled={isSubmitting}
             />
             {error && (
@@ -183,7 +183,7 @@ export const DeleteAdvanceModal: React.FC<DeleteAdvanceModalProps> = ({
             size="sm"
             onClick={() => onOpenChange(false)}
             disabled={isSubmitting}
-            className="flex-1 border-slate-700"
+            className="flex-1 border-border dark:border-slate-700"
           >
             إلغاء
           </Button>
