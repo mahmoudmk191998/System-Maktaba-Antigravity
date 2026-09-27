@@ -179,7 +179,7 @@ export const CustomerProfileDrawer: React.FC<CustomerProfileDrawerProps> = ({
       <Sheet open={open} onOpenChange={onOpenChange}>
         <SheetContent side="left" className="w-full sm:max-w-4xl p-0 flex flex-col">
           {/* Header Banner */}
-          <div className="bg-slate-900 text-white p-6 pb-4">
+          <div className="bg-primary/5 dark:bg-slate-900 text-foreground dark:text-white p-6 pb-4">
             <div className="flex justify-between items-start">
               <div>
                 <div className="flex items-center gap-2">
@@ -210,7 +210,7 @@ export const CustomerProfileDrawer: React.FC<CustomerProfileDrawerProps> = ({
                   size="sm"
                   variant="outline"
                   onClick={() => setStatementPrintOpen(true)}
-                  className="gap-1.5 text-xs text-white border-slate-700 hover:bg-slate-800"
+                  className="gap-1.5 text-xs text-foreground dark:text-white border-border dark:border-border dark:border-slate-700 hover:bg-muted dark:hover:bg-slate-800"
                 >
                   <Printer className="w-3.5 h-3.5" />
                   كشف حساب
@@ -220,7 +220,7 @@ export const CustomerProfileDrawer: React.FC<CustomerProfileDrawerProps> = ({
 
             {/* Quick Metrics Cards */}
             <div className="grid grid-cols-4 gap-3 mt-4 text-xs">
-              <div className="bg-slate-800/80 p-2.5 rounded border border-slate-700">
+              <div className="bg-muted/70 dark:bg-slate-800/80 p-2.5 rounded border border-border dark:border-slate-700">
                 <span className="text-slate-400 block">الرصيد الدفتري الحالي</span>
                 <span className={`font-bold text-sm ${currentDebt > 0 ? 'text-amber-400' : currentDebt < 0 ? 'text-blue-400' : 'text-emerald-400'}`}>
                   {currentDebt > 0
@@ -230,19 +230,19 @@ export const CustomerProfileDrawer: React.FC<CustomerProfileDrawerProps> = ({
                     : 'مطابق (0 ج.م)'}
                 </span>
               </div>
-              <div className="bg-slate-800/80 p-2.5 rounded border border-slate-700">
+              <div className="bg-muted/70 dark:bg-slate-800/80 p-2.5 rounded border border-border dark:border-slate-700">
                 <span className="text-slate-400 block">سقف الائتمان المسموح</span>
-                <span className="font-bold text-sm text-slate-200">
+                <span className="font-bold text-sm text-foreground/90 dark:text-slate-200">
                   {customer.creditEnabled ? formatCurrency(creditLimit) : 'غير مفعل'}
                 </span>
               </div>
-              <div className="bg-slate-800/80 p-2.5 rounded border border-slate-700">
+              <div className="bg-muted/70 dark:bg-slate-800/80 p-2.5 rounded border border-border dark:border-slate-700">
                 <span className="text-slate-400 block">الائتمان المتاح حالياً</span>
                 <span className="font-bold text-sm text-emerald-400">
                   {customer.creditEnabled ? formatCurrency(availableCredit) : '-'}
                 </span>
               </div>
-              <div className="bg-slate-800/80 p-2.5 rounded border border-slate-700">
+              <div className="bg-muted/70 dark:bg-slate-800/80 p-2.5 rounded border border-border dark:border-slate-700">
                 <span className="text-slate-400 block">ديون متأخرة السداد</span>
                 <span className={`font-bold text-sm ${aging.overdueCount > 0 ? 'text-rose-400' : 'text-slate-400'}`}>
                   {aging.overdueCount > 0 ? formatCurrency(aging.days1to30 + aging.days31to60 + aging.days61to90 + aging.days90Plus) : 'لا يوجد'}
