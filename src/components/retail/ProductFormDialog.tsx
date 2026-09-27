@@ -14,6 +14,7 @@ import {
 } from '@/components/ui/dialog';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
@@ -105,6 +106,7 @@ export function ProductFormDialog({
   // Inventory limits
   const [minimumStock, setMinimumStock] = useState('5');
   const [reorderPoint, setReorderPoint] = useState('10');
+  const [openingQuantity, setOpeningQuantity] = useState('');
 
   // Book Metadata
   const [isbn, setIsbn] = useState('');
@@ -152,6 +154,7 @@ export function ProductFormDialog({
         setTaxRate(prodTax.toString());
         setMinimumStock((product.minimumStock ?? 5).toString());
         setReorderPoint((product.reorderPoint ?? 10).toString());
+        setOpeningQuantity('');
 
         // Book metadata
         if (product.bookMetadata) {
@@ -194,6 +197,7 @@ export function ProductFormDialog({
         setTaxRate(defaultTaxPercent.toString());
         setMinimumStock('5');
         setReorderPoint('10');
+        setOpeningQuantity('');
 
         setIsbn('');
         setAuthor('');
@@ -312,6 +316,17 @@ export function ProductFormDialog({
 
     const payload = removeUndefinedFields(rawPayload);
 
+    const parsedOpeningQuantity = openingQuantity.trim() === ''
+      ? 0
+      : Number(openingQuantity);
+
+    if (!product && trackInventory && !hasVariants) {
+      if (!Number.isFinite(parsedOpeningQuantity) || parsedOpeningQuantity < 0) {
+        toast.error('الكمية الافتتاحية يجب أن تكون رقمًا صحيحًا أو عشريًا أكبر من أو يساوي صفر');
+        return;
+      }
+    }
+
     const validation = validateProductForm(payload);
     if (!validation.isValid) {
       const firstError = Object.values(validation.errors)[0];
@@ -321,7 +336,19 @@ export function ProductFormDialog({
 
     setIsSubmitting(true);
     try {
-      const res = await onSave(payload);
+      const savePayload =
+        !product && trackInventory && !hasVariants && parsedOpeningQuantity > 0
+          ? {
+              ...payload,
+              __openingStock: {
+                quantity: parsedOpeningQuantity,
+                unitCost: pCost,
+                unitId: unitId || (units[0]?.id || 'u-pcs'),
+              },
+            }
+          : payload;
+
+      const res = await onSave(savePayload);
       if (res.success) {
         toast.success(product ? 'تم تحديث بيانات المنتج بنجاح' : 'تم إضافة المنتج بنجاح');
         onOpenChange(false);
@@ -671,6 +698,52 @@ export function ProductFormDialog({
                   </p>
                 </div>
               </div>
+
+              {/* Inventory Unit, opening quantity & reorder controls */}
+              {!product && trackInventory && (
+                <div className="rounded-xl border border-primary/20 bg-primary/[0.04] p-3.5 space-y-2">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <Label htmlFor="opening-qty" className="text-xs font-bold">
+                        الكمية الافتتاحية
+                      </Label>
+                      <p className="text-[11px] text-muted-foreground mt-0.5">
+                        اختياري — تُسجل كحركة رصيد افتتاحي حقيقية في مخزون الفرع الحالي بعد إنشاء الصنف.
+                      </p>
+                    </div>
+                    <Badge variant="outline" className="text-[10px] shrink-0">
+                      فتح مخزون سريع
+                    </Badge>
+                  </div>
+
+                  {!hasVariants ? (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-end">
+                      <div>
+                        <Input
+                          id="opening-qty"
+                          type="number"
+                          min="0"
+                          step="any"
+                          inputMode="decimal"
+                          value={openingQuantity}
+                          onChange={(e) => setOpeningQuantity(e.target.value)}
+                          onFocus={(e) => e.target.select()}
+                          placeholder="مثال: 100"
+                          className="font-bold text-base bg-background"
+                        />
+                      </div>
+                      <div className="text-[11px] text-muted-foreground rounded-lg bg-muted/40 border border-border/60 px-3 py-2.5">
+                        تكلفة الرصيد الافتتاحي ستستخدم سعر الشراء الحالي:
+                        <strong className="text-foreground mr-1">{pCost.toFixed(2)} ج.م</strong>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="text-[11px] text-amber-700 dark:text-amber-300 bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2">
+                      هذا الصنف يحتوي على متغيرات. للحفاظ على دقة المخزون، يتم تسجيل الكمية الافتتاحية لكل متغير من صفحة المخزون بعد الحفظ.
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Inventory Unit & Reorder Point */}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2">

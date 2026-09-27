@@ -136,7 +136,14 @@ export function useTenantBranch() {
               logo: tData.logo || ''
             });
             if (tData.settings) {
-              useAppStore.getState().updateSettings(tData.settings);
+              const currentSettings = useAppStore.getState().settings;
+              // Appearance is a local UI preference. Do not let route-level tenant
+              // hydration force the user back to dark mode after they selected light.
+              useAppStore.getState().updateSettings({
+                ...tData.settings,
+                darkMode: currentSettings.darkMode,
+                primaryColor: currentSettings.primaryColor,
+              });
             }
           }
 

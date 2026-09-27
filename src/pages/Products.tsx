@@ -54,10 +54,15 @@ import { MobileScannerModal } from '@/components/retail/pos/MobileScannerModal';
 import { CategoryManageDialog } from '@/components/retail/CategoryManageDialog';
 import { BrandManageDialog } from '@/components/retail/BrandManageDialog';
 import { useTenantBranch } from '@/hooks/useDatabase';
+import { useAppStore } from '@/lib/store';
+import { createOpeningBalance } from '@/services/inventory/retailInventory.service';
 import { toast } from 'sonner';
 
 export default function ProductsPage() {
-  useTenantBranch();
+  const { tenantId, branchId } = useTenantBranch();
+  const currentTenant = useAppStore((state) => state.currentTenant);
+  const currentBranch = useAppStore((state) => state.currentBranch);
+  const currentUser = useAppStore((state) => state.currentUser);
   const { hasPermission, isAdmin } = useUserPermissions();
 
   const canCreate = isAdmin || hasPermission('products.create');
@@ -143,10 +148,56 @@ export default function ProductsPage() {
   };
 
   const handleSaveProduct = async (payload: any) => {
+    const { __openingStock, ...productPayload } = payload || {};
+
     if (editingProduct) {
-      return updateProduct(editingProduct.id, payload);
+      return updateProduct(editingProduct.id, productPayload);
     }
-    return createProduct(payload);
+
+    const createResult = await createProduct(productPayload);
+    if (!createResult.success || !createResult.product) {
+      return createResult;
+    }
+
+    if (__openingStock?.quantity > 0) {
+      const effectiveTenantId = currentTenant?.id || tenantId || '';
+      const effectiveBranchId = currentBranch?.id || branchId || '';
+
+      if (!effectiveTenantId || !effectiveBranchId) {
+        toast.warning(
+          'تم إنشاء الصنف، لكن تعذر تسجيل الكمية الافتتاحية لأن الفرع الحالي غير محدد. يمكنك إضافتها من صفحة المخزون.'
+        );
+        return createResult;
+      }
+
+      const openingResult = await createOpeningBalance(
+        effectiveTenantId,
+        effectiveBranchId,
+        createResult.product.id,
+        null,
+        Number(__openingStock.quantity),
+        Number(__openingStock.unitCost ?? productPayload.purchasePrice ?? 0),
+        {
+          unitId: __openingStock.unitId || productPayload.unitId,
+          employeeId: currentUser?.id,
+          notes: 'رصيد افتتاحي تم إدخاله أثناء إنشاء الصنف',
+          idempotencyKey: `product-create-opening:${createResult.product.id}:${effectiveBranchId}`,
+        }
+      );
+
+      if (openingResult.success) {
+        window.dispatchEvent(new CustomEvent('alwan_inventory_synced'));
+        toast.success(
+          `تم تسجيل كمية افتتاحية ${Number(__openingStock.quantity)} في مخزون الفرع الحالي`
+        );
+      } else {
+        toast.warning(
+          `تم إنشاء الصنف بنجاح، لكن لم تُسجل الكمية الافتتاحية: ${openingResult.error || 'تعذر تحديث المخزون'}`
+        );
+      }
+    }
+
+    return createResult;
   };
 
   const handleArchive = async (id: string) => {
