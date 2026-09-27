@@ -86,25 +86,25 @@ export default function Dashboard() {
       )}
 
       {/* Premium Hero Section */}
-      <div className="mb-8 relative overflow-hidden rounded-[36px] border border-white/10 bg-gradient-to-br from-card/80 to-background/40 backdrop-blur-2xl shadow-[0_20px_50px_rgba(0,0,0,0.3)] group">
+      <div className="mb-8 relative overflow-hidden rounded-[36px] border border-border/70 bg-gradient-to-br from-card/90 to-background/70 backdrop-blur-2xl shadow-[0_20px_50px_rgba(0,0,0,0.3)] group">
         {/* Ambient Animated Gradient Spotlight */}
         <div className="absolute -top-32 -right-32 w-96 h-96 bg-gradient-to-br from-cyan-500/20 via-blue-600/10 to-transparent blur-[80px] rounded-full opacity-60 group-hover:opacity-100 transition-opacity duration-1000 pointer-events-none" />
         <div className="absolute -bottom-32 -left-32 w-96 h-96 bg-gradient-to-tr from-indigo-500/20 via-purple-600/10 to-transparent blur-[80px] rounded-full opacity-40 group-hover:opacity-80 transition-opacity duration-1000 pointer-events-none" />
 
         {/* Inner Content Border Container */}
-        <div className="relative bg-card/40 backdrop-blur-md rounded-[24px] sm:rounded-[32px] border border-white/5 m-1 p-4 sm:p-8 md:p-12 flex flex-col lg:flex-row items-center justify-between gap-6 sm:gap-8 z-10">
+        <div className="relative bg-card/40 backdrop-blur-md rounded-[24px] sm:rounded-[32px] border border-border/50 m-1 p-4 sm:p-8 md:p-12 flex flex-col lg:flex-row items-center justify-between gap-6 sm:gap-8 z-10">
 
           {/* Text Content */}
           <div className="flex flex-col items-center lg:items-start text-center lg:text-right gap-4 sm:gap-5">
 
             {/* Live indicator Badge */}
-            <div className="inline-flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-1.5 sm:py-2 rounded-full bg-black/20 border border-white/10 text-xs font-bold tracking-widest shadow-inner backdrop-blur-xl">
+            <div className="inline-flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-1.5 sm:py-2 rounded-full bg-muted/70 dark:bg-black/20 border border-border/70 dark:border-white/10 text-xs font-bold tracking-widest shadow-inner backdrop-blur-xl">
               <span className="relative flex h-2.5 w-2.5">
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75"></span>
                 <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-cyan-500"></span>
               </span>
-              <span className="text-white/80 uppercase">الأنظمة متصلة</span>
-              <span className="w-px h-4 bg-white/20 mx-1"></span>
+              <span className="text-foreground/80 uppercase">الأنظمة متصلة</span>
+              <span className="w-px h-4 bg-border mx-1"></span>
               <span className="text-primary/90 flex items-center gap-1.5">
                 <CalendarDays className="w-3.5 h-3.5" />
                 {currentDate}
@@ -119,14 +119,14 @@ export default function Dashboard() {
             </h1>
 
             <p className="text-muted-foreground/90 text-sm md:text-lg max-w-2xl font-medium leading-relaxed">
-              مرحباً <span className="font-bold text-white bg-white/10 px-2 py-0.5 rounded-md mx-1">{displayName}</span> 👋 جميع مؤشراتك جاهزة للمراجعة.
+              مرحباً <span className="font-bold text-foreground bg-muted px-2 py-0.5 rounded-md mx-1">{displayName}</span> 👋 جميع مؤشراتك جاهزة للمراجعة.
               تفقد الإحصائيات الحية لتعزيز الإنتاجية ودعم اتخاذ قراراتك أسرع من أي وقت مضى.
             </p>
           </div>
 
           {/* Abstract Graphic Element (Hidden on small screens) */}
           <div className="hidden lg:flex items-center justify-center relative shrink-0">
-            <div className="w-40 h-40 rounded-full border border-white/5 bg-gradient-to-br from-white/5 to-transparent backdrop-blur-lg flex items-center justify-center shadow-inner relative overflow-hidden group-hover:border-cyan-500/30 transition-colors duration-700">
+            <div className="w-40 h-40 rounded-full border border-border/60 bg-gradient-to-br from-muted/70 to-transparent backdrop-blur-lg flex items-center justify-center shadow-inner relative overflow-hidden group-hover:border-cyan-500/30 transition-colors duration-700">
               {/* Internal rings */}
               <div className="absolute inset-3 border border-dashed border-cyan-400/20 rounded-full animate-[spin_10s_linear_infinite]"></div>
               <div className="absolute inset-6 border border-blue-500/20 rounded-full"></div>
