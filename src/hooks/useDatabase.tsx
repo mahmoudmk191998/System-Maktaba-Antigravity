@@ -136,7 +136,10 @@ export function useTenantBranch() {
               logo: tData.logo || ''
             });
             if (tData.settings) {
-              useAppStore.getState().updateSettings(tData.settings);
+              // Appearance mode is a per-user/device preference persisted by Zustand.
+              // Never let tenant settings force the UI back to dark mode on route changes.
+              const { darkMode: _ignoredRemoteTheme, ...tenantSettings } = tData.settings;
+              useAppStore.getState().updateSettings(tenantSettings);
             }
           }
 
