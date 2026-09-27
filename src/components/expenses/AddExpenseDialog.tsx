@@ -206,9 +206,9 @@ export function AddExpenseDialog({ open, onOpenChange, onSuccess, onOpenPayroll 
 
           {/* DEDICATED PAYROLL SALARY VIEW WHEN CATEGORY IS "رواتب" */}
           {categoryValue === 'رواتب' ? (
-            <div className="space-y-3 p-3 bg-slate-900/60 rounded-xl border border-slate-800">
+            <div className="space-y-3 p-3 bg-muted/60 dark:bg-slate-900/60 rounded-xl border border-border dark:border-slate-800">
               <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
+                <span className="text-xs font-bold text-foreground/90 dark:text-slate-200 flex items-center gap-1.5">
                   <UserCheck className="w-4 h-4 text-primary" />
                   اختيار الموظف لصرف الراتب
                 </span>
@@ -236,7 +236,7 @@ export function AddExpenseDialog({ open, onOpenChange, onSuccess, onOpenPayroll 
                   onValueChange={(val) => setSelectedEmpId(val)}
                   disabled={isSubmittingPayment}
                 >
-                  <SelectTrigger className="h-9 text-xs bg-slate-950">
+                  <SelectTrigger className="h-9 text-xs bg-background dark:bg-slate-950">
                     <SelectValue placeholder="اختر الموظف..." />
                   </SelectTrigger>
                   <SelectContent>
@@ -251,8 +251,8 @@ export function AddExpenseDialog({ open, onOpenChange, onSuccess, onOpenPayroll 
 
               {/* Employee Payroll Snapshot Box */}
               {selectedEmployeePayroll && (
-                <div className="p-2.5 bg-slate-950 rounded-lg border border-slate-800/80 space-y-1.5 text-xs">
-                  <div className="flex justify-between items-center text-[11px] text-muted-foreground border-b border-slate-800 pb-1">
+                <div className="p-2.5 bg-background dark:bg-slate-950 rounded-lg border border-border/80 dark:border-slate-800/80 space-y-1.5 text-xs">
+                  <div className="flex justify-between items-center text-[11px] text-muted-foreground border-b border-border dark:border-slate-800 pb-1">
                     <span>شهر: {currentPeriod}</span>
                     <span>الأساسي: {selectedEmployeePayroll.basicSalarySnapshot.toLocaleString('ar-EG')} ج.م</span>
                   </div>
