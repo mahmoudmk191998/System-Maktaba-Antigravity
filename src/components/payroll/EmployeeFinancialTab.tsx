@@ -486,7 +486,7 @@ export const EmployeeFinancialTab: React.FC<EmployeeFinancialTabProps> = ({
                         {!isVoidedOrCancelled && (
                           <DropdownMenu>
                             <DropdownMenuTrigger asChild>
-                              <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-foreground dark:text-slate-100">
+                              <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-foreground dark:hover:text-slate-100">
                                 <MoreVertical className="w-3.5 h-3.5" />
                               </Button>
                             </DropdownMenuTrigger>
