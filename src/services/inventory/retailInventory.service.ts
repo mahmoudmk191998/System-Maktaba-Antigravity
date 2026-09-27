@@ -478,6 +478,267 @@ export async function createOpeningBalance(
   });
 }
 
+export interface OpeningStockBatchItem {
+  variantId?: string | null;
+  quantity: number;
+  unitCost: number;
+  unitId?: string;
+  conversionFactor?: number;
+}
+
+export interface CreateOpeningStockBatchInput {
+  tenantId: string;
+  locationId: string;
+  productId: string;
+  items: OpeningStockBatchItem[];
+  employeeId?: string;
+  notes?: string;
+}
+
+/**
+ * Creates all opening balances for a newly-created product in ONE Firestore transaction.
+ *
+ * This is used by the Product form so a base product or all of its variants can receive
+ * initial stock immediately without producing a partially-applied opening balance.
+ * If any item is invalid or any balance already contains stock, the entire transaction aborts.
+ */
+export async function createOpeningStockBatch(
+  input: CreateOpeningStockBatchInput
+): Promise<{ success: boolean; movementsCreated: number; error?: string }> {
+  const {
+    tenantId,
+    locationId,
+    productId,
+    employeeId,
+    notes = 'رصيد افتتاحي عند إنشاء الصنف',
+  } = input;
+
+  if (!tenantId || !locationId || !productId) {
+    return {
+      success: false,
+      movementsCreated: 0,
+      error: 'بيانات المؤسسة أو الموقع أو المنتج غير مكتملة',
+    };
+  }
+
+  const items = input.items
+    .map((item) => ({
+      ...item,
+      variantId:
+        item.variantId && item.variantId.trim() !== '' && item.variantId !== 'base'
+          ? item.variantId.trim()
+          : null,
+      quantity: Number(item.quantity),
+      unitCost: Number(item.unitCost),
+      conversionFactor:
+        Number(item.conversionFactor) > 0 ? Number(item.conversionFactor) : 1,
+    }))
+    .filter((item) => item.quantity > 0);
+
+  if (items.length === 0) {
+    return { success: true, movementsCreated: 0 };
+  }
+
+  for (const item of items) {
+    if (!Number.isFinite(item.quantity) || item.quantity <= 0) {
+      return {
+        success: false,
+        movementsCreated: 0,
+        error: 'الكمية الافتتاحية يجب أن تكون أكبر من صفر',
+      };
+    }
+    if (!Number.isInteger(item.quantity * item.conversionFactor)) {
+      return {
+        success: false,
+        movementsCreated: 0,
+        error: 'الكمية الافتتاحية للأصناف الحالية يجب أن تكون عدداً صحيحاً',
+      };
+    }
+    if (!Number.isFinite(item.unitCost) || item.unitCost < 0) {
+      return {
+        success: false,
+        movementsCreated: 0,
+        error: 'تكلفة الرصيد الافتتاحي غير صالحة',
+      };
+    }
+  }
+
+  // Prevent duplicate variants/base rows in the same request.
+  const keys = items.map((item) => item.variantId || 'base');
+  if (new Set(keys).size !== keys.length) {
+    return {
+      success: false,
+      movementsCreated: 0,
+      error: 'يوجد تكرار في الرصيد الافتتاحي لنفس المتغير',
+    };
+  }
+
+  const now = new Date().toISOString();
+
+  try {
+    const result = await runTransaction(db, async (transaction) => {
+      const prepared = items.map((item) => {
+        const variantKey = item.variantId || 'base';
+        const stockDocId = getBranchStockDocId(
+          tenantId,
+          locationId,
+          productId,
+          item.variantId
+        );
+        const idempotencyKey = `product_opening:${tenantId}:${locationId}:${productId}:${variantKey}`;
+        return {
+          item,
+          variantKey,
+          stockRef: doc(db, 'branch_stock', stockDocId),
+          movementRef: doc(collection(db, 'stock_movements')),
+          idempotencyKey,
+          idempotencyRef: doc(
+            db,
+            'stock_idempotency',
+            getStockIdempotencyDocId(tenantId, idempotencyKey)
+          ),
+        };
+      });
+
+      // Firestore transactions require all reads before writes.
+      const readRows: Array<{
+        prepared: (typeof prepared)[number];
+        stockExists: boolean;
+        beforeQuantity: number;
+        alreadyApplied: boolean;
+      }> = [];
+
+      for (const row of prepared) {
+        const idempotencySnap = await transaction.get(row.idempotencyRef);
+        const stockSnap = await transaction.get(row.stockRef);
+        const stockData = stockSnap.exists()
+          ? (stockSnap.data() as BranchStockRecord)
+          : null;
+        const beforeQuantity = stockData
+          ? Number(stockData.onHandQuantity ?? stockData.quantity ?? 0)
+          : 0;
+
+        readRows.push({
+          prepared: row,
+          stockExists: stockSnap.exists(),
+          beforeQuantity,
+          alreadyApplied: idempotencySnap.exists(),
+        });
+      }
+
+      let movementsCreated = 0;
+
+      for (const readRow of readRows) {
+        const { prepared: row, beforeQuantity, alreadyApplied } = readRow;
+        if (alreadyApplied) continue;
+
+        if (beforeQuantity !== 0) {
+          throw new Error(
+            `لا يمكن تسجيل رصيد افتتاحي لأن هناك رصيداً موجوداً بالفعل للمتغير ${row.variantKey}`
+          );
+        }
+
+        const baseQuantity =
+          Math.round(
+            row.item.quantity * row.item.conversionFactor * 1000
+          ) / 1000;
+        const finalCost = Math.round(Math.max(0, row.item.unitCost) * 100) / 100;
+
+        const balance = normalizeStockBalance({
+          id: row.stockRef.id,
+          tenantId,
+          branchId: locationId,
+          locationId,
+          productId,
+          variantId: row.item.variantId,
+          onHandQuantity: baseQuantity,
+          reservedQuantity: 0,
+          availableQuantity: baseQuantity,
+          averageCost: finalCost,
+          lastMovementAt: now,
+          updatedAt: now,
+        });
+
+        transaction.set(
+          row.stockRef,
+          removeUndefinedFields(balance),
+          { merge: true }
+        );
+
+        const movementRecord: StockMovement = {
+          id: row.movementRef.id,
+          tenantId,
+          branchId: locationId,
+          locationId,
+          productId,
+          variantId: row.item.variantId,
+          movementType: 'opening_balance',
+          direction: 'in',
+          quantity: baseQuantity,
+          inputQuantity: row.item.quantity,
+          inputUnitId: row.item.unitId || null,
+          conversionFactor: row.item.conversionFactor,
+          baseQuantity,
+          beforeQuantity: 0,
+          afterQuantity: baseQuantity,
+          unitCost: finalCost,
+          totalCost: Math.round(finalCost * baseQuantity * 100) / 100,
+          referenceType: 'opening_balance',
+          referenceId: productId,
+          idempotencyKey: row.idempotencyKey,
+          employeeId: employeeId || null,
+          reason: 'product_creation_opening_balance',
+          notes,
+          createdAt: now,
+          createdBy: employeeId || 'system',
+        };
+
+        transaction.set(
+          row.movementRef,
+          removeUndefinedFields({
+            ...movementRecord,
+            tenant_id: tenantId,
+            branch_id: locationId,
+            movement_type: 'opening_balance',
+            created_at: now,
+          })
+        );
+
+        transaction.set(
+          row.idempotencyRef,
+          removeUndefinedFields({
+            tenantId,
+            tenant_id: tenantId,
+            idempotencyKey: row.idempotencyKey,
+            movementId: row.movementRef.id,
+            beforeQuantity: 0,
+            afterQuantity: baseQuantity,
+            averageCost: finalCost,
+            createdAt: now,
+          })
+        );
+
+        movementsCreated++;
+      }
+
+      return movementsCreated;
+    });
+
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('alwan_inventory_synced'));
+    }
+
+    return { success: true, movementsCreated: result };
+  } catch (err: any) {
+    console.error('createOpeningStockBatch failed:', err);
+    return {
+      success: false,
+      movementsCreated: 0,
+      error: err?.message || 'فشل في تسجيل الرصيد الافتتاحي للصنف',
+    };
+  }
+}
+
 /**
  * Manages Stock Reservations (e.g. held orders, online orders).
  */
