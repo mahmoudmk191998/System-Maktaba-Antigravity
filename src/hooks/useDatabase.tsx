@@ -136,7 +136,15 @@ export function useTenantBranch() {
               logo: tData.logo || ''
             });
             if (tData.settings) {
-              useAppStore.getState().updateSettings(tData.settings);
+              // Tenant settings are reloaded by many route-level hooks.
+              // Appearance is a user/device preference persisted by Zustand, so never let
+              // an older Firestore tenant snapshot flip the chosen light/dark mode while navigating.
+              const localSettings = useAppStore.getState().settings;
+              useAppStore.getState().updateSettings({
+                ...tData.settings,
+                darkMode: localSettings.darkMode,
+                primaryColor: localSettings.primaryColor,
+              });
             }
           }
 
