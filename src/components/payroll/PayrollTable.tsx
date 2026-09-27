@@ -214,7 +214,7 @@ export const PayrollTable: React.FC<PayrollTableProps> = ({
               "flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all outline-none",
               payrollSubTab === 'payroll'
                 ? "bg-primary text-primary-foreground shadow-sm"
-                : "text-muted-foreground hover:text-foreground/90 dark:text-slate-200 hover:bg-muted dark:bg-slate-900"
+                : "text-muted-foreground hover:text-foreground dark:hover:text-slate-200 hover:bg-muted dark:hover:bg-slate-900"
             )}
           >
             <DollarSign className="w-3.5 h-3.5" />
@@ -228,7 +228,7 @@ export const PayrollTable: React.FC<PayrollTableProps> = ({
               "flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all outline-none",
               payrollSubTab === 'advances'
                 ? "bg-amber-500 text-slate-950 shadow-sm"
-                : "text-muted-foreground hover:text-foreground/90 dark:text-slate-200 hover:bg-muted dark:bg-slate-900"
+                : "text-muted-foreground hover:text-foreground dark:hover:text-slate-200 hover:bg-muted dark:hover:bg-slate-900"
             )}
           >
             <HandCoins className="w-3.5 h-3.5" />
@@ -465,7 +465,7 @@ export const PayrollTable: React.FC<PayrollTableProps> = ({
                                     <div
                                       key={p.id}
                                       className={`px-2 py-1.5 text-xs flex items-center justify-between rounded ${
-                                        isVoided ? 'bg-rose-950/20 opacity-70' : 'hover:bg-muted dark:bg-slate-800/50'
+                                        isVoided ? 'bg-rose-950/20 opacity-70' : 'hover:bg-muted/70 dark:hover:bg-muted dark:hover:bg-slate-800/50'
                                       }`}
                                     >
                                       <div className="flex-1 pr-1">
@@ -550,7 +550,7 @@ export const PayrollTable: React.FC<PayrollTableProps> = ({
                   );
 
                   return (
-                    <TableRow key={rec.id} className="border-border/60 dark:border-slate-800/60 hover:bg-muted/40 dark:bg-slate-900/40 text-xs">
+                    <TableRow key={rec.id} className="border-border/60 dark:border-slate-800/60 hover:bg-muted/50 dark:hover:bg-muted dark:hover:bg-slate-900/40 text-xs">
                       {/* Employee */}
                       <TableCell className="font-medium">
                         <div>
@@ -658,7 +658,7 @@ export const PayrollTable: React.FC<PayrollTableProps> = ({
                                     <div
                                       key={p.id}
                                       className={`px-2 py-1.5 text-xs flex items-center justify-between rounded ${
-                                        isVoided ? 'bg-rose-950/20 opacity-70' : 'hover:bg-muted dark:bg-slate-800/50'
+                                        isVoided ? 'bg-rose-950/20 opacity-70' : 'hover:bg-muted/70 dark:hover:bg-muted dark:hover:bg-slate-800/50'
                                       }`}
                                     >
                                       <div className="flex-1 pr-1">
@@ -715,7 +715,7 @@ export const PayrollTable: React.FC<PayrollTableProps> = ({
             {/* Totals Row */}
             {filteredRecords.length > 0 && (
               <tfoot>
-                <TableRow className="border-t-2 border-border dark:border-slate-700 bg-card dark:bg-slate-900/90 font-bold text-xs">
+                <TableRow className="border-t-2 border-border dark:border-slate-700 bg-muted/90 dark:bg-slate-900/90 font-bold text-xs">
                   <TableCell>الإجمالي ({filteredRecords.length} موظف)</TableCell>
                   <TableCell className="text-center font-mono">{totals.basic.toLocaleString('ar-EG')} ج.م</TableCell>
                   <TableCell className="text-center font-mono text-emerald-400">+{totals.additions.toLocaleString('ar-EG')}</TableCell>
