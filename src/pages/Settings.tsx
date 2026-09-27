@@ -4,6 +4,7 @@ import { MainLayout } from '@/components/layout';
 import { useAppStore } from '@/lib/store';
 import { useSettings, useUnits } from '@/hooks/useDatabase';
 import { useAuth } from '@/hooks/useAuth';
+import { useTheme } from '@/hooks/useTheme';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
@@ -66,6 +67,7 @@ export default function Settings() {
   } = useAppStore();
 
   const { user } = useAuth();
+  const { theme, setTheme } = useTheme();
   const { updateTenantProfile, updateBranchProfile, wipeAllTenantData } = useSettings(currentTenant?.id || null);
   const { units, add: addUnit, remove: removeUnit, seedStandardUnits } = useUnits(currentTenant?.id || null);
 
@@ -1029,9 +1031,9 @@ export default function Settings() {
                   <Label>الوضع الداكن (Dark Mode)</Label>
                   <p className="text-sm text-muted-foreground">تفعيل المظهر الليلي الداكن للنظام</p>
                 </div>
-                <Switch 
-                  checked={settings.darkMode}
-                  onCheckedChange={(checked) => updateSettings({ darkMode: checked })}
+                <Switch
+                  checked={theme === 'dark'}
+                  onCheckedChange={(checked) => setTheme(checked ? 'dark' : 'light')}
                 />
               </div>
               <Separator />
