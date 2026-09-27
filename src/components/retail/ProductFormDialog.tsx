@@ -37,6 +37,7 @@ import {
   AlertCircle,
   CheckCircle,
   Camera,
+  PackagePlus,
 } from 'lucide-react';
 import type { Product, ProductVariant, ProductType, BookMetadata } from '@/types/retail.types';
 import { useCategories } from '@/hooks/retail/useCategories';
@@ -49,13 +50,17 @@ import { removeUndefinedFields } from '@/lib/utils';
 import { useAppStore } from '@/lib/store';
 import { toast } from 'sonner';
 import { MobileScannerModal } from '@/components/retail/pos/MobileScannerModal';
+import type { ProductOpeningStockEntry } from '@/services/products/products.repository';
 
 interface ProductFormDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   product?: Product | null;
   initialBarcode?: string;
-  onSave: (productData: any) => Promise<{ success: boolean; error?: string }>;
+  onSave: (
+    productData: any,
+    options?: { openingStock?: ProductOpeningStockEntry[] }
+  ) => Promise<{ success: boolean; error?: string }>;
 }
 
 export function ProductFormDialog({
@@ -69,6 +74,7 @@ export function ProductFormDialog({
   const { brands } = useBrands();
   const { units } = useUnits();
   const settings = useAppStore((state) => state.settings);
+  const currentBranch = useAppStore((state) => state.currentBranch);
   const isTaxEnabled = Boolean(settings?.taxEnabled);
   const defaultTaxPercent = isTaxEnabled ? (settings?.taxRate ?? 14) : 0;
 
@@ -102,9 +108,11 @@ export function ProductFormDialog({
   const [minimumSellingPrice, setMinimumSellingPrice] = useState('');
   const [taxRate, setTaxRate] = useState(defaultTaxPercent.toString());
 
-  // Inventory limits
+  // Inventory limits / opening stock
   const [minimumStock, setMinimumStock] = useState('5');
   const [reorderPoint, setReorderPoint] = useState('10');
+  const [initialQuantity, setInitialQuantity] = useState('');
+  const [variantOpeningQuantities, setVariantOpeningQuantities] = useState<Record<string, string>>({});
 
   // Book Metadata
   const [isbn, setIsbn] = useState('');
@@ -152,6 +160,8 @@ export function ProductFormDialog({
         setTaxRate(prodTax.toString());
         setMinimumStock((product.minimumStock ?? 5).toString());
         setReorderPoint((product.reorderPoint ?? 10).toString());
+        setInitialQuantity('');
+        setVariantOpeningQuantities({});
 
         // Book metadata
         if (product.bookMetadata) {
@@ -194,6 +204,8 @@ export function ProductFormDialog({
         setTaxRate(defaultTaxPercent.toString());
         setMinimumStock('5');
         setReorderPoint('10');
+        setInitialQuantity('');
+        setVariantOpeningQuantities({});
 
         setIsbn('');
         setAuthor('');
@@ -231,11 +243,12 @@ export function ProductFormDialog({
     const nextIndex = variants.length + 1;
     const vSku = generateVariantSku(sku, [`VAR${nextIndex}`]);
     const vBarcode = generateInternalEan13Barcode(Math.floor(10000 + Math.random() * 90000));
+    const variantId = `var_${Date.now()}_${nextIndex}`;
 
     setVariants([
       ...variants,
       {
-        id: `var_${Date.now()}_${nextIndex}`,
+        id: variantId,
         productId: product?.id || '',
         name: `خاصية ${nextIndex}`,
         sku: vSku,
@@ -248,10 +261,19 @@ export function ProductFormDialog({
         active: true,
       },
     ]);
+    setVariantOpeningQuantities((prev) => ({ ...prev, [variantId]: '' }));
   };
 
   const removeVariant = (index: number) => {
+    const variantId = variants[index]?.id;
     setVariants(variants.filter((_, i) => i !== index));
+    if (variantId) {
+      setVariantOpeningQuantities((prev) => {
+        const next = { ...prev };
+        delete next[variantId];
+        return next;
+      });
+    }
   };
 
   const updateVariantField = (index: number, field: keyof ProductVariant, value: any) => {
@@ -312,6 +334,60 @@ export function ProductFormDialog({
 
     const payload = removeUndefinedFields(rawPayload);
 
+    const openingStock: ProductOpeningStockEntry[] = [];
+    if (!product && trackInventory) {
+      const parseOpeningQty = (value: string, label: string): number | null => {
+        if (!value.trim()) return null;
+        const parsed = Number(value);
+        if (!Number.isInteger(parsed) || parsed < 0) {
+          throw new Error(`الكمية الافتتاحية لـ ${label} يجب أن تكون عدداً صحيحاً صفر أو أكبر.`);
+        }
+        return parsed;
+      };
+
+      try {
+        if (hasVariants) {
+          for (const variant of variants) {
+            const qty = parseOpeningQty(
+              variantOpeningQuantities[variant.id] || '',
+              variant.name || variant.sku
+            );
+            if (qty && qty > 0) {
+              if (!currentBranch?.id) {
+                throw new Error('لا يوجد فرع حالي لتسجيل الرصيد الافتتاحي.');
+              }
+              openingStock.push({
+                locationId: currentBranch.id,
+                variantId: variant.id,
+                quantity: qty,
+                unitCost: Number(variant.purchasePrice ?? pCost ?? 0),
+                unitId,
+                notes: 'رصيد افتتاحي عند إنشاء الصنف من شاشة المنتجات',
+              });
+            }
+          }
+        } else {
+          const qty = parseOpeningQty(initialQuantity, name.trim() || 'الصنف');
+          if (qty && qty > 0) {
+            if (!currentBranch?.id) {
+              throw new Error('لا يوجد فرع حالي لتسجيل الرصيد الافتتاحي.');
+            }
+            openingStock.push({
+              locationId: currentBranch.id,
+              variantId: null,
+              quantity: qty,
+              unitCost: pCost,
+              unitId,
+              notes: 'رصيد افتتاحي عند إنشاء الصنف من شاشة المنتجات',
+            });
+          }
+        }
+      } catch (openingErr: any) {
+        toast.error(openingErr?.message || 'الكمية الافتتاحية غير صالحة');
+        return;
+      }
+    }
+
     const validation = validateProductForm(payload);
     if (!validation.isValid) {
       const firstError = Object.values(validation.errors)[0];
@@ -321,7 +397,7 @@ export function ProductFormDialog({
 
     setIsSubmitting(true);
     try {
-      const res = await onSave(payload);
+      const res = await onSave(payload, { openingStock });
       if (res.success) {
         toast.success(product ? 'تم تحديث بيانات المنتج بنجاح' : 'تم إضافة المنتج بنجاح');
         onOpenChange(false);
@@ -714,6 +790,58 @@ export function ProductFormDialog({
                   />
                 </div>
               </div>
+
+              {!product && trackInventory && (
+                <div className="rounded-xl border border-primary/20 bg-primary/5 p-3.5 space-y-2.5">
+                  <div className="flex items-start gap-2">
+                    <div className="w-8 h-8 rounded-lg bg-primary/10 text-primary flex items-center justify-center shrink-0">
+                      <PackagePlus className="w-4 h-4" />
+                    </div>
+                    <div className="min-w-0">
+                      <Label className="text-xs font-black text-foreground">الرصيد الافتتاحي عند إنشاء الصنف</Label>
+                      <p className="text-[11px] text-muted-foreground mt-0.5 leading-relaxed">
+                        سيُسجل الرصيد كحركة مخزنية افتتاحية في
+                        <span className="font-bold text-foreground"> {currentBranch?.name || 'الفرع الحالي'} </span>
+                        وبنفس عملية إنشاء الصنف، لذلك لن يتم إنشاء الصنف بدون رصيده إذا فشلت العملية.
+                      </p>
+                    </div>
+                  </div>
+
+                  {!hasVariants ? (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-end">
+                      <div>
+                        <Label className="text-xs">الكمية الافتتاحية</Label>
+                        <Input
+                          type="number"
+                          min="0"
+                          step="1"
+                          inputMode="numeric"
+                          value={initialQuantity}
+                          onChange={(e) => setInitialQuantity(e.target.value)}
+                          onFocus={(e) => e.target.select()}
+                          placeholder="مثال: 100"
+                          className="mt-1 font-black text-base"
+                        />
+                      </div>
+                      <div className="rounded-lg border border-border/70 bg-background/70 p-2.5">
+                        <span className="text-[10px] text-muted-foreground block">تكلفة الرصيد الافتتاحي</span>
+                        <span className="text-sm font-black text-foreground">
+                          {pCost.toFixed(2)} ج.م / وحدة
+                        </span>
+                        <span className="text-[10px] text-muted-foreground block mt-0.5">
+                          مأخوذة تلقائياً من سعر الشراء أعلاه
+                        </span>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="rounded-lg border border-border/70 bg-background/70 p-2.5 text-[11px] text-muted-foreground">
+                      هذا الصنف يحتوي على متغيرات؛ أدخل الكمية الافتتاحية لكل متغير من تبويب
+                      <span className="font-bold text-foreground"> الأنواع والخصائص </span>
+                      حتى يظل مخزون كل متغير مستقلاً بصورة صحيحة.
+                    </div>
+                  )}
+                </div>
+              )}
             </TabsContent>
 
             {/* TAB 3: PRODUCT-SPECIFIC (BOOK / NOTEBOOK) */}
@@ -966,6 +1094,36 @@ export function ProductFormDialog({
                             </Button>
                           </div>
                         </div>
+
+                        {!product && trackInventory && (
+                          <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_auto] gap-2 items-end pt-2 border-t border-border/50">
+                            <div>
+                              <Label className="text-[11px] flex items-center gap-1">
+                                <PackagePlus className="w-3 h-3 text-primary" />
+                                الكمية الافتتاحية لهذا المتغير
+                              </Label>
+                              <Input
+                                type="number"
+                                min="0"
+                                step="1"
+                                inputMode="numeric"
+                                value={variantOpeningQuantities[variant.id] || ''}
+                                onChange={(e) =>
+                                  setVariantOpeningQuantities((prev) => ({
+                                    ...prev,
+                                    [variant.id]: e.target.value,
+                                  }))
+                                }
+                                onFocus={(e) => e.target.select()}
+                                placeholder="0"
+                                className="h-8 mt-1 font-bold"
+                              />
+                            </div>
+                            <div className="text-[10px] text-muted-foreground sm:text-left pb-1">
+                              التكلفة: <span className="font-bold text-foreground">{Number(variant.purchasePrice ?? pCost).toFixed(2)} ج.م</span>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
