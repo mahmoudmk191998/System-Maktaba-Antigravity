@@ -882,7 +882,7 @@ export default function HR() {
     >
       {/* 1. Top KPI Cards */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5 sm:gap-3 mb-6">
-        <Card className="bg-card dark:bg-muted dark:bg-slate-900/50 border-border dark:border-slate-800">
+        <Card className="bg-card dark:bg-slate-900/50 border-border dark:border-slate-800">
           <CardContent className="p-3">
             <div className="flex items-center gap-2.5">
               <div className="w-10 h-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center shrink-0">
@@ -896,7 +896,7 @@ export default function HR() {
           </CardContent>
         </Card>
 
-        <Card className="bg-card dark:bg-muted dark:bg-slate-900/50 border-border dark:border-slate-800">
+        <Card className="bg-card dark:bg-slate-900/50 border-border dark:border-slate-800">
           <CardContent className="p-3">
             <div className="flex items-center gap-2.5">
               <div className="w-10 h-10 rounded-xl bg-emerald-500/10 text-emerald-400 flex items-center justify-center shrink-0">
@@ -910,7 +910,7 @@ export default function HR() {
           </CardContent>
         </Card>
 
-        <Card className="bg-card dark:bg-muted dark:bg-slate-900/50 border-border dark:border-slate-800">
+        <Card className="bg-card dark:bg-slate-900/50 border-border dark:border-slate-800">
           <CardContent className="p-3">
             <div className="flex items-center gap-2.5">
               <div className="w-10 h-10 rounded-xl bg-rose-500/10 text-rose-400 flex items-center justify-center shrink-0">
@@ -924,7 +924,7 @@ export default function HR() {
           </CardContent>
         </Card>
 
-        <Card className="bg-card dark:bg-muted dark:bg-slate-900/50 border-border dark:border-slate-800">
+        <Card className="bg-card dark:bg-slate-900/50 border-border dark:border-slate-800">
           <CardContent className="p-3">
             <div className="flex items-center gap-2.5">
               <div className="w-10 h-10 rounded-xl bg-amber-500/10 text-amber-400 flex items-center justify-center shrink-0">
@@ -938,7 +938,7 @@ export default function HR() {
           </CardContent>
         </Card>
 
-        <Card className="bg-card dark:bg-muted dark:bg-slate-900/50 border-border dark:border-slate-800">
+        <Card className="bg-card dark:bg-slate-900/50 border-border dark:border-slate-800">
           <CardContent className="p-3">
             <div className="flex items-center gap-2.5">
               <div className="w-10 h-10 rounded-xl bg-indigo-500/10 text-indigo-400 flex items-center justify-center shrink-0">
@@ -952,7 +952,7 @@ export default function HR() {
           </CardContent>
         </Card>
 
-        <Card className="bg-card dark:bg-muted dark:bg-slate-900/50 border-border dark:border-slate-800">
+        <Card className="bg-card dark:bg-slate-900/50 border-border dark:border-slate-800">
           <CardContent className="p-3">
             <div className="flex items-center gap-2.5">
               <div className="w-10 h-10 rounded-xl bg-sky-500/10 text-sky-400 flex items-center justify-center shrink-0">
@@ -969,7 +969,7 @@ export default function HR() {
 
       {/* Main Tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-        <TabsList className="flex-wrap h-auto bg-muted/80 dark:bg-muted dark:bg-slate-900/80 border border-border dark:border-slate-800 p-1 rounded-xl">
+        <TabsList className="flex-wrap h-auto bg-muted/80 dark:bg-slate-900/80 border border-border dark:border-slate-800 p-1 rounded-xl">
           <TabsTrigger value="employees" className="gap-2">
             <Users className="w-4 h-4" />
             الموظفون
@@ -1269,7 +1269,7 @@ export default function HR() {
                         </div>
                       </div>
 
-                      <div className="grid grid-cols-4 gap-1.5 text-center bg-muted/40 dark:bg-muted dark:bg-slate-900/40 p-2 rounded-lg border border-border/60 dark:border-border dark:border-slate-800/60 text-xs">
+                      <div className="grid grid-cols-4 gap-1.5 text-center bg-muted/40 dark:bg-slate-900/40 p-2 rounded-lg border border-border/60 dark:border-slate-800/60 text-xs">
                         <div>
                           <span className="text-[10px] text-muted-foreground block">حضور</span>
                           <span className="font-mono text-emerald-400 font-medium">{rec.checkIn || '-'}</span>
@@ -1430,7 +1430,7 @@ export default function HR() {
         <TabsContent value="qr" className="space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-start">
             {/* QR Visual Card */}
-            <Card className="md:col-span-1 border-primary/30 text-center p-6 bg-card dark:bg-muted dark:bg-slate-900/50">
+            <Card className="md:col-span-1 border-primary/30 text-center p-6 bg-card dark:bg-slate-900/50">
               <CardTitle className="text-base mb-1">رمز QR الحضور والانصراف</CardTitle>
               <CardDescription className="text-xs mb-4">
                 يتم وضعه في مدخل المكتبة أو لوحة الموظفين
@@ -2499,19 +2499,19 @@ export default function HR() {
                     return (
                       <>
                         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                          <div className="p-3 bg-muted/60 dark:bg-muted dark:bg-slate-900/60 rounded-xl border border-border dark:border-slate-800 text-center">
+                          <div className="p-3 bg-muted/60 dark:bg-slate-900/60 rounded-xl border border-border dark:border-slate-800 text-center">
                             <p className="text-lg font-bold text-emerald-400">{attended} يوم</p>
                             <p className="text-[10px] text-muted-foreground">أيام الحضور</p>
                           </div>
-                          <div className="p-3 bg-muted/60 dark:bg-muted dark:bg-slate-900/60 rounded-xl border border-border dark:border-slate-800 text-center">
+                          <div className="p-3 bg-muted/60 dark:bg-slate-900/60 rounded-xl border border-border dark:border-slate-800 text-center">
                             <p className="text-lg font-bold text-amber-400">{late} مرة</p>
                             <p className="text-[10px] text-muted-foreground">مرات التأخير</p>
                           </div>
-                          <div className="p-3 bg-muted/60 dark:bg-muted dark:bg-slate-900/60 rounded-xl border border-border dark:border-slate-800 text-center">
+                          <div className="p-3 bg-muted/60 dark:bg-slate-900/60 rounded-xl border border-border dark:border-slate-800 text-center">
                             <p className="text-lg font-bold text-amber-400">{lateMins} د</p>
                             <p className="text-[10px] text-muted-foreground">إجمالي التأخير</p>
                           </div>
-                          <div className="p-3 bg-muted/60 dark:bg-muted dark:bg-slate-900/60 rounded-xl border border-border dark:border-slate-800 text-center">
+                          <div className="p-3 bg-muted/60 dark:bg-slate-900/60 rounded-xl border border-border dark:border-slate-800 text-center">
                             <p className="text-lg font-bold text-primary">{Math.round(totalHours * 10) / 10} س</p>
                             <p className="text-[10px] text-muted-foreground">ساعات العمل</p>
                           </div>
@@ -2601,21 +2601,21 @@ export default function HR() {
                         </div>
 
                         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                          <div className="p-2.5 bg-muted/60 dark:bg-muted dark:bg-slate-900/60 rounded-xl border border-border dark:border-slate-800 text-center">
+                          <div className="p-2.5 bg-muted/60 dark:bg-slate-900/60 rounded-xl border border-border dark:border-slate-800 text-center">
                             <p className="text-base font-bold text-foreground">
                               {bal.entitlement !== null ? `${bal.entitlement} يوم` : 'غير محدد'}
                             </p>
                             <p className="text-[10px] text-muted-foreground">الرصيد السنوي المستحق</p>
                           </div>
-                          <div className="p-2.5 bg-muted/60 dark:bg-muted dark:bg-slate-900/60 rounded-xl border border-border dark:border-slate-800 text-center">
+                          <div className="p-2.5 bg-muted/60 dark:bg-slate-900/60 rounded-xl border border-border dark:border-slate-800 text-center">
                             <p className="text-base font-bold text-emerald-400">{bal.usedPaidDays} يوم</p>
                             <p className="text-[10px] text-muted-foreground">إجازات مدفوعة مستخدمة</p>
                           </div>
-                          <div className="p-2.5 bg-muted/60 dark:bg-muted dark:bg-slate-900/60 rounded-xl border border-border dark:border-slate-800 text-center">
+                          <div className="p-2.5 bg-muted/60 dark:bg-slate-900/60 rounded-xl border border-border dark:border-slate-800 text-center">
                             <p className="text-base font-bold text-rose-400">{bal.usedUnpaidDays} يوم</p>
                             <p className="text-[10px] text-muted-foreground">إجازات بدون مرتب</p>
                           </div>
-                          <div className="p-2.5 bg-muted/60 dark:bg-muted dark:bg-slate-900/60 rounded-xl border border-border dark:border-slate-800 text-center">
+                          <div className="p-2.5 bg-muted/60 dark:bg-slate-900/60 rounded-xl border border-border dark:border-slate-800 text-center">
                             <p className="text-base font-bold text-primary">
                               {bal.remainingDays !== null ? `${bal.remainingDays} يوم` : '-'}
                             </p>
