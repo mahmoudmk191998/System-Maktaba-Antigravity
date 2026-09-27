@@ -312,6 +312,7 @@ export function ProductFormDialog({
         : undefined;
 
     const bookMetadata = rawBookMetadata ? removeUndefinedFields(rawBookMetadata) : undefined;
+    const effectiveUnitId = unitId || units[0]?.id || 'u-pcs';
 
     const rawPayload: any = {
       name: name.trim(),
@@ -321,7 +322,7 @@ export function ProductFormDialog({
       productType,
       categoryId,
       brandId: brandId || '',
-      unitId: unitId || (units[0]?.id || 'u-pcs'),
+      unitId: effectiveUnitId,
       sku: sku.trim().toUpperCase(),
       barcode: barcode.trim(),
       purchasePrice: pCost,
@@ -345,13 +346,13 @@ export function ProductFormDialog({
 
     const payload = removeUndefinedFields(rawPayload);
 
-    const selectedUnit = units.find((unit) => unit.id === unitId);
+    const selectedUnit = units.find((unit) => unit.id === effectiveUnitId);
     const allowFraction = Boolean(selectedUnit?.allowFraction);
     const parseOpeningQty = (rawValue: string, label: string): number | null => {
       if (!rawValue.trim()) return 0;
       const parsed = Number(rawValue);
       if (!Number.isFinite(parsed) || parsed < 0) {
-        toast.error(`${label} يجب أن تكون رقماً صحيحاً غير سالب`);
+        toast.error(`${label} يجب أن تكون رقماً غير سالب`);
         return null;
       }
       if (!allowFraction && !Number.isInteger(parsed)) {
@@ -376,7 +377,7 @@ export function ProductFormDialog({
               variantId: variant.id,
               quantity: qty,
               unitCost: Number(variant.purchasePrice ?? pCost),
-              unitId: unitId || undefined,
+              unitId: effectiveUnitId,
             });
           }
         }
@@ -388,7 +389,7 @@ export function ProductFormDialog({
             variantId: null,
             quantity: qty,
             unitCost: pCost,
-            unitId: unitId || undefined,
+            unitId: effectiveUnitId,
           });
         }
       }
@@ -831,7 +832,7 @@ export function ProductFormDialog({
                           <Input
                             type="number"
                             min="0"
-                            step={units.find((unit) => unit.id === unitId)?.allowFraction ? '0.001' : '1'}
+                            step={units.find((unit) => unit.id === effectiveUnitId)?.allowFraction ? '0.001' : '1'}
                             value={openingQuantity}
                             onChange={(e) => setOpeningQuantity(e.target.value)}
                             onFocus={(e) => e.target.select()}
@@ -1115,7 +1116,7 @@ export function ProductFormDialog({
                             <Input
                               type="number"
                               min="0"
-                              step={units.find((unit) => unit.id === unitId)?.allowFraction ? '0.001' : '1'}
+                              step={units.find((unit) => unit.id === effectiveUnitId)?.allowFraction ? '0.001' : '1'}
                               value={variantOpeningQuantities[variant.id] || ''}
                               onChange={(e) =>
                                 setVariantOpeningQuantities((prev) => ({
