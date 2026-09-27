@@ -9,6 +9,31 @@
   <meta name="description" content="نظام ألوان المتكامل لإدارة المكتبات والقرطاسية والطباعة - نقاط البيع، المخزون، الحسابات العامة، والمزيد" />
   <meta name="author" content="Alwan Retail ERP" />
 
+  <!-- Apply the saved appearance before React mounts to prevent theme flashing on refresh/navigation. -->
+  <script>
+    (() => {
+      try {
+        const explicitTheme = localStorage.getItem('alwan-ui-theme');
+        let persistedDarkMode = null;
+
+        if (!explicitTheme) {
+          const persistedStore = JSON.parse(localStorage.getItem('rms-storage') || '{}');
+          persistedDarkMode = persistedStore?.state?.settings?.darkMode;
+        }
+
+        const useDark =
+          explicitTheme === 'dark' ||
+          (explicitTheme !== 'light' && persistedDarkMode !== false);
+
+        document.documentElement.classList.toggle('dark', useDark);
+        document.documentElement.style.colorScheme = useDark ? 'dark' : 'light';
+      } catch {
+        document.documentElement.classList.add('dark');
+        document.documentElement.style.colorScheme = 'dark';
+      }
+    })();
+  </script>
+
   <!-- PWA Meta Tags -->
   <meta name="theme-color" content="#1e3a5f" />
   <meta name="mobile-web-app-capable" content="yes" />
