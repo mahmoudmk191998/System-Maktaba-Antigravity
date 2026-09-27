@@ -104,10 +104,10 @@ export const ActiveAdvancesTable: React.FC<ActiveAdvancesTableProps> = ({
     <div className="space-y-4">
       {/* 1. Metrics & Header Controls */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        <div className="p-3 bg-slate-900/60 rounded-xl border border-slate-800 flex items-center justify-between">
+        <div className="p-3 bg-muted/60 dark:bg-slate-900/60 rounded-xl border border-border dark:border-slate-800 flex items-center justify-between">
           <div>
             <p className="text-[11px] text-muted-foreground">السلف القائمة (النشطة)</p>
-            <p className="text-lg font-bold font-mono text-slate-100 mt-0.5">
+            <p className="text-lg font-bold font-mono text-foreground dark:text-slate-100 mt-0.5">
               {metrics.activeCount} <span className="text-xs font-normal text-muted-foreground">سلفة</span>
             </p>
           </div>
@@ -116,7 +116,7 @@ export const ActiveAdvancesTable: React.FC<ActiveAdvancesTableProps> = ({
           </div>
         </div>
 
-        <div className="p-3 bg-slate-900/60 rounded-xl border border-slate-800 flex items-center justify-between">
+        <div className="p-3 bg-muted/60 dark:bg-slate-900/60 rounded-xl border border-border dark:border-slate-800 flex items-center justify-between">
           <div>
             <p className="text-[11px] text-muted-foreground">المتبقي للتحصيل</p>
             <p className="text-lg font-bold font-mono text-amber-400 mt-0.5">
@@ -128,7 +128,7 @@ export const ActiveAdvancesTable: React.FC<ActiveAdvancesTableProps> = ({
           </div>
         </div>
 
-        <div className="p-3 bg-slate-900/60 rounded-xl border border-slate-800 flex items-center justify-between">
+        <div className="p-3 bg-muted/60 dark:bg-slate-900/60 rounded-xl border border-border dark:border-slate-800 flex items-center justify-between">
           <div>
             <p className="text-[11px] text-muted-foreground">المسدد من السلف القائمة</p>
             <p className="text-lg font-bold font-mono text-emerald-400 mt-0.5">
@@ -150,7 +150,7 @@ export const ActiveAdvancesTable: React.FC<ActiveAdvancesTableProps> = ({
               placeholder="بحث باسم الموظف أو ملاحظات السلفة..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="pr-9 h-9 text-xs bg-slate-900/80 border-slate-700"
+              className="pr-9 h-9 text-xs bg-muted/80 dark:bg-slate-900/80 border-border dark:border-slate-700"
             />
           </div>
 
@@ -158,7 +158,7 @@ export const ActiveAdvancesTable: React.FC<ActiveAdvancesTableProps> = ({
             value={viewFilter}
             onValueChange={(val: any) => setViewFilter(val)}
           >
-            <SelectTrigger className="w-full sm:w-[180px] h-9 text-xs bg-slate-900/80 border-slate-700">
+            <SelectTrigger className="w-full sm:w-[180px] h-9 text-xs bg-muted/80 dark:bg-slate-900/80 border-border dark:border-slate-700">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -182,7 +182,7 @@ export const ActiveAdvancesTable: React.FC<ActiveAdvancesTableProps> = ({
       {/* 3. Mobile Cards View (< md) */}
       <div className="md:hidden space-y-3">
         {filteredAdvances.length === 0 ? (
-          <div className="text-center py-12 text-muted-foreground p-4 bg-slate-900/30 rounded-xl border border-slate-800">
+          <div className="text-center py-12 text-muted-foreground p-4 bg-muted/30 dark:bg-slate-900/30 rounded-xl border border-border dark:border-slate-800">
             <HandCoins className="w-10 h-10 mx-auto mb-2 opacity-30 text-amber-400" />
             <p className="text-sm">لا توجد سلف مطابقة للفلتر الحالي</p>
             <p className="text-xs text-muted-foreground mt-1">
@@ -200,17 +200,17 @@ export const ActiveAdvancesTable: React.FC<ActiveAdvancesTableProps> = ({
             return (
               <div
                 key={adv.id}
-                className={`p-4 rounded-xl border border-slate-800 bg-slate-900/50 space-y-3 ${
+                className={`p-4 rounded-xl border border-border dark:border-slate-800 bg-card dark:bg-slate-900/50 space-y-3 ${
                   isCancelled ? 'opacity-70 bg-rose-950/10' : ''
                 }`}
               >
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex items-center gap-2">
-                    <div className="w-8 h-8 rounded-full bg-slate-800 flex items-center justify-center font-bold text-xs text-slate-300 shrink-0">
+                    <div className="w-8 h-8 rounded-full bg-muted dark:bg-slate-800 flex items-center justify-center font-bold text-xs text-muted-foreground dark:text-slate-300 shrink-0">
                       {adv.employeeName?.charAt(0) || 'م'}
                     </div>
                     <div>
-                      <p className="font-bold text-slate-100 text-sm">{adv.employeeName}</p>
+                      <p className="font-bold text-foreground dark:text-slate-100 text-sm">{adv.employeeName}</p>
                       <p className="text-[10px] text-muted-foreground flex items-center gap-1">
                         <Calendar className="w-3 h-3" />
                         {adv.startDate || adv.createdAt?.slice(0, 10)}
@@ -241,10 +241,10 @@ export const ActiveAdvancesTable: React.FC<ActiveAdvancesTableProps> = ({
                   )}
                 </div>
 
-                <div className="grid grid-cols-3 gap-2 text-center bg-slate-950/40 p-2.5 rounded-lg border border-slate-800/60">
+                <div className="grid grid-cols-3 gap-2 text-center bg-muted/20 dark:bg-slate-950/40 p-2.5 rounded-lg border border-border/60 dark:border-slate-800/60">
                   <div>
                     <span className="text-[10px] text-muted-foreground block">مبلغ السلفة</span>
-                    <span className="font-mono font-bold text-xs text-slate-200">{adv.amount.toLocaleString('ar-EG')} ج.م</span>
+                    <span className="font-mono font-bold text-xs text-foreground/90 dark:text-slate-200">{adv.amount.toLocaleString('ar-EG')} ج.م</span>
                   </div>
                   <div>
                     <span className="text-[10px] text-muted-foreground block">المسدد</span>
@@ -259,7 +259,7 @@ export const ActiveAdvancesTable: React.FC<ActiveAdvancesTableProps> = ({
                 </div>
 
                 <div className="flex items-center justify-between text-xs pt-1">
-                  <div className="text-[11px] text-slate-300">
+                  <div className="text-[11px] text-muted-foreground dark:text-slate-300">
                     {adv.repaymentType === 'installments' ? (
                       <span>{adv.numberOfInstallments} أقساط × {adv.installmentAmount?.toLocaleString('ar-EG')} ج.م</span>
                     ) : (
@@ -303,10 +303,10 @@ export const ActiveAdvancesTable: React.FC<ActiveAdvancesTableProps> = ({
       </div>
 
       {/* 4. Desktop Table View (>= md) */}
-      <div className="hidden md:block rounded-xl border border-slate-800 overflow-x-auto bg-slate-950/40">
+      <div className="hidden md:block rounded-xl border border-border dark:border-slate-800 overflow-x-auto bg-muted/20 dark:bg-slate-950/40">
         <Table>
-          <TableHeader className="bg-slate-900/70">
-            <TableRow className="border-slate-800 hover:bg-transparent text-xs">
+          <TableHeader className="bg-muted/70 dark:bg-slate-900/70">
+            <TableRow className="border-border dark:border-slate-800 hover:bg-transparent text-xs">
               <TableHead className="text-right">الموظف</TableHead>
               <TableHead className="text-center">المبلغ</TableHead>
               <TableHead className="text-center">المدفوع</TableHead>
@@ -338,18 +338,18 @@ export const ActiveAdvancesTable: React.FC<ActiveAdvancesTableProps> = ({
                 return (
                   <TableRow
                     key={adv.id}
-                    className={`border-slate-800/80 hover:bg-slate-900/50 transition-colors text-xs ${
+                    className={`border-border/80 dark:border-slate-800/80 hover:bg-card dark:bg-slate-900/50 transition-colors text-xs ${
                       isCancelled ? 'bg-rose-950/10 text-muted-foreground' : ''
                     }`}
                   >
                     {/* Employee */}
                     <TableCell className="font-semibold text-right">
                       <div className="flex items-center gap-2">
-                        <div className="w-7 h-7 rounded-full bg-slate-800 flex items-center justify-center font-bold text-[11px] text-slate-300">
+                        <div className="w-7 h-7 rounded-full bg-muted dark:bg-slate-800 flex items-center justify-center font-bold text-[11px] text-muted-foreground dark:text-slate-300">
                           {adv.employeeName?.charAt(0) || 'م'}
                         </div>
                         <div>
-                          <p className="text-slate-100 font-bold">{adv.employeeName}</p>
+                          <p className="text-foreground dark:text-slate-100 font-bold">{adv.employeeName}</p>
                           <p className="text-[10px] text-muted-foreground flex items-center gap-1">
                             <Calendar className="w-3 h-3" />
                             {adv.startDate || adv.createdAt?.slice(0, 10)}
@@ -359,7 +359,7 @@ export const ActiveAdvancesTable: React.FC<ActiveAdvancesTableProps> = ({
                     </TableCell>
 
                     {/* Amount */}
-                    <TableCell className="text-center font-mono font-bold text-slate-200">
+                    <TableCell className="text-center font-mono font-bold text-foreground/90 dark:text-slate-200">
                       <span className={isCancelled ? 'line-through text-slate-500' : ''}>
                         {adv.amount.toLocaleString('ar-EG')} ج.م
                       </span>
@@ -394,7 +394,7 @@ export const ActiveAdvancesTable: React.FC<ActiveAdvancesTableProps> = ({
                     <TableCell className="text-center">
                       {adv.repaymentType === 'installments' ? (
                         <div className="flex flex-col items-center">
-                          <span className="text-[11px] font-semibold text-slate-200">
+                          <span className="text-[11px] font-semibold text-foreground/90 dark:text-slate-200">
                             {adv.numberOfInstallments} أقساط × {adv.installmentAmount?.toLocaleString('ar-EG')} ج.م
                           </span>
                           {!isCancelled && (
@@ -404,7 +404,7 @@ export const ActiveAdvancesTable: React.FC<ActiveAdvancesTableProps> = ({
                           )}
                         </div>
                       ) : (
-                        <span className="text-[11px] text-slate-300">
+                        <span className="text-[11px] text-muted-foreground dark:text-slate-300">
                           خصم كامل من الراتب القادم
                         </span>
                       )}
@@ -420,7 +420,7 @@ export const ActiveAdvancesTable: React.FC<ActiveAdvancesTableProps> = ({
                               ملغاة
                             </Badge>
                           </TooltipTrigger>
-                          <TooltipContent side="top" className="text-xs max-w-xs bg-slate-900 border-slate-700">
+                          <TooltipContent side="top" className="text-xs max-w-xs bg-muted dark:bg-slate-900 border-border dark:border-slate-700">
                             <p className="font-bold text-rose-400">سبب الإلغاء:</p>
                             <p className="text-[11px]">{adv.cancelReason || 'غير محدد'}</p>
                             {adv.cancelledBy && (
