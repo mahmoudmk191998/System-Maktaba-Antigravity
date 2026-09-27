@@ -366,7 +366,7 @@ export default function Expenses() {
       <div className="space-y-6">
 
         {/* View Mode Toggle Bar */}
-        <div className="flex items-center gap-2 border-b border-slate-800 pb-3">
+        <div className="flex items-center gap-2 border-b border-border dark:border-slate-800 pb-3">
           <Button
             variant={categoryFilter !== 'رواتب' ? 'default' : 'outline'}
             size="sm"
@@ -413,7 +413,7 @@ export default function Expenses() {
             />
 
             {/* Salary Expenses Audit Table */}
-            <Card className="border-slate-800 bg-slate-950/40">
+            <Card className="border-border dark:border-slate-800 bg-card dark:bg-slate-950/40">
               <CardHeader className="pb-3">
                 <CardTitle className="text-base flex items-center gap-2">
                   <Receipt className="w-4 h-4 text-primary" />
@@ -424,10 +424,10 @@ export default function Expenses() {
                 </CardDescription>
               </CardHeader>
               <CardContent className="p-0">
-                <div className="border-t border-slate-800 overflow-x-auto">
+                <div className="border-t border-border dark:border-slate-800 overflow-x-auto">
                   <Table>
-                    <TableHeader className="bg-slate-900/60 text-xs">
-                      <TableRow className="border-slate-800">
+                    <TableHeader className="bg-muted/60 dark:bg-muted dark:bg-slate-900/60 text-xs">
+                      <TableRow className="border-border dark:border-slate-800">
                         <TableHead className="text-right">التاريخ</TableHead>
                         <TableHead className="text-right">البيان</TableHead>
                         <TableHead className="text-left">المبلغ</TableHead>
@@ -447,7 +447,7 @@ export default function Expenses() {
                           return (
                             <TableRow
                               key={e.id}
-                              className={`border-slate-800/60 text-xs ${
+                              className={`border-border/60 dark:border-border dark:border-slate-800/60 text-xs ${
                                 isVoided ? 'bg-rose-950/15 text-muted-foreground' : ''
                               }`}
                             >
@@ -455,7 +455,7 @@ export default function Expenses() {
                               <TableCell>
                                 <div className="space-y-0.5">
                                   <div className="flex items-center gap-1.5">
-                                    <span className={isVoided ? 'line-through text-slate-400' : ''}>
+                                    <span className={isVoided ? 'line-through text-muted-foreground dark:text-slate-400' : ''}>
                                       {e.description}
                                     </span>
                                     {isVoided && (
@@ -639,7 +639,7 @@ export default function Expenses() {
           </CardHeader>
           <CardContent>
             {/* Mobile Cards View (< md) */}
-            <div className="md:hidden divide-y divide-border/50 border rounded-lg border-border/50 bg-slate-950/20">
+            <div className="md:hidden divide-y divide-border/50 border rounded-lg border-border/50 bg-muted/20 dark:bg-slate-950/20">
               {loading ? (
                 <div className="h-32 flex justify-center items-center">
                   <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin" />
@@ -667,7 +667,7 @@ export default function Expenses() {
                             <span className="text-xs text-muted-foreground font-mono">
                               {format(new Date(expense.date), 'dd MMMM yyyy', { locale: ar })}
                             </span>
-                            <p className={`font-semibold text-sm text-slate-100 ${isVoided ? 'line-through text-slate-400' : ''}`}>
+                            <p className={`font-semibold text-sm text-foreground dark:text-slate-100 ${isVoided ? 'line-through text-muted-foreground dark:text-slate-400' : ''}`}>
                               {expense.description}
                             </p>
                           </div>
@@ -794,7 +794,7 @@ export default function Expenses() {
                           </TableCell>
                           <TableCell className="text-muted-foreground">
                             <div className="space-y-0.5">
-                              <span className={isVoided ? 'line-through text-slate-400' : ''}>
+                              <span className={isVoided ? 'line-through text-muted-foreground dark:text-slate-400' : ''}>
                                 {expense.description}
                               </span>
                               {isVoided && expense.voidReason && (
