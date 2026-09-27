@@ -426,7 +426,7 @@ export default function Expenses() {
               <CardContent className="p-0">
                 <div className="border-t border-border dark:border-slate-800 overflow-x-auto">
                   <Table>
-                    <TableHeader className="bg-muted/60 dark:bg-muted dark:bg-slate-900/60 text-xs">
+                    <TableHeader className="bg-muted/60 dark:bg-slate-900/60 text-xs">
                       <TableRow className="border-border dark:border-slate-800">
                         <TableHead className="text-right">التاريخ</TableHead>
                         <TableHead className="text-right">البيان</TableHead>
@@ -447,7 +447,7 @@ export default function Expenses() {
                           return (
                             <TableRow
                               key={e.id}
-                              className={`border-border/60 dark:border-border dark:border-slate-800/60 text-xs ${
+                              className={`border-border/60 dark:border-slate-800/60 text-xs ${
                                 isVoided ? 'bg-rose-950/15 text-muted-foreground' : ''
                               }`}
                             >
