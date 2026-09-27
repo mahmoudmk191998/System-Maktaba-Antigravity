@@ -100,23 +100,23 @@ export const SalaryPaymentModal: React.FC<SalaryPaymentModalProps> = ({
         {/* Financial Breakdown Grid */}
         <div className="space-y-4 py-2">
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
-            <div className="p-2.5 bg-slate-900/60 rounded-xl border border-slate-800">
+            <div className="p-2.5 bg-muted/60 dark:bg-slate-900/60 rounded-xl border border-border dark:border-slate-800">
               <p className="text-muted-foreground text-[10px]">الأساسي (Snapshot)</p>
-              <p className="font-bold text-slate-100 text-sm">{payroll.basicSalarySnapshot.toLocaleString('ar-EG')} ج.م</p>
+              <p className="font-bold text-foreground dark:text-slate-100 text-sm">{payroll.basicSalarySnapshot.toLocaleString('ar-EG')} ج.م</p>
             </div>
-            <div className="p-2.5 bg-slate-900/60 rounded-xl border border-slate-800">
+            <div className="p-2.5 bg-muted/60 dark:bg-slate-900/60 rounded-xl border border-border dark:border-slate-800">
               <p className="text-muted-foreground text-[10px]">الإضافي والبدلات</p>
               <p className="font-bold text-emerald-400 text-sm">
                 +{(payroll.overtime + payroll.bonuses + payroll.allowances).toLocaleString('ar-EG')} ج.م
               </p>
             </div>
-            <div className="p-2.5 bg-slate-900/60 rounded-xl border border-slate-800">
+            <div className="p-2.5 bg-muted/60 dark:bg-slate-900/60 rounded-xl border border-border dark:border-slate-800">
               <p className="text-muted-foreground text-[10px]">خصومات الحضور</p>
               <p className="font-bold text-rose-400 text-sm">
                 -{payroll.attendanceDeductions.toLocaleString('ar-EG')} ج.م
               </p>
             </div>
-            <div className="p-2.5 bg-slate-900/60 rounded-xl border border-slate-800">
+            <div className="p-2.5 bg-muted/60 dark:bg-slate-900/60 rounded-xl border border-border dark:border-slate-800">
               <p className="text-muted-foreground text-[10px]">أقساط السلف</p>
               <p className="font-bold text-amber-400 text-sm">
                 -{payroll.advanceDeductions.toLocaleString('ar-EG')} ج.م
@@ -136,10 +136,10 @@ export const SalaryPaymentModal: React.FC<SalaryPaymentModalProps> = ({
           )}
 
           {/* Overall Salary Totals Box */}
-          <div className="p-3 bg-slate-950/80 rounded-xl border border-slate-800 grid grid-cols-3 gap-2 text-center">
+          <div className="p-3 bg-card/95 dark:bg-slate-950/80 rounded-xl border border-border dark:border-slate-800 grid grid-cols-3 gap-2 text-center">
             <div>
               <p className="text-[10px] text-muted-foreground">صافي الراتب المستحق</p>
-              <p className="text-base font-bold text-slate-100">{payroll.netSalary.toLocaleString('ar-EG')} ج.م</p>
+              <p className="text-base font-bold text-foreground dark:text-slate-100">{payroll.netSalary.toLocaleString('ar-EG')} ج.م</p>
             </div>
             <div>
               <p className="text-[10px] text-muted-foreground">المدفوع مسبقاً</p>
@@ -232,7 +232,7 @@ export const SalaryPaymentModal: React.FC<SalaryPaymentModalProps> = ({
               />
             </div>
 
-            <div className="p-2.5 bg-slate-900/50 rounded-lg border border-slate-800 text-[11px] text-muted-foreground flex items-center gap-2">
+            <div className="p-2.5 bg-card dark:bg-slate-900/50 rounded-lg border border-border dark:border-slate-800 text-[11px] text-muted-foreground flex items-center gap-2">
               <CheckCircle2 className="w-4 h-4 text-primary shrink-0" />
               <span>
                 سيتم تسجيل هذه المعاملة تلقائياً في صفحة <strong>المصروفات</strong> تحت تصنيف "رواتب" بمبلغ {amount.toLocaleString('ar-EG')} ج.م فقط.
