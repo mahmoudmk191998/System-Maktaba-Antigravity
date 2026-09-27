@@ -11,6 +11,7 @@ import {
   findProductOrVariantByBarcode,
   findProductOrVariantBySku,
   FetchProductsOptions,
+  type CreateProductOptions,
 } from '@/services/products/products.repository';
 import { DocumentSnapshot } from 'firebase/firestore';
 
@@ -106,8 +107,19 @@ export function useProducts(initialFilters: FetchProductsOptions = {}) {
     };
   }, [loadProducts]);
 
-  const createProduct = async (productData: Omit<Product, 'id' | 'createdAt' | 'updatedAt' | 'tenantId'>) => {
-    const res = await createProductInDb(tenantId, productData, currentUser?.id);
+  const createProduct = async (
+    productData: Omit<Product, 'id' | 'createdAt' | 'updatedAt' | 'tenantId'>,
+    options: CreateProductOptions = {}
+  ) => {
+    const res = await createProductInDb(tenantId, productData, currentUser?.id, {
+      ...options,
+      openingStock: options.openingStock
+        ? {
+            ...options.openingStock,
+            employeeId: options.openingStock.employeeId || currentUser?.id,
+          }
+        : undefined,
+    });
     if (res.success && res.product) {
       setProducts((prev) => [res.product!, ...prev]);
       window.dispatchEvent(new CustomEvent('alwan_products_synced'));
