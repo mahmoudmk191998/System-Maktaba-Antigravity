@@ -179,7 +179,7 @@ export const AdvanceModal: React.FC<AdvanceModalProps> = ({
                 className={`p-2.5 rounded-xl border text-xs text-right transition-all ${
                   repaymentType === 'next_salary'
                     ? 'border-primary bg-primary/10 text-primary font-bold shadow-sm'
-                    : 'border-slate-800 bg-slate-900/40 text-muted-foreground hover:bg-slate-800/60'
+                    : 'border-border dark:border-slate-800 bg-muted/40 dark:bg-slate-900/40 text-muted-foreground hover:bg-muted/60 dark:bg-slate-800/60'
                 }`}
               >
                 <p className="font-bold">خصم كامل المبلغ</p>
@@ -192,7 +192,7 @@ export const AdvanceModal: React.FC<AdvanceModalProps> = ({
                 className={`p-2.5 rounded-xl border text-xs text-right transition-all ${
                   repaymentType === 'installments'
                     ? 'border-primary bg-primary/10 text-primary font-bold shadow-sm'
-                    : 'border-slate-800 bg-slate-900/40 text-muted-foreground hover:bg-slate-800/60'
+                    : 'border-border dark:border-slate-800 bg-muted/40 dark:bg-slate-900/40 text-muted-foreground hover:bg-muted/60 dark:bg-slate-800/60'
                 }`}
               >
                 <p className="font-bold">تقسيط السلفة</p>
@@ -203,7 +203,7 @@ export const AdvanceModal: React.FC<AdvanceModalProps> = ({
 
           {/* Installments Options if Selected */}
           {repaymentType === 'installments' && (
-            <div className="p-3 bg-slate-900/60 rounded-xl border border-slate-800 space-y-2 text-xs">
+            <div className="p-3 bg-muted/60 dark:bg-slate-900/60 rounded-xl border border-border dark:border-slate-800 space-y-2 text-xs">
               <div className="grid grid-cols-2 gap-3 items-center">
                 <div className="space-y-1">
                   <Label className="text-[11px]">عدد الأقساط (شهور)</Label>
@@ -217,7 +217,7 @@ export const AdvanceModal: React.FC<AdvanceModalProps> = ({
                     disabled={isSubmitting}
                   />
                 </div>
-                <div className="space-y-1 text-center bg-slate-950/60 p-2 rounded-lg border border-slate-800">
+                <div className="space-y-1 text-center bg-card dark:bg-slate-950/60 p-2 rounded-lg border border-border dark:border-slate-800">
                   <p className="text-[10px] text-muted-foreground">قيمة القسط الشهري</p>
                   <p className="text-sm font-bold text-emerald-400">
                     {calculatedInstallment.toLocaleString('ar-EG')} ج.م
