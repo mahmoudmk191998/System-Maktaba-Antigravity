@@ -464,7 +464,7 @@ export function LeavesTab({
 
       {/* 2. Top KPI Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <Card className="bg-slate-900/50 border-slate-800">
+        <Card className="bg-card dark:bg-slate-900/50 border-border dark:border-slate-800">
           <CardContent className="p-3">
             <div className="flex items-center gap-2.5">
               <div className="w-10 h-10 rounded-xl bg-amber-500/10 text-amber-400 flex items-center justify-center shrink-0">
@@ -478,7 +478,7 @@ export function LeavesTab({
           </CardContent>
         </Card>
 
-        <Card className="bg-slate-900/50 border-slate-800">
+        <Card className="bg-card dark:bg-slate-900/50 border-border dark:border-slate-800">
           <CardContent className="p-3">
             <div className="flex items-center gap-2.5">
               <div className="w-10 h-10 rounded-xl bg-blue-500/10 text-blue-400 flex items-center justify-center shrink-0">
@@ -492,7 +492,7 @@ export function LeavesTab({
           </CardContent>
         </Card>
 
-        <Card className="bg-slate-900/50 border-slate-800">
+        <Card className="bg-card dark:bg-slate-900/50 border-border dark:border-slate-800">
           <CardContent className="p-3">
             <div className="flex items-center gap-2.5">
               <div className="w-10 h-10 rounded-xl bg-purple-500/10 text-purple-400 flex items-center justify-center shrink-0">
@@ -506,7 +506,7 @@ export function LeavesTab({
           </CardContent>
         </Card>
 
-        <Card className="bg-slate-900/50 border-slate-800">
+        <Card className="bg-card dark:bg-slate-900/50 border-border dark:border-slate-800">
           <CardContent className="p-3">
             <div className="flex items-center gap-2.5">
               <div className="w-10 h-10 rounded-xl bg-emerald-500/10 text-emerald-400 flex items-center justify-center shrink-0">
@@ -522,7 +522,7 @@ export function LeavesTab({
       </div>
 
       {/* 3. Search & Filters Bar */}
-      <Card className="bg-slate-900/40 border-slate-800">
+      <Card className="bg-muted/40 dark:bg-slate-900/40 border-border dark:border-slate-800">
         <CardContent className="p-3.5 space-y-3">
           <div className="flex flex-col md:flex-row gap-2.5">
             <div className="relative flex-1">
@@ -589,7 +589,7 @@ export function LeavesTab({
             جاري تحميل سجلات الإجازات...
           </div>
         ) : filteredLeaves.length === 0 ? (
-          <Card className="border-dashed border-slate-800 bg-slate-950/20">
+          <Card className="border-dashed border-border dark:border-slate-800 bg-muted/20 dark:bg-slate-950/20">
             <CardContent className="flex flex-col items-center justify-center py-12 text-center">
               <CalendarOff className="w-10 h-10 text-muted-foreground mb-3 opacity-60" />
               <p className="text-sm font-bold text-foreground">لا توجد إجازات مسجلة</p>
@@ -607,7 +607,7 @@ export function LeavesTab({
                 const statusCfg = LEAVE_STATUS_CONFIG[leave.status] || LEAVE_STATUS_CONFIG.pending;
 
                 return (
-                  <Card key={leave.id} className="border-slate-800 bg-slate-950/40 p-3.5 space-y-3">
+                  <Card key={leave.id} className="border-border dark:border-slate-800 bg-muted/20 dark:bg-slate-950/40 p-3.5 space-y-3">
                     <div className="flex items-start justify-between gap-2">
                       <div>
                         <p className="font-bold text-sm text-foreground">{leave.employee_name_snapshot}</p>
@@ -625,7 +625,7 @@ export function LeavesTab({
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-3 gap-1.5 text-center bg-slate-900/60 p-2 rounded-lg border border-slate-800 text-xs">
+                    <div className="grid grid-cols-3 gap-1.5 text-center bg-muted/60 dark:bg-slate-900/60 p-2 rounded-lg border border-border dark:border-slate-800 text-xs">
                       <div>
                         <span className="text-[10px] text-muted-foreground block">من</span>
                         <span className="font-mono font-medium">{leave.start_date}</span>
@@ -640,7 +640,7 @@ export function LeavesTab({
                       </div>
                     </div>
 
-                    <div className="flex items-center justify-between text-xs pt-1 border-t border-slate-900">
+                    <div className="flex items-center justify-between text-xs pt-1 border-t border-border dark:border-slate-900">
                       <div className="flex items-center gap-2">
                         <Badge
                           variant="outline"
@@ -696,7 +696,7 @@ export function LeavesTab({
                               setActionType('cancel');
                               setActionReason('');
                             }}
-                            className="h-8 px-2 text-slate-400 hover:text-slate-200 hover:bg-slate-800 text-xs"
+                            className="h-8 px-2 text-muted-foreground dark:text-slate-400 hover:text-foreground/90 dark:text-slate-200 hover:bg-muted dark:bg-slate-800 text-xs"
                           >
                             إلغاء
                           </Button>
@@ -709,10 +709,10 @@ export function LeavesTab({
             </div>
 
             {/* Desktop Table View (>= md) */}
-            <div className="hidden md:block overflow-x-auto rounded-lg border border-slate-800 bg-slate-950/20">
+            <div className="hidden md:block overflow-x-auto rounded-lg border border-border dark:border-slate-800 bg-muted/20 dark:bg-slate-950/20">
               <Table>
                 <TableHeader>
-                  <TableRow className="border-slate-800 hover:bg-transparent">
+                  <TableRow className="border-border dark:border-slate-800 hover:bg-transparent">
                     <TableHead className="text-right">الموظف</TableHead>
                     <TableHead className="text-right">نوع الإجازة</TableHead>
                     <TableHead className="text-right">من</TableHead>
@@ -730,8 +730,8 @@ export function LeavesTab({
                     const statusCfg = LEAVE_STATUS_CONFIG[leave.status] || LEAVE_STATUS_CONFIG.pending;
 
                     return (
-                      <TableRow key={leave.id} className="border-slate-800/60 hover:bg-slate-900/40">
-                        <TableCell className="font-medium text-slate-100">
+                      <TableRow key={leave.id} className="border-border/60 dark:border-slate-800/60 hover:bg-muted/40 dark:bg-slate-900/40">
+                        <TableCell className="font-medium text-foreground dark:text-slate-100">
                           <div>
                             <span>{leave.employee_name_snapshot}</span>
                             <span className="block text-[11px] text-muted-foreground">
@@ -744,8 +744,8 @@ export function LeavesTab({
                             {typeCfg.labelAr}
                           </Badge>
                         </TableCell>
-                        <TableCell className="font-mono text-xs text-slate-300">{leave.start_date}</TableCell>
-                        <TableCell className="font-mono text-xs text-slate-300">{leave.end_date}</TableCell>
+                        <TableCell className="font-mono text-xs text-muted-foreground dark:text-slate-300">{leave.start_date}</TableCell>
+                        <TableCell className="font-mono text-xs text-muted-foreground dark:text-slate-300">{leave.end_date}</TableCell>
                         <TableCell className="text-center">
                           <span className="font-bold text-primary">{leave.working_days_count}</span>
                           {leave.requested_days !== leave.working_days_count && (
@@ -862,7 +862,7 @@ export function LeavesTab({
 
             {/* Employee Leave Balance Card (if employee selected) */}
             {selectedEmp && selectedEmpBalance && (
-              <div className="bg-slate-900/60 p-2.5 rounded-lg border border-slate-800 text-xs space-y-1.5">
+              <div className="bg-muted/60 dark:bg-slate-900/60 p-2.5 rounded-lg border border-border dark:border-slate-800 text-xs space-y-1.5">
                 <div className="flex items-center justify-between text-muted-foreground">
                   <span>الرصيد السنوي المستحق:</span>
                   <span className="font-bold text-foreground">
@@ -876,7 +876,7 @@ export function LeavesTab({
                   <span className="font-medium text-amber-400">{selectedEmpBalance.usedPaidDays} يوم</span>
                 </div>
                 {selectedEmpBalance.remainingDays !== null && (
-                  <div className="flex items-center justify-between pt-1 border-t border-slate-800">
+                  <div className="flex items-center justify-between pt-1 border-t border-border dark:border-slate-800">
                     <span className="font-semibold text-foreground">المتبقي من الرصيد:</span>
                     <span className="font-bold text-emerald-400">{selectedEmpBalance.remainingDays} يوم</span>
                   </div>
@@ -901,7 +901,7 @@ export function LeavesTab({
             </div>
 
             {/* Paid vs Unpaid Toggle */}
-            <div className="flex items-center justify-between p-3 rounded-lg border border-slate-800 bg-slate-950/30">
+            <div className="flex items-center justify-between p-3 rounded-lg border border-border dark:border-slate-800 bg-muted/20 dark:bg-slate-950/30">
               <div className="space-y-0.5">
                 <Label className="text-xs font-bold">إجازة مدفوعة الأجر (Paid Leave)</Label>
                 <p className="text-[11px] text-muted-foreground">
