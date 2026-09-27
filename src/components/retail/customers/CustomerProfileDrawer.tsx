@@ -191,7 +191,7 @@ export const CustomerProfileDrawer: React.FC<CustomerProfileDrawerProps> = ({
                     </Badge>
                   )}
                 </div>
-                <div className="text-xs text-slate-400 mt-1 flex gap-4">
+                <div className="text-xs text-muted-foreground dark:text-slate-400 mt-1 flex gap-4">
                   <span className="font-mono">الكود: {customer.customerCode}</span>
                   <span>الهاتف: {customer.phone}</span>
                   {customer.companyName && <span>الجهة: {customer.companyName}</span>}
@@ -210,7 +210,7 @@ export const CustomerProfileDrawer: React.FC<CustomerProfileDrawerProps> = ({
                   size="sm"
                   variant="outline"
                   onClick={() => setStatementPrintOpen(true)}
-                  className="gap-1.5 text-xs text-foreground dark:text-white border-border dark:border-border dark:border-slate-700 hover:bg-muted dark:hover:bg-slate-800"
+                  className="gap-1.5 text-xs text-foreground dark:text-white border-border dark:border-slate-700 hover:bg-muted dark:hover:bg-slate-800"
                 >
                   <Printer className="w-3.5 h-3.5" />
                   كشف حساب
@@ -221,7 +221,7 @@ export const CustomerProfileDrawer: React.FC<CustomerProfileDrawerProps> = ({
             {/* Quick Metrics Cards */}
             <div className="grid grid-cols-4 gap-3 mt-4 text-xs">
               <div className="bg-muted/70 dark:bg-slate-800/80 p-2.5 rounded border border-border dark:border-slate-700">
-                <span className="text-slate-400 block">الرصيد الدفتري الحالي</span>
+                <span className="text-muted-foreground dark:text-slate-400 block">الرصيد الدفتري الحالي</span>
                 <span className={`font-bold text-sm ${currentDebt > 0 ? 'text-amber-400' : currentDebt < 0 ? 'text-blue-400' : 'text-emerald-400'}`}>
                   {currentDebt > 0
                     ? `مستحق: ${formatCurrency(currentDebt)}`
@@ -231,20 +231,20 @@ export const CustomerProfileDrawer: React.FC<CustomerProfileDrawerProps> = ({
                 </span>
               </div>
               <div className="bg-muted/70 dark:bg-slate-800/80 p-2.5 rounded border border-border dark:border-slate-700">
-                <span className="text-slate-400 block">سقف الائتمان المسموح</span>
+                <span className="text-muted-foreground dark:text-slate-400 block">سقف الائتمان المسموح</span>
                 <span className="font-bold text-sm text-foreground/90 dark:text-slate-200">
                   {customer.creditEnabled ? formatCurrency(creditLimit) : 'غير مفعل'}
                 </span>
               </div>
               <div className="bg-muted/70 dark:bg-slate-800/80 p-2.5 rounded border border-border dark:border-slate-700">
-                <span className="text-slate-400 block">الائتمان المتاح حالياً</span>
+                <span className="text-muted-foreground dark:text-slate-400 block">الائتمان المتاح حالياً</span>
                 <span className="font-bold text-sm text-emerald-400">
                   {customer.creditEnabled ? formatCurrency(availableCredit) : '-'}
                 </span>
               </div>
               <div className="bg-muted/70 dark:bg-slate-800/80 p-2.5 rounded border border-border dark:border-slate-700">
-                <span className="text-slate-400 block">ديون متأخرة السداد</span>
-                <span className={`font-bold text-sm ${aging.overdueCount > 0 ? 'text-rose-400' : 'text-slate-400'}`}>
+                <span className="text-muted-foreground dark:text-slate-400 block">ديون متأخرة السداد</span>
+                <span className={`font-bold text-sm ${aging.overdueCount > 0 ? 'text-rose-400' : 'text-muted-foreground dark:text-slate-400'}`}>
                   {aging.overdueCount > 0 ? formatCurrency(aging.days1to30 + aging.days31to60 + aging.days61to90 + aging.days90Plus) : 'لا يوجد'}
                 </span>
               </div>
