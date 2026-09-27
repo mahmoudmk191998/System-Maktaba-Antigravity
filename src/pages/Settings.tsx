@@ -158,7 +158,12 @@ export default function Settings() {
         });
       }
 
-      // 3. Update local store state
+      if (!tenantSuccess || !branchSuccess) {
+        toast.error('لم يتم حفظ جميع الإعدادات. لم يتم تعديل الحالة المحلية حتى لا تختلف عن قاعدة البيانات.');
+        return;
+      }
+
+      // 3. Update local store only after Firestore confirms the save.
       if (currentTenant?.id) {
         setCurrentTenant({
           ...currentTenant,
@@ -171,6 +176,7 @@ export default function Settings() {
       if (currentBranch?.id) {
         setCurrentBranch({
           ...currentBranch,
+          tenantId: currentTenant?.id || currentBranch.tenantId,
           name: cleanBranchName,
           phone: cleanBranchPhone,
           address: cleanBranchAddress,
@@ -184,24 +190,29 @@ export default function Settings() {
         window.dispatchEvent(new CustomEvent('alwan_settings_updated', { detail: nextSettings }));
       }
 
-      // 4. Record in audit_logs
+      // 4. Audit logging is important but must not turn a successful settings
+      // save into a false failure if the audit write itself is temporarily unavailable.
       if (currentTenant?.id) {
-        await addDoc(collection(db, 'audit_logs'), {
-          action: 'update_settings',
-          entity: 'system_settings',
-          user: user?.displayName || user?.email || 'Admin',
-          user_id: user?.uid || 'unknown',
-          tenant_id: currentTenant.id,
-          branch_id: currentBranch?.id || null,
-          details: 'تم تحديث إعدادات النظام وبيانات المؤسسة والفرع بنجاح',
-          severity: 'info',
-          created_at: new Date().toISOString()
-        });
+        try {
+          await addDoc(collection(db, 'audit_logs'), {
+            action: 'update_settings',
+            entity: 'system_settings',
+            user: user?.displayName || user?.email || 'Admin',
+            user_id: user?.uid || 'unknown',
+            tenant_id: currentTenant.id,
+            tenantId: currentTenant.id,
+            branch_id: currentBranch?.id || null,
+            branchId: currentBranch?.id || null,
+            details: 'تم تحديث إعدادات النظام وبيانات المؤسسة والفرع بنجاح',
+            severity: 'info',
+            created_at: new Date().toISOString()
+          });
+        } catch (auditError) {
+          console.warn('Settings saved, but audit log write failed:', auditError);
+        }
       }
 
-      if (tenantSuccess && branchSuccess) {
-        toast.success('تم حفظ وتطبيق جميع الإعدادات بنجاح');
-      }
+      toast.success('تم حفظ وتطبيق جميع الإعدادات بنجاح');
     } catch (error: any) {
       console.error('Error saving settings:', error);
       toast.error('حدث خطأ أثناء حفظ الإعدادات: ' + (error?.message || 'خطأ غير معروف'));
