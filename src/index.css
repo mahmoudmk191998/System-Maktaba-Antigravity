@@ -7,7 +7,7 @@
 @tailwind components;
 @tailwind utilities;
 
-/* نظام التصميم العربي لإدارة المطاعم */
+/* نظام التصميم العربي لإدارة المكتبات والقرطاسية */
 
 @layer base {
   :root {
@@ -51,14 +51,14 @@
     /* نصف القطر الناعم جداً */
     --radius: 1rem;
 
-    /* ألوان الشريط الجانبي الفخمة (أزرق غامق جداً) */
-    --sidebar-background: 222 47% 11%;
-    --sidebar-foreground: 210 40% 98%;
-    --sidebar-primary: 235 85% 65%;
-    --sidebar-primary-foreground: 210 40% 98%;
-    --sidebar-accent: 217 32% 17%;
-    --sidebar-accent-foreground: 210 40% 98%;
-    --sidebar-border: 217 32% 17%;
+    /* الشريط الجانبي في الوضع النهاري: فاتح وواضح مثل بقية النظام */
+    --sidebar-background: 0 0% 100%;
+    --sidebar-foreground: 222 30% 16%;
+    --sidebar-primary: 235 85% 60%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 214 32% 94%;
+    --sidebar-accent-foreground: 222 30% 16%;
+    --sidebar-border: 214 32% 88%;
     --sidebar-ring: 235 85% 60%;
 
     /* ألوان مخصصة للنظام */
@@ -195,7 +195,7 @@
   }
 
   ::-webkit-scrollbar-thumb {
-    @apply bg-white/10 hover:bg-white/20 rounded-full transition-colors;
+    @apply bg-foreground/15 hover:bg-foreground/25 rounded-full transition-colors;
   }
 }
 
@@ -302,6 +302,51 @@
   .kitchen-ticket-ready {
     @apply border-t-success;
   }
+}
+
+/* --------------------------------------------------------------------------
+   Light-mode compatibility guard
+   --------------------------------------------------------------------------
+   A few enterprise screens were originally authored with dark-only slate utility
+   classes. These selectors keep those legacy surfaces readable in light mode while
+   leaving dark mode completely untouched. New UI should prefer semantic tokens
+   (bg-card, bg-muted, text-foreground, border-border).
+--------------------------------------------------------------------------- */
+:root:not(.dark) [class*="bg-slate-950"] {
+  background-color: hsl(var(--card) / 0.92) !important;
+}
+
+:root:not(.dark) [class*="bg-slate-900"] {
+  background-color: hsl(var(--muted) / 0.78) !important;
+}
+
+:root:not(.dark) [class*="border-slate-800"],
+:root:not(.dark) [class*="border-slate-700"] {
+  border-color: hsl(var(--border)) !important;
+}
+
+:root:not(.dark) [class*="text-slate-100"],
+:root:not(.dark) [class*="text-slate-200"] {
+  color: hsl(var(--foreground)) !important;
+}
+
+:root:not(.dark) [class*="text-slate-300"],
+:root:not(.dark) [class*="text-slate-400"] {
+  color: hsl(var(--muted-foreground)) !important;
+}
+
+/* Semantic component contrast in light mode */
+:root:not(.dark) .bento-card,
+:root:not(.dark) .pos-item-card,
+:root:not(.dark) .pos-action-btn,
+:root:not(.dark) .search-input {
+  box-shadow:
+    inset 0 0 0 1px hsl(var(--border) / 0.85),
+    0 10px 30px -16px hsl(var(--foreground) / 0.16);
+}
+
+:root:not(.dark) .status-badge {
+  border-color: hsl(var(--border));
 }
 
 @layer utilities {
