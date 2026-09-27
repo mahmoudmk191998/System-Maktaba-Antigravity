@@ -414,24 +414,35 @@ export async function createProductInDb(
   const productRef = doc(collection(db, 'products'));
 
   const openingStock = options.openingStock;
-  const openingLines = (openingStock?.lines || [])
+  const rawOpeningLines = openingStock?.lines || [];
+
+  for (const rawLine of rawOpeningLines) {
+    const quantity = Number(rawLine.quantity);
+    const unitCost = Number(rawLine.unitCost ?? productData.purchasePrice ?? 0);
+
+    if (!Number.isFinite(quantity) || quantity < 0) {
+      return { success: false, error: 'الكمية الافتتاحية يجب أن تكون رقماً غير سالب' };
+    }
+    if (!Number.isFinite(unitCost) || unitCost < 0) {
+      return { success: false, error: 'تكلفة الرصيد الافتتاحي غير صالحة' };
+    }
+  }
+
+  const openingLines = rawOpeningLines
     .map((line) => ({
       ...line,
       variantId: line.variantId && line.variantId.trim() !== '' ? line.variantId.trim() : null,
-      quantity: Number(line.quantity || 0),
+      quantity: Number(line.quantity),
       unitCost: Number(line.unitCost ?? productData.purchasePrice ?? 0),
       unitId: line.unitId || productData.unitId,
     }))
-    .filter((line) => Number.isFinite(line.quantity) && line.quantity > 0);
+    .filter((line) => line.quantity > 0);
 
   if (openingLines.length > 0 && !openingStock?.locationId) {
     return { success: false, error: 'يجب تحديد الفرع أو المخزن لحفظ الكمية الافتتاحية' };
   }
 
   for (const line of openingLines) {
-    if (!Number.isFinite(line.quantity) || line.quantity <= 0) {
-      return { success: false, error: 'الكمية الافتتاحية يجب أن تكون رقماً موجباً' };
-    }
     if (line.variantId && !productData.variants?.some((variant) => variant.id === line.variantId)) {
       return { success: false, error: 'يوجد متغير غير صالح ضمن الكميات الافتتاحية' };
     }
