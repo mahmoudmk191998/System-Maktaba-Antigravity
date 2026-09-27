@@ -1,25 +1,33 @@
 {
-  "name": "Alwan - Library & Stationery ERP",
-  "short_name": "Alwan Library",
+  "name": "نظام إدارة المكتبة | MK Library",
+  "short_name": "MK Library",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#07090d",
-  "theme_color": "#0b1220",
+  "background_color": "#07111f",
+  "theme_color": "#07111f",
   "icons": [
     {
-      "src": "/favicon.ico",
-      "sizes": "64x64 32x32 24x24 16x16",
-      "type": "image/x-icon"
-    },
-    {
-      "src": "/icons/icon-192.png",
+      "src": "/icons/mk-library-192-v2.png",
       "sizes": "192x192",
-      "type": "image/png"
+      "type": "image/png",
+      "purpose": "any"
     },
     {
-      "src": "/icons/icon-512.png",
+      "src": "/icons/mk-library-512-v2.png",
       "sizes": "512x512",
-      "type": "image/png"
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/mk-library-maskable-512-v2.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
     }
-  ]
+  ],
+  "id": "/",
+  "description": "نظام احترافي لإدارة المكتبة والقرطاسية والمبيعات والمخزون",
+  "lang": "ar",
+  "dir": "rtl",
+  "scope": "/"
 }
