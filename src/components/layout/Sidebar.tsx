@@ -380,13 +380,13 @@ export function Sidebar() {
             )}
 
             {/* Main Bottom Dock */}
-            <div className="bg-card/70 backdrop-blur-[40px] px-4 py-3 rounded-full border border-white/10 shadow-[0_20px_50px_rgba(0,0,0,0.5),inset_0_1px_1px_rgba(255,255,255,0.1)] flex items-center justify-center gap-2">
-              <Link to="/" className="w-12 h-12 rounded-full bg-gradient-to-tr from-primary to-primary/80 shadow-[0_0_20px_rgba(var(--primary),0.4)] flex items-center justify-center border border-white/20 hover:scale-110 transition-transform mr-2">
-                <div className="w-8 h-8 rounded-full bg-background/90 flex items-center justify-center border border-white/20">
+            <div className="bg-card/90 dark:bg-card/70 backdrop-blur-[40px] px-4 py-3 rounded-full border border-border/80 dark:border-white/10 shadow-[0_18px_45px_rgba(15,23,42,0.14)] dark:shadow-[0_20px_50px_rgba(0,0,0,0.5),inset_0_1px_1px_rgba(255,255,255,0.1)] flex items-center justify-center gap-2">
+              <Link to="/" className="w-12 h-12 rounded-full bg-gradient-to-tr from-primary to-primary/80 shadow-[0_0_20px_hsl(var(--primary)/0.28)] flex items-center justify-center border border-primary/25 hover:scale-110 transition-transform mr-2">
+                <div className="w-8 h-8 rounded-full bg-background/95 flex items-center justify-center border border-border/80">
                   <BookOpen className="w-4 h-4 text-primary" />
                 </div>
               </Link>
-              <div className="w-px h-8 bg-white/10 mx-2" />
+              <div className="w-px h-8 bg-border/70 mx-2" />
 
               {navGroups.map((group) => {
                 const allowedItems = group.items.filter((item: any) => isAdmin || hasAnyPermission(item.perms));
@@ -419,7 +419,7 @@ export function Sidebar() {
               })}
 
               {/* Hide Bottom Nav Button */}
-              <div className="w-px h-8 bg-white/10 mx-1" />
+              <div className="w-px h-8 bg-border/70 mx-1" />
               <Tooltip delayDuration={0}>
                 <TooltipTrigger asChild>
                   <button
@@ -427,7 +427,7 @@ export function Sidebar() {
                     className="dock-item group relative outline-none hover:text-rose-400 p-2 rounded-full transition-all"
                     aria-label="إخفاء شريط القوائم"
                   >
-                    <EyeOff className="w-5 h-5 text-white/50 group-hover:text-rose-400 group-hover:scale-110 transition-all" />
+                    <EyeOff className="w-5 h-5 text-muted-foreground group-hover:text-rose-500 group-hover:scale-110 transition-all" />
                     <span className="sr-only">إخفاء شريط القوائم</span>
                   </button>
                 </TooltipTrigger>
@@ -453,11 +453,11 @@ export function Sidebar() {
               <TooltipTrigger asChild>
                 <button
                   onClick={() => setBottomNavVisible(true)}
-                  className="flex items-center gap-2 px-4 py-2 rounded-full bg-card/85 hover:bg-card backdrop-blur-[40px] border border-white/20 shadow-[0_15px_35px_rgba(0,0,0,0.5)] text-foreground hover:text-primary transition-all duration-300 hover:scale-105 group text-xs font-bold font-cairo outline-none"
+                  className="flex items-center gap-2 px-4 py-2 rounded-full bg-card/95 hover:bg-card backdrop-blur-[40px] border border-border/80 shadow-[0_12px_30px_rgba(15,23,42,0.14)] dark:shadow-[0_15px_35px_rgba(0,0,0,0.5)] text-foreground hover:text-primary transition-all duration-300 hover:scale-105 group text-xs font-bold font-cairo outline-none"
                 >
                   <Eye className="w-4 h-4 text-primary group-hover:scale-110 transition-transform" />
                   <span>إظهار شريط القوائم</span>
-                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 font-mono text-muted-foreground border border-white/10">
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted font-mono text-muted-foreground border border-border">
                     Ctrl+B
                   </span>
                 </button>
