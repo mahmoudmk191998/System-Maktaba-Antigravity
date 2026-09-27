@@ -101,6 +101,7 @@ export function ProductFormDialog({
   const [categoryId, setCategoryId] = useState('');
   const [brandId, setBrandId] = useState('');
   const [unitId, setUnitId] = useState('');
+  const effectiveUnitId = unitId || units[0]?.id || 'u-pcs';
   const [active, setActive] = useState(true);
   const [trackInventory, setTrackInventory] = useState(true);
   const [allowNegativeStock, setAllowNegativeStock] = useState(false);
@@ -312,7 +313,6 @@ export function ProductFormDialog({
         : undefined;
 
     const bookMetadata = rawBookMetadata ? removeUndefinedFields(rawBookMetadata) : undefined;
-    const effectiveUnitId = unitId || units[0]?.id || 'u-pcs';
 
     const rawPayload: any = {
       name: name.trim(),
