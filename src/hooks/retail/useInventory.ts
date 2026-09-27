@@ -104,6 +104,16 @@ export function useInventory() {
     }
   }, [selectedLocationId, loadBalances]);
 
+  useEffect(() => {
+    const handleInventorySync = () => {
+      if (selectedLocationId) {
+        loadBalances();
+      }
+    };
+    window.addEventListener('alwan_inventory_synced', handleInventorySync);
+    return () => window.removeEventListener('alwan_inventory_synced', handleInventorySync);
+  }, [selectedLocationId, loadBalances]);
+
   // Derived KPI metrics
   const metrics = useMemo(() => {
     const totalItems = balances.length;

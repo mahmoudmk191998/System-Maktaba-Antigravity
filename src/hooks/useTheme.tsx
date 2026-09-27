@@ -1,39 +1,66 @@
-import { createContext, useContext, useEffect, ReactNode } from 'react';
+import { createContext, useContext, useLayoutEffect, ReactNode } from 'react';
 import { useAppStore } from '@/lib/store';
+import { hexToHslTriplet } from '@/lib/themePreferences';
 
 type Theme = 'light' | 'dark';
 
 interface ThemeContextType {
   theme: Theme;
   toggleTheme: () => void;
+  setTheme: (theme: Theme) => void;
 }
 
-const ThemeContext = createContext<ThemeContextType>({ theme: 'light', toggleTheme: () => {} });
+const ThemeContext = createContext<ThemeContextType>({
+  theme: 'light',
+  toggleTheme: () => {},
+  setTheme: () => {},
+});
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
-  const { settings, updateSettings } = useAppStore();
+  const settings = useAppStore((state) => state.settings);
+  const updateSettings = useAppStore((state) => state.updateSettings);
   const theme: Theme = settings.darkMode ? 'dark' : 'light';
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const root = document.documentElement;
-    if (theme === 'dark') {
-      root.classList.add('dark');
+    root.classList.toggle('dark', theme === 'dark');
+    root.dataset.theme = theme;
+    root.style.colorScheme = theme;
+
+    const primaryHsl = settings.primaryColor
+      ? hexToHslTriplet(settings.primaryColor)
+      : null;
+
+    if (primaryHsl) {
+      root.style.setProperty('--primary', primaryHsl);
     } else {
-      root.classList.remove('dark');
+      root.style.removeProperty('--primary');
     }
-    
-    // Set CSS variable for primary color if applicable
-    if (settings.primaryColor) {
-      document.body.style.setProperty('--primary', settings.primaryColor);
+
+    // Keep the browser/PWA chrome visually consistent with the selected mode.
+    const themeColor =
+      theme === 'dark'
+        ? 'hsl(222 30% 4%)'
+        : 'hsl(210 20% 98%)';
+    let meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
+    if (!meta) {
+      meta = document.createElement('meta');
+      meta.name = 'theme-color';
+      document.head.appendChild(meta);
     }
+    meta.content = themeColor;
   }, [theme, settings.primaryColor]);
 
+  const setTheme = (nextTheme: Theme) => {
+    updateSettings({ darkMode: nextTheme === 'dark' });
+  };
+
   const toggleTheme = () => {
-    updateSettings({ darkMode: !settings.darkMode });
+    setTheme(theme === 'dark' ? 'light' : 'dark');
   };
 
   return (
-    <ThemeContext.Provider value={{ theme, toggleTheme }}>
+    <ThemeContext.Provider value={{ theme, toggleTheme, setTheme }}>
       {children}
     </ThemeContext.Provider>
   );

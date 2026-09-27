@@ -11,6 +11,7 @@ import { isStatsMigrationComplete, runStatsBackfill } from '@/services/analytics
 import { getTenantDateString, getTenantYesterdayString } from '@/lib/reportingTimezone';
 import { firestoreLogger } from '@/lib/firestoreLogger';
 import { wipeAndReinitializeTenantData } from '@/services/admin/dataReset.service';
+import { sanitizeRemoteTenantSettings } from '@/lib/themePreferences';
 
 const fetchCollection = async (
   colPath: string, 
@@ -136,7 +137,11 @@ export function useTenantBranch() {
               logo: tData.logo || ''
             });
             if (tData.settings) {
-              useAppStore.getState().updateSettings(tData.settings);
+              // Appearance mode is a per-user/device preference persisted by Zustand.
+              // Never let tenant settings force the UI back to dark mode on route changes.
+              useAppStore
+                .getState()
+                .updateSettings(sanitizeRemoteTenantSettings(tData.settings));
             }
           }
 

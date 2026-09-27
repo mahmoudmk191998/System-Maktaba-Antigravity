@@ -7,7 +7,7 @@
 @tailwind components;
 @tailwind utilities;
 
-/* نظام التصميم العربي لإدارة المطاعم */
+/* نظام التصميم العربي لإدارة المكتبة والتجزئة */
 
 @layer base {
   :root {
@@ -195,7 +195,7 @@
   }
 
   ::-webkit-scrollbar-thumb {
-    @apply bg-white/10 hover:bg-white/20 rounded-full transition-colors;
+    @apply bg-foreground/15 hover:bg-foreground/25 rounded-full transition-colors;
   }
 }
 
@@ -203,9 +203,8 @@
 
   /* Bento Grid Card - Holographic Styling */
   .bento-card {
-    @apply bg-card/60 backdrop-blur-[40px] rounded-[32px] p-6 transition-all duration-500 relative overflow-hidden;
-    /* Frameless softly glowing box */
-    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05), 0 20px 40px -10px rgba(0, 0, 0, 0.3);
+    @apply bg-card/80 backdrop-blur-[40px] rounded-[32px] p-6 transition-all duration-500 relative overflow-hidden border border-border/60;
+    box-shadow: inset 0 0 0 1px hsl(var(--border) / 0.35), 0 20px 40px -10px hsl(var(--foreground) / 0.10);
   }
 
   .bento-card::after {
@@ -214,7 +213,7 @@
     inset: 0;
     border-radius: 32px;
     padding: 1px;
-    background: linear-gradient(135deg, rgba(255, 255, 255, 0.2) 0%, rgba(255, 255, 255, 0) 40%, rgba(255, 255, 255, 0) 60%, rgba(255, 255, 255, 0.05) 100%);
+    background: linear-gradient(135deg, hsl(var(--foreground) / 0.10) 0%, transparent 40%, transparent 60%, hsl(var(--foreground) / 0.03) 100%);
     -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
     -webkit-mask-composite: xor;
     mask-composite: exclude;
@@ -233,8 +232,8 @@
 
   /* POS item bento style */
   .pos-item-card {
-    @apply bg-card/40 backdrop-blur-[24px] rounded-[24px] p-4 cursor-pointer transition-all duration-300 active:scale-95 group relative overflow-hidden;
-    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+    @apply bg-card/80 backdrop-blur-[24px] rounded-[24px] p-4 cursor-pointer transition-all duration-300 active:scale-95 group relative overflow-hidden border border-border/60;
+    box-shadow: inset 0 0 0 1px hsl(var(--border) / 0.35);
   }
 
   .pos-item-card:hover {
@@ -243,13 +242,13 @@
 
   /* POS action button holographic */
   .pos-action-btn {
-    @apply bg-card/60 backdrop-blur-[32px] h-14 text-lg font-bold rounded-[24px] transition-all duration-300 active:scale-95 relative overflow-hidden;
-    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1), inset 0 2px 10px rgba(255, 255, 255, 0.05);
+    @apply bg-card/85 text-card-foreground backdrop-blur-[32px] h-14 text-lg font-bold rounded-[24px] transition-all duration-300 active:scale-95 relative overflow-hidden border border-border/70;
+    box-shadow: inset 0 0 0 1px hsl(var(--border) / 0.35), inset 0 2px 10px hsl(var(--foreground) / 0.025);
   }
 
   /* Status Badge Ethereal */
   .status-badge {
-    @apply inline-flex items-center gap-1.5 px-4 py-2 rounded-full text-xs font-black backdrop-blur-xl border border-white/10 uppercase tracking-widest;
+    @apply inline-flex items-center gap-1.5 px-4 py-2 rounded-full text-xs font-black backdrop-blur-xl border border-border/70 uppercase tracking-widest;
   }
 
   /* Search Input Floating */
@@ -264,7 +263,7 @@
 
   /* Sidebar item mapped to dock item */
   .dock-item {
-    @apply flex flex-col items-center justify-center gap-1.5 p-3 rounded-[20px] text-foreground/60 hover:text-foreground hover:bg-white/5 transition-all duration-300 relative min-w-[70px];
+    @apply flex flex-col items-center justify-center gap-1.5 p-3 rounded-[20px] text-muted-foreground hover:text-foreground hover:bg-muted/70 transition-all duration-300 relative min-w-[70px];
   }
 
   .dock-item-active {
@@ -286,8 +285,8 @@
 
   /* Island Container */
   .dynamic-island {
-    @apply bg-black/80 dark:bg-black/80 backdrop-blur-[40px] rounded-full border border-white/10 shadow-[0_20px_40px_rgba(0,_0,_0,_0.4)] flex items-center transition-all duration-500 overflow-hidden mx-auto max-w-max text-white;
-    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1), 0 20px 50px -10px rgba(0, 0, 0, 0.5);
+    @apply bg-card/95 dark:bg-black/80 backdrop-blur-[40px] rounded-full border border-border/70 dark:border-white/10 flex items-center transition-all duration-500 overflow-hidden mx-auto max-w-max text-foreground dark:text-white;
+    box-shadow: inset 0 0 0 1px hsl(var(--border) / 0.35), 0 20px 50px -10px hsl(var(--foreground) / 0.20);
   }
 
 
@@ -358,6 +357,75 @@
   .no-scrollbar::-webkit-scrollbar {
     display: none;                /* Chrome/Safari */
   }
+}
+
+
+/* --------------------------------------------------------------------------
+   Light mode compatibility layer
+   --------------------------------------------------------------------------
+   A number of older HR/payroll/executive components were authored with
+   dark-only slate utilities. These scoped overrides keep dark mode untouched
+   while translating those legacy surfaces to semantic design tokens in light
+   mode, so text/buttons/tables remain readable everywhere.
+*/
+html:not(.dark) body::before {
+  opacity: 0.38;
+}
+
+html:not(.dark) [class*="bg-slate-950"],
+html:not(.dark) [class*="bg-slate-900"] {
+  background-color: hsl(var(--card) / 0.92) !important;
+}
+
+html:not(.dark) [class*="bg-slate-800"] {
+  background-color: hsl(var(--muted) / 0.88) !important;
+}
+
+html:not(.dark) [class*="border-slate-900"],
+html:not(.dark) [class*="border-slate-800"],
+html:not(.dark) [class*="border-slate-700"] {
+  border-color: hsl(var(--border)) !important;
+}
+
+html:not(.dark) .text-slate-100,
+html:not(.dark) .text-slate-200,
+html:not(.dark) .text-slate-300 {
+  color: hsl(var(--foreground)) !important;
+}
+
+html:not(.dark) .text-slate-400 {
+  color: hsl(var(--muted-foreground)) !important;
+}
+
+html:not(.dark) [class*="hover:bg-slate-900"]:hover,
+html:not(.dark) [class*="hover:bg-slate-800"]:hover {
+  background-color: hsl(var(--muted)) !important;
+}
+
+html:not(.dark) [class*="hover:text-slate-100"]:hover,
+html:not(.dark) [class*="hover:text-slate-200"]:hover {
+  color: hsl(var(--foreground)) !important;
+}
+
+/* Dark-only panels that also carry white text should become normal surfaces in light mode. */
+html:not(.dark) [class*="bg-slate-950"][class*="text-slate-100"],
+html:not(.dark) [class*="bg-slate-900"][class*="text-slate-100"],
+html:not(.dark) [class*="bg-slate-950"][class*="text-white"],
+html:not(.dark) [class*="bg-slate-900"][class*="text-white"] {
+  color: hsl(var(--foreground)) !important;
+}
+
+/* Native fields and browser-rendered select options should follow the active scheme. */
+html:not(.dark) input,
+html:not(.dark) textarea,
+html:not(.dark) select {
+  color-scheme: light;
+}
+
+.dark input,
+.dark textarea,
+.dark select {
+  color-scheme: dark;
 }
 
 /* طباعة الإيصالات */
