@@ -50,12 +50,25 @@ import { useAppStore } from '@/lib/store';
 import { toast } from 'sonner';
 import { MobileScannerModal } from '@/components/retail/pos/MobileScannerModal';
 
+export interface ProductOpeningStockRequest {
+  baseQuantity: number;
+  variantQuantities: Array<{
+    variantId: string;
+    quantity: number;
+    unitCost: number;
+  }>;
+}
+
 interface ProductFormDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   product?: Product | null;
   initialBarcode?: string;
-  onSave: (productData: any) => Promise<{ success: boolean; error?: string }>;
+  openingLocationName?: string;
+  onSave: (
+    productData: any,
+    openingStock?: ProductOpeningStockRequest
+  ) => Promise<{ success: boolean; error?: string; warning?: string }>;
 }
 
 export function ProductFormDialog({
@@ -63,6 +76,7 @@ export function ProductFormDialog({
   onOpenChange,
   product,
   initialBarcode,
+  openingLocationName,
   onSave,
 }: ProductFormDialogProps) {
   const { categories } = useCategories();
@@ -102,9 +116,11 @@ export function ProductFormDialog({
   const [minimumSellingPrice, setMinimumSellingPrice] = useState('');
   const [taxRate, setTaxRate] = useState(defaultTaxPercent.toString());
 
-  // Inventory limits
+  // Inventory limits & opening quantities
   const [minimumStock, setMinimumStock] = useState('5');
   const [reorderPoint, setReorderPoint] = useState('10');
+  const [openingQuantity, setOpeningQuantity] = useState('');
+  const [variantOpeningQuantities, setVariantOpeningQuantities] = useState<Record<string, string>>({});
 
   // Book Metadata
   const [isbn, setIsbn] = useState('');
@@ -152,6 +168,8 @@ export function ProductFormDialog({
         setTaxRate(prodTax.toString());
         setMinimumStock((product.minimumStock ?? 5).toString());
         setReorderPoint((product.reorderPoint ?? 10).toString());
+        setOpeningQuantity('');
+        setVariantOpeningQuantities({});
 
         // Book metadata
         if (product.bookMetadata) {
@@ -194,6 +212,8 @@ export function ProductFormDialog({
         setTaxRate(defaultTaxPercent.toString());
         setMinimumStock('5');
         setReorderPoint('10');
+        setOpeningQuantity('');
+        setVariantOpeningQuantities({});
 
         setIsbn('');
         setAuthor('');
@@ -251,7 +271,15 @@ export function ProductFormDialog({
   };
 
   const removeVariant = (index: number) => {
+    const removedId = variants[index]?.id;
     setVariants(variants.filter((_, i) => i !== index));
+    if (removedId) {
+      setVariantOpeningQuantities((prev) => {
+        const next = { ...prev };
+        delete next[removedId];
+        return next;
+      });
+    }
   };
 
   const updateVariantField = (index: number, field: keyof ProductVariant, value: any) => {
@@ -312,6 +340,52 @@ export function ProductFormDialog({
 
     const payload = removeUndefinedFields(rawPayload);
 
+    let openingStock: ProductOpeningStockRequest | undefined;
+    if (!product && trackInventory) {
+      if (hasVariants) {
+        const variantQuantities = variants
+          .map((variant) => {
+            const rawQty = variantOpeningQuantities[variant.id]?.trim() || '';
+            const quantity = rawQty === '' ? 0 : Number(rawQty);
+            return {
+              variantId: variant.id,
+              quantity,
+              unitCost: Number(variant.purchasePrice ?? pCost) || pCost,
+            };
+          })
+          .filter((row) => row.quantity > 0);
+
+        const invalidVariantQty = variants.some((variant) => {
+          const rawQty = variantOpeningQuantities[variant.id]?.trim() || '';
+          if (rawQty === '') return false;
+          const qty = Number(rawQty);
+          return !Number.isFinite(qty) || qty < 0 || !Number.isInteger(qty);
+        });
+
+        if (invalidVariantQty) {
+          toast.error('الكمية الافتتاحية لكل متغير يجب أن تكون عدداً صحيحاً يساوي صفر أو أكثر');
+          return;
+        }
+
+        openingStock = {
+          baseQuantity: 0,
+          variantQuantities,
+        };
+      } else {
+        const rawQty = openingQuantity.trim();
+        const qty = rawQty === '' ? 0 : Number(rawQty);
+        if (!Number.isFinite(qty) || qty < 0 || !Number.isInteger(qty)) {
+          toast.error('الكمية الافتتاحية يجب أن تكون عدداً صحيحاً يساوي صفر أو أكثر');
+          return;
+        }
+
+        openingStock = {
+          baseQuantity: qty,
+          variantQuantities: [],
+        };
+      }
+    }
+
     const validation = validateProductForm(payload);
     if (!validation.isValid) {
       const firstError = Object.values(validation.errors)[0];
@@ -321,9 +395,22 @@ export function ProductFormDialog({
 
     setIsSubmitting(true);
     try {
-      const res = await onSave(payload);
+      const res = await onSave(payload, openingStock);
       if (res.success) {
-        toast.success(product ? 'تم تحديث بيانات المنتج بنجاح' : 'تم إضافة المنتج بنجاح');
+        if (res.warning) {
+          toast.warning(res.warning);
+        } else {
+          const openingCount =
+            (openingStock?.baseQuantity || 0) +
+            (openingStock?.variantQuantities.reduce((sum, row) => sum + row.quantity, 0) || 0);
+          toast.success(
+            product
+              ? 'تم تحديث بيانات المنتج بنجاح'
+              : openingCount > 0
+                ? 'تم إضافة المنتج وتسجيل الرصيد الافتتاحي بنجاح'
+                : 'تم إضافة المنتج بنجاح'
+          );
+        }
         onOpenChange(false);
       } else {
         toast.error(res.error || 'تعذر حفظ المنتج');
@@ -714,6 +801,52 @@ export function ProductFormDialog({
                   />
                 </div>
               </div>
+
+              {!product && trackInventory && (
+                <div className="rounded-xl border border-primary/20 bg-primary/5 p-3.5 space-y-3">
+                  <div className="flex items-start gap-2">
+                    <div className="mt-0.5 rounded-lg bg-primary/10 p-2 text-primary">
+                      <Layers className="w-4 h-4" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-xs font-black text-foreground">الرصيد الافتتاحي السريع</p>
+                      <p className="text-[11px] text-muted-foreground mt-0.5">
+                        سيتم تسجيله كحركة مخزنية رسمية في
+                        <span className="font-bold text-foreground"> {openingLocationName || 'الفرع الحالي'} </span>
+                        باستخدام سعر الشراء كتكلفة افتتاحية.
+                      </p>
+                    </div>
+                  </div>
+
+                  {!hasVariants ? (
+                    <div className="max-w-xs">
+                      <Label htmlFor="opening-quantity" className="text-xs">
+                        الكمية الافتتاحية
+                      </Label>
+                      <Input
+                        id="opening-quantity"
+                        type="number"
+                        min="0"
+                        step="1"
+                        inputMode="numeric"
+                        value={openingQuantity}
+                        onChange={(e) => setOpeningQuantity(e.target.value)}
+                        placeholder="مثال: 50"
+                        className="mt-1 font-black text-base"
+                      />
+                      <p className="text-[10px] text-muted-foreground mt-1">
+                        اتركها فارغة أو 0 إذا كنت ستضيف الرصيد لاحقاً من صفحة المخزون.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-2.5 text-[11px] text-foreground">
+                      لأن الصنف يحتوي على متغيرات، أدخل الكمية الافتتاحية لكل متغير من تبويب
+                      <span className="font-black"> الأنواع والخصائص </span>
+                      حتى يظل مخزون كل متغير منفصلاً بصورة صحيحة.
+                    </div>
+                  )}
+                </div>
+              )}
             </TabsContent>
 
             {/* TAB 3: PRODUCT-SPECIFIC (BOOK / NOTEBOOK) */}
@@ -966,6 +1099,32 @@ export function ProductFormDialog({
                             </Button>
                           </div>
                         </div>
+
+                        {!product && trackInventory && (
+                          <div className="flex flex-col sm:flex-row sm:items-end gap-2 rounded-lg bg-primary/5 border border-primary/10 p-2.5">
+                            <div className="flex-1">
+                              <Label className="text-[11px] font-bold">الكمية الافتتاحية لهذا المتغير</Label>
+                              <Input
+                                type="number"
+                                min="0"
+                                step="1"
+                                inputMode="numeric"
+                                value={variantOpeningQuantities[variant.id] || ''}
+                                onChange={(e) =>
+                                  setVariantOpeningQuantities((prev) => ({
+                                    ...prev,
+                                    [variant.id]: e.target.value,
+                                  }))
+                                }
+                                placeholder="0"
+                                className="h-8 mt-1 font-bold"
+                              />
+                            </div>
+                            <div className="text-[10px] text-muted-foreground sm:max-w-[220px] leading-relaxed">
+                              سيتم إنشاء رصيد مستقل لهذا المتغير فقط، ولن تتم إضافته إلى رصيد المنتج الأساسي.
+                            </div>
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
