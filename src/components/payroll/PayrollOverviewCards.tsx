@@ -11,14 +11,14 @@ export const PayrollOverviewCards: React.FC<PayrollOverviewCardsProps> = ({ kpis
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-2.5 sm:gap-3">
       {/* 1. Total Payroll */}
-      <Card className="bg-slate-900/50 border-slate-800">
+      <Card className="bg-card dark:bg-slate-900/50 border-border dark:border-slate-800">
         <CardContent className="p-3.5">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center shrink-0">
               <DollarSign className="w-5 h-5" />
             </div>
             <div>
-              <p className="text-lg md:text-xl font-bold text-slate-100">
+              <p className="text-lg md:text-xl font-bold text-foreground dark:text-slate-100">
                 {kpis.totalPayroll.toLocaleString('ar-EG')} <span className="text-xs font-normal text-muted-foreground">ج.م</span>
               </p>
               <p className="text-[11px] text-muted-foreground">إجمالي الرواتب المستحقة</p>
@@ -28,7 +28,7 @@ export const PayrollOverviewCards: React.FC<PayrollOverviewCardsProps> = ({ kpis
       </Card>
 
       {/* 2. Paid */}
-      <Card className="bg-slate-900/50 border-slate-800">
+      <Card className="bg-card dark:bg-slate-900/50 border-border dark:border-slate-800">
         <CardContent className="p-3.5">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-emerald-500/10 text-emerald-400 flex items-center justify-center shrink-0">
@@ -45,7 +45,7 @@ export const PayrollOverviewCards: React.FC<PayrollOverviewCardsProps> = ({ kpis
       </Card>
 
       {/* 3. Remaining */}
-      <Card className="bg-slate-900/50 border-slate-800">
+      <Card className="bg-card dark:bg-slate-900/50 border-border dark:border-slate-800">
         <CardContent className="p-3.5">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-rose-500/10 text-rose-400 flex items-center justify-center shrink-0">
@@ -62,7 +62,7 @@ export const PayrollOverviewCards: React.FC<PayrollOverviewCardsProps> = ({ kpis
       </Card>
 
       {/* 4. Active Advances */}
-      <Card className="bg-slate-900/50 border-slate-800">
+      <Card className="bg-card dark:bg-slate-900/50 border-border dark:border-slate-800">
         <CardContent className="p-3.5">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-amber-500/10 text-amber-400 flex items-center justify-center shrink-0">
@@ -79,14 +79,14 @@ export const PayrollOverviewCards: React.FC<PayrollOverviewCardsProps> = ({ kpis
       </Card>
 
       {/* 5. Employees */}
-      <Card className="bg-slate-900/50 border-slate-800 col-span-2 md:col-span-1">
+      <Card className="bg-card dark:bg-slate-900/50 border-border dark:border-slate-800 col-span-2 md:col-span-1">
         <CardContent className="p-3.5">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-sky-500/10 text-sky-400 flex items-center justify-center shrink-0">
               <Users className="w-5 h-5" />
             </div>
             <div>
-              <p className="text-lg md:text-xl font-bold text-slate-100">
+              <p className="text-lg md:text-xl font-bold text-foreground dark:text-slate-100">
                 {kpis.employeesCount} <span className="text-xs font-normal text-muted-foreground">موظف</span>
               </p>
               <p className="text-[11px] text-muted-foreground">إجمالي الموظفين</p>
