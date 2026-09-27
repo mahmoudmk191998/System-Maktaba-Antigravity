@@ -25,6 +25,43 @@ import { normalizeArabicText } from './products.service';
 import { removeUndefinedFields } from '@/lib/utils';
 import { firestoreLogger } from '@/lib/firestoreLogger';
 
+export interface ProductOpeningStockLine {
+  variantId?: string | null;
+  quantity: number;
+  unitCost?: number;
+  unitId?: string;
+}
+
+export interface CreateProductOptions {
+  openingStock?: {
+    locationId: string;
+    lines: ProductOpeningStockLine[];
+    employeeId?: string;
+    notes?: string;
+  };
+}
+
+function getOpeningStockDocId(
+  tenantId: string,
+  locationId: string,
+  productId: string,
+  variantId?: string | null
+): string {
+  const normalizedVariant = variantId && variantId.trim() !== '' ? variantId.trim() : null;
+  return normalizedVariant
+    ? `${tenantId}_${locationId}_${productId}_${normalizedVariant}`
+    : `${tenantId}_${locationId}_${productId}`;
+}
+
+function getOpeningStockIdempotencyDocId(
+  tenantId: string,
+  locationId: string,
+  productId: string,
+  variantId?: string | null
+): string {
+  return `${tenantId}___product_create_opening:${locationId}:${productId}:${variantId || 'base'}`;
+}
+
 /**
  * Computes derived stock status flags to enable O(1) compound queries
  * (e.g. where('isLowStock', '==', true)) without dynamic field-to-field comparisons.
@@ -360,7 +397,8 @@ export async function findProductOrVariantBySku(
 export async function createProductInDb(
   tenantId: string,
   productData: Omit<Product, 'id' | 'createdAt' | 'updatedAt' | 'tenantId'>,
-  userId?: string
+  userId?: string,
+  options: CreateProductOptions = {}
 ): Promise<{ success: boolean; product?: Product; error?: string }> {
   if (!tenantId) {
     return { success: false, error: 'معرف المؤسسة (Tenant ID) غير متوفر' };
@@ -374,6 +412,47 @@ export async function createProductInDb(
 
   const now = new Date().toISOString();
   const productRef = doc(collection(db, 'products'));
+
+  const openingStock = options.openingStock;
+  const openingLines = (openingStock?.lines || [])
+    .map((line) => ({
+      ...line,
+      variantId: line.variantId && line.variantId.trim() !== '' ? line.variantId.trim() : null,
+      quantity: Number(line.quantity || 0),
+      unitCost: Number(line.unitCost ?? productData.purchasePrice ?? 0),
+      unitId: line.unitId || productData.unitId,
+    }))
+    .filter((line) => Number.isFinite(line.quantity) && line.quantity > 0);
+
+  if (openingLines.length > 0 && !openingStock?.locationId) {
+    return { success: false, error: 'يجب تحديد الفرع أو المخزن لحفظ الكمية الافتتاحية' };
+  }
+
+  for (const line of openingLines) {
+    if (!Number.isFinite(line.quantity) || line.quantity <= 0) {
+      return { success: false, error: 'الكمية الافتتاحية يجب أن تكون رقماً موجباً' };
+    }
+    if (line.variantId && !productData.variants?.some((variant) => variant.id === line.variantId)) {
+      return { success: false, error: 'يوجد متغير غير صالح ضمن الكميات الافتتاحية' };
+    }
+  }
+
+  // Stable refs are allocated before runTransaction so transaction retries cannot
+  // generate duplicate stock movement documents.
+  const openingRefs = openingLines.map((line) => ({
+    line,
+    stockRef: doc(
+      db,
+      'branch_stock',
+      getOpeningStockDocId(tenantId, openingStock!.locationId, productRef.id, line.variantId)
+    ),
+    movementRef: doc(collection(db, 'stock_movements')),
+    idempotencyRef: doc(
+      db,
+      'stock_idempotency',
+      getOpeningStockIdempotencyDocId(tenantId, openingStock!.locationId, productRef.id, line.variantId)
+    ),
+  }));
 
   // Collect all SKUs and Barcodes that must be uniquely locked
   const skusToLock = [productData.sku.trim().toUpperCase()];
@@ -437,8 +516,101 @@ export async function createProductInDb(
         });
       }
 
-      // 5. Compute derived low stock flags and Save Product Document
-      const qty = Number(productData.quantity || 0);
+      // 5. Create opening stock balances/movements in the SAME transaction as
+      // the product and its SKU/barcode locks. This prevents a product from
+      // being created successfully while its requested opening balance fails.
+      for (const { line, stockRef, movementRef, idempotencyRef } of openingRefs) {
+        const qty = Math.round(line.quantity * 1000) / 1000;
+        const unitCost = Math.round(Math.max(0, Number(line.unitCost || 0)) * 100) / 100;
+        const minStock = Number(productData.minimumStock || 0);
+        const availableQuantity = qty;
+        const stockDerivedForLine = computeStockStatus(qty, minStock);
+        const variant = line.variantId
+          ? productData.variants?.find((item) => item.id === line.variantId)
+          : undefined;
+
+        transaction.set(stockRef, removeUndefinedFields({
+          id: stockRef.id,
+          tenantId,
+          tenant_id: tenantId,
+          branchId: openingStock!.locationId,
+          branch_id: openingStock!.locationId,
+          locationId: openingStock!.locationId,
+          productId: productRef.id,
+          variantId: line.variantId || null,
+          baseUnitId: line.unitId || productData.unitId,
+          quantity: qty,
+          onHandQuantity: qty,
+          reservedQuantity: 0,
+          availableQuantity,
+          unitCost,
+          averageCost: unitCost,
+          minimumStock: minStock,
+          reorderPoint: Number(productData.reorderPoint || 0),
+          isLowStock: stockDerivedForLine.isLowStock,
+          stockStatus: stockDerivedForLine.stockStatus,
+          lastMovementAt: now,
+          updatedAt: now,
+        }));
+
+        const idempotencyKey =
+          `product_create_opening:${tenantId}:${openingStock!.locationId}:${productRef.id}:${line.variantId || 'base'}`;
+
+        transaction.set(movementRef, removeUndefinedFields({
+          id: movementRef.id,
+          tenantId,
+          tenant_id: tenantId,
+          branchId: openingStock!.locationId,
+          branch_id: openingStock!.locationId,
+          locationId: openingStock!.locationId,
+          productId: productRef.id,
+          variantId: line.variantId || null,
+          productNameSnapshot: productData.name,
+          variantNameSnapshot: variant?.name || null,
+          movementType: 'opening_balance',
+          movement_type: 'opening_balance',
+          direction: 'in',
+          quantity: qty,
+          inputQuantity: qty,
+          inputUnitId: line.unitId || productData.unitId,
+          conversionFactor: 1,
+          baseQuantity: qty,
+          beforeQuantity: 0,
+          afterQuantity: qty,
+          unitCost,
+          totalCost: Math.round(unitCost * qty * 100) / 100,
+          referenceType: 'opening_balance',
+          referenceId: productRef.id,
+          idempotencyKey,
+          employeeId: openingStock?.employeeId || userId || null,
+          reason: 'opening_balance_on_product_create',
+          notes: openingStock?.notes || 'رصيد افتتاحي عند إنشاء الصنف',
+          createdAt: now,
+          created_at: now,
+          createdBy: openingStock?.employeeId || userId || 'system',
+        }));
+
+        transaction.set(idempotencyRef, {
+          tenantId,
+          tenant_id: tenantId,
+          idempotencyKey,
+          movementId: movementRef.id,
+          beforeQuantity: 0,
+          afterQuantity: qty,
+          averageCost: unitCost,
+          createdAt: now,
+        });
+      }
+
+      // 6. Compute compatibility product quantity from the opening stock while
+      // branch_stock remains the authoritative stock source.
+      const openingTotalQuantity = openingLines.reduce(
+        (sum, line) => sum + Number(line.quantity || 0),
+        0
+      );
+      const qty = openingLines.length > 0
+        ? Math.round(openingTotalQuantity * 1000) / 1000
+        : Number(productData.quantity || 0);
       const minStock = Number(productData.minimumStock || 0);
       const stockDerived = computeStockStatus(qty, minStock);
 
