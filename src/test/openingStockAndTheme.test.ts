@@ -21,7 +21,7 @@ describe('Opening stock + theme stability regression', () => {
   });
 
   it('converts HEX brand colors to valid HSL triplets for semantic CSS tokens', () => {
-    expect(hexToHslTriplet('#ea580c')).toBe('22 90% 48%');
+    expect(hexToHslTriplet('#ea580c')).toBe('21 90% 48%');
     expect(hexToHslTriplet('#ffffff')).toBe('0 0% 100%');
     expect(hexToHslTriplet('not-a-color')).toBeNull();
   });
