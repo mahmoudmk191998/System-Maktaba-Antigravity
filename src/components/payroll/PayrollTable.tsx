@@ -203,10 +203,10 @@ export const PayrollTable: React.FC<PayrollTableProps> = ({
   };
 
   return (
-    <Card className="border-slate-800 bg-slate-950/60">
+    <Card className="border-border dark:border-slate-800 bg-card dark:bg-slate-950/60">
       <CardHeader className="p-4 md:p-6 pb-4">
         {/* Navigation Sub-Tabs */}
-        <div className="flex items-center gap-2 border-b border-slate-800/80 pb-3 mb-4">
+        <div className="flex items-center gap-2 border-b border-border/80 dark:border-slate-800/80 pb-3 mb-4">
           <button
             type="button"
             onClick={() => setPayrollSubTab('payroll')}
@@ -214,7 +214,7 @@ export const PayrollTable: React.FC<PayrollTableProps> = ({
               "flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all outline-none",
               payrollSubTab === 'payroll'
                 ? "bg-primary text-primary-foreground shadow-sm"
-                : "text-muted-foreground hover:text-slate-200 hover:bg-slate-900"
+                : "text-muted-foreground hover:text-foreground/90 dark:text-slate-200 hover:bg-muted dark:bg-slate-900"
             )}
           >
             <DollarSign className="w-3.5 h-3.5" />
@@ -228,7 +228,7 @@ export const PayrollTable: React.FC<PayrollTableProps> = ({
               "flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all outline-none",
               payrollSubTab === 'advances'
                 ? "bg-amber-500 text-slate-950 shadow-sm"
-                : "text-muted-foreground hover:text-slate-200 hover:bg-slate-900"
+                : "text-muted-foreground hover:text-foreground/90 dark:text-slate-200 hover:bg-muted dark:bg-slate-900"
             )}
           >
             <HandCoins className="w-3.5 h-3.5" />
@@ -238,7 +238,7 @@ export const PayrollTable: React.FC<PayrollTableProps> = ({
               className={cn(
                 "text-[10px] px-1.5 py-0 h-4 border",
                 payrollSubTab === 'advances'
-                  ? "border-slate-900/40 bg-black/20 text-slate-950 font-mono"
+                  ? "border-border/40 dark:border-slate-900/40 bg-black/20 text-slate-950 font-mono"
                   : "border-amber-500/30 text-amber-400 font-mono"
               )}
             >
@@ -264,7 +264,7 @@ export const PayrollTable: React.FC<PayrollTableProps> = ({
               <div className="flex flex-wrap items-center gap-2">
                 {/* Month Select */}
                 <Select value={month} onValueChange={handleMonthChange}>
-                  <SelectTrigger className="w-[120px] h-9 text-xs bg-slate-900 border-slate-700">
+                  <SelectTrigger className="w-[120px] h-9 text-xs bg-muted dark:bg-slate-900 border-border dark:border-slate-700">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -285,7 +285,7 @@ export const PayrollTable: React.FC<PayrollTableProps> = ({
 
                 {/* Year Select */}
                 <Select value={year} onValueChange={handleYearChange}>
-                  <SelectTrigger className="w-[95px] h-9 text-xs bg-slate-900 border-slate-700 font-mono">
+                  <SelectTrigger className="w-[95px] h-9 text-xs bg-muted dark:bg-slate-900 border-border dark:border-slate-700 font-mono">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -311,7 +311,7 @@ export const PayrollTable: React.FC<PayrollTableProps> = ({
                   variant="outline"
                   size="sm"
                   onClick={handleExportCSV}
-                  className="gap-1.5 text-xs h-9 border-slate-700"
+                  className="gap-1.5 text-xs h-9 border-border dark:border-slate-700"
                 >
                   <Download className="w-4 h-4" />
                   <span>تصدير CSV</span>
@@ -327,12 +327,12 @@ export const PayrollTable: React.FC<PayrollTableProps> = ({
                   placeholder="بحث باسم الموظف أو المسمى الوظيفي..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pr-9 h-9 text-xs bg-slate-900/80 border-slate-700"
+                  className="pr-9 h-9 text-xs bg-muted/80 dark:bg-slate-900/80 border-border dark:border-slate-700"
                 />
               </div>
 
               <Select value={statusFilter} onValueChange={setStatusFilter}>
-                <SelectTrigger className="w-full sm:w-[140px] h-9 text-xs bg-slate-900/80 border-slate-700">
+                <SelectTrigger className="w-full sm:w-[140px] h-9 text-xs bg-muted/80 dark:bg-slate-900/80 border-border dark:border-slate-700">
                   <SelectValue placeholder="حالة الدفع" />
                 </SelectTrigger>
                 <SelectContent>
@@ -370,7 +370,7 @@ export const PayrollTable: React.FC<PayrollTableProps> = ({
         ) : (
           <>
             {/* Mobile Cards View (< md) */}
-            <div className="md:hidden divide-y divide-slate-800 border-t border-slate-800">
+            <div className="md:hidden divide-y divide-slate-800 border-t border-border dark:border-slate-800">
               {filteredRecords.length === 0 ? (
                 <div className="text-center py-10 text-muted-foreground text-xs p-4">
                   لا يوجد موظفون أو بيانات رواتب تطابق الفترة وشروط البحث
@@ -382,10 +382,10 @@ export const PayrollTable: React.FC<PayrollTableProps> = ({
                   );
 
                   return (
-                    <div key={rec.id} className="p-4 space-y-3 bg-slate-950/20">
+                    <div key={rec.id} className="p-4 space-y-3 bg-muted/20 dark:bg-slate-950/20">
                       <div className="flex items-start justify-between gap-2">
                         <div>
-                          <p className="font-bold text-slate-100 text-sm">{rec.employeeName}</p>
+                          <p className="font-bold text-foreground dark:text-slate-100 text-sm">{rec.employeeName}</p>
                           <p className="text-[11px] text-muted-foreground">{rec.employeeRole}</p>
                         </div>
                         <Badge className={`text-[10px] border ${statusBadgeStyles[rec.status] || ''}`}>
@@ -393,24 +393,24 @@ export const PayrollTable: React.FC<PayrollTableProps> = ({
                         </Badge>
                       </div>
 
-                      <div className="grid grid-cols-2 gap-2 text-xs bg-slate-900/40 p-2.5 rounded-lg border border-slate-800/60">
+                      <div className="grid grid-cols-2 gap-2 text-xs bg-muted/40 dark:bg-slate-900/40 p-2.5 rounded-lg border border-border/60 dark:border-slate-800/60">
                         <div>
-                          <span className="text-slate-400 block text-[10px]">الأساسي:</span>
-                          <span className="font-mono text-slate-200">{rec.basicSalarySnapshot.toLocaleString('ar-EG')} ج.م</span>
+                          <span className="text-muted-foreground dark:text-slate-400 block text-[10px]">الأساسي:</span>
+                          <span className="font-mono text-foreground/90 dark:text-slate-200">{rec.basicSalarySnapshot.toLocaleString('ar-EG')} ج.م</span>
                         </div>
                         <div>
-                          <span className="text-slate-400 block text-[10px]">الإضافي:</span>
+                          <span className="text-muted-foreground dark:text-slate-400 block text-[10px]">الإضافي:</span>
                           <span className="font-mono text-emerald-400">+{ (rec.overtime + rec.bonuses + rec.allowances).toLocaleString('ar-EG') }</span>
                         </div>
                         <div>
-                          <span className="text-slate-400 block text-[10px]">الخصومات والسلف:</span>
+                          <span className="text-muted-foreground dark:text-slate-400 block text-[10px]">الخصومات والسلف:</span>
                           <span className="font-mono text-rose-400">
                             -{(rec.attendanceDeductions + rec.advanceDeductions).toLocaleString('ar-EG')}
                           </span>
                         </div>
                         <div>
-                          <span className="text-slate-400 block text-[10px]">الصافي:</span>
-                          <span className="font-mono font-bold text-slate-100">{rec.netSalary.toLocaleString('ar-EG')} ج.م</span>
+                          <span className="text-muted-foreground dark:text-slate-400 block text-[10px]">الصافي:</span>
+                          <span className="font-mono font-bold text-foreground dark:text-slate-100">{rec.netSalary.toLocaleString('ar-EG')} ج.م</span>
                         </div>
                       </div>
 
@@ -465,7 +465,7 @@ export const PayrollTable: React.FC<PayrollTableProps> = ({
                                     <div
                                       key={p.id}
                                       className={`px-2 py-1.5 text-xs flex items-center justify-between rounded ${
-                                        isVoided ? 'bg-rose-950/20 opacity-70' : 'hover:bg-slate-800/50'
+                                        isVoided ? 'bg-rose-950/20 opacity-70' : 'hover:bg-muted dark:bg-slate-800/50'
                                       }`}
                                     >
                                       <div className="flex-1 pr-1">
@@ -520,10 +520,10 @@ export const PayrollTable: React.FC<PayrollTableProps> = ({
             </div>
 
             {/* Desktop Table View (>= md) */}
-            <div className="hidden md:block border-t border-slate-800 overflow-x-auto">
+            <div className="hidden md:block border-t border-border dark:border-slate-800 overflow-x-auto">
               <Table>
-                <TableHeader className="bg-slate-900/70">
-                  <TableRow className="border-slate-800 hover:bg-transparent text-xs">
+                <TableHeader className="bg-muted/70 dark:bg-slate-900/70">
+                  <TableRow className="border-border dark:border-slate-800 hover:bg-transparent text-xs">
                     <TableHead className="text-right">الموظف</TableHead>
                     <TableHead className="text-center">الأساسي</TableHead>
                     <TableHead className="text-center">الإضافي والبدلات</TableHead>
@@ -550,11 +550,11 @@ export const PayrollTable: React.FC<PayrollTableProps> = ({
                   );
 
                   return (
-                    <TableRow key={rec.id} className="border-slate-800/60 hover:bg-slate-900/40 text-xs">
+                    <TableRow key={rec.id} className="border-border/60 dark:border-slate-800/60 hover:bg-muted/40 dark:bg-slate-900/40 text-xs">
                       {/* Employee */}
                       <TableCell className="font-medium">
                         <div>
-                          <p className="font-bold text-slate-100">{rec.employeeName}</p>
+                          <p className="font-bold text-foreground dark:text-slate-100">{rec.employeeName}</p>
                           <p className="text-[10px] text-muted-foreground">{rec.employeeRole}</p>
                         </div>
                       </TableCell>
@@ -595,7 +595,7 @@ export const PayrollTable: React.FC<PayrollTableProps> = ({
                       </TableCell>
 
                       {/* Net Due */}
-                      <TableCell className="text-center font-mono font-bold text-slate-100 bg-slate-900/30">
+                      <TableCell className="text-center font-mono font-bold text-foreground dark:text-slate-100 bg-muted/30 dark:bg-slate-900/30">
                         {rec.netSalary.toLocaleString('ar-EG')} ج.م
                       </TableCell>
 
@@ -658,7 +658,7 @@ export const PayrollTable: React.FC<PayrollTableProps> = ({
                                     <div
                                       key={p.id}
                                       className={`px-2 py-1.5 text-xs flex items-center justify-between rounded ${
-                                        isVoided ? 'bg-rose-950/20 opacity-70' : 'hover:bg-slate-800/50'
+                                        isVoided ? 'bg-rose-950/20 opacity-70' : 'hover:bg-muted dark:bg-slate-800/50'
                                       }`}
                                     >
                                       <div className="flex-1 pr-1">
@@ -715,13 +715,13 @@ export const PayrollTable: React.FC<PayrollTableProps> = ({
             {/* Totals Row */}
             {filteredRecords.length > 0 && (
               <tfoot>
-                <TableRow className="border-t-2 border-slate-700 bg-slate-900/90 font-bold text-xs">
+                <TableRow className="border-t-2 border-border dark:border-slate-700 bg-card dark:bg-slate-900/90 font-bold text-xs">
                   <TableCell>الإجمالي ({filteredRecords.length} موظف)</TableCell>
                   <TableCell className="text-center font-mono">{totals.basic.toLocaleString('ar-EG')} ج.م</TableCell>
                   <TableCell className="text-center font-mono text-emerald-400">+{totals.additions.toLocaleString('ar-EG')}</TableCell>
                   <TableCell className="text-center font-mono text-rose-400">-{totals.attendanceDeductions.toLocaleString('ar-EG')}</TableCell>
                   <TableCell className="text-center font-mono text-amber-400">-{totals.advanceDeductions.toLocaleString('ar-EG')}</TableCell>
-                  <TableCell className="text-center font-mono text-slate-100">{totals.net.toLocaleString('ar-EG')} ج.م</TableCell>
+                  <TableCell className="text-center font-mono text-foreground dark:text-slate-100">{totals.net.toLocaleString('ar-EG')} ج.م</TableCell>
                   <TableCell className="text-center font-mono text-emerald-400">{totals.paid.toLocaleString('ar-EG')} ج.م</TableCell>
                   <TableCell className="text-center font-mono text-rose-400">{totals.remaining.toLocaleString('ar-EG')} ج.م</TableCell>
                   <TableCell colSpan={2}></TableCell>
