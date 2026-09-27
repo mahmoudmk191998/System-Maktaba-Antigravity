@@ -46,7 +46,7 @@ import { useCategories } from '@/hooks/retail/useCategories';
 import { useBrands } from '@/hooks/retail/useBrands';
 import { useUserPermissions } from '@/hooks/usePermissions';
 import type { Product, ProductVariant, ProductType } from '@/types/retail.types';
-import { ProductFormDialog } from '@/components/retail/ProductFormDialog';
+import { ProductFormDialog, type ProductFormSaveOptions } from '@/components/retail/ProductFormDialog';
 import { ProductDetailsDrawer } from '@/components/retail/ProductDetailsDrawer';
 import { BarcodePrintDialog } from '@/components/retail/BarcodePrintDialog';
 import { BarcodeScanDialog } from '@/components/retail/BarcodeScanDialog';
@@ -142,11 +142,11 @@ export default function ProductsPage() {
     setPrintOpen(true);
   };
 
-  const handleSaveProduct = async (payload: any) => {
+  const handleSaveProduct = async (payload: any, options?: ProductFormSaveOptions) => {
     if (editingProduct) {
       return updateProduct(editingProduct.id, payload);
     }
-    return createProduct(payload);
+    return createProduct(payload, options);
   };
 
   const handleArchive = async (id: string) => {
