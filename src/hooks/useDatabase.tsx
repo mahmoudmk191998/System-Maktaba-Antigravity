@@ -11,6 +11,11 @@ import { isStatsMigrationComplete, runStatsBackfill } from '@/services/analytics
 import { getTenantDateString, getTenantYesterdayString } from '@/lib/reportingTimezone';
 import { firestoreLogger } from '@/lib/firestoreLogger';
 import { wipeAndReinitializeTenantData } from '@/services/admin/dataReset.service';
+import {
+  resolveOrRecoverTenantBranch,
+  saveTenantBranchProfile,
+  saveTenantProfileDocument,
+} from '@/services/settings/settingsPersistence.service';
 
 const fetchCollection = async (
   colPath: string, 
@@ -76,52 +81,39 @@ export function useTenantBranch() {
             }
           }
           
-          let resolvedBranchId = profile.branchId || profile.branch_id;
-          let branchName = 'الفرع الرئيسي';
-          let branchAddress = '';
-          let branchPhone = '';
-          let branchOpeningTime = '08:00';
-          let branchClosingTime = '23:00';
+          const requestedBranchId = profile.branchId || profile.branch_id || null;
+          const branchResolution = await resolveOrRecoverTenantBranch(
+            effectiveTenantId,
+            requestedBranchId
+          );
 
-          if (resolvedBranchId) {
-            setBranchId(resolvedBranchId);
-            const bDoc = await getDoc(doc(db, 'branches', resolvedBranchId));
-            if (bDoc.exists()) {
-              const bData = bDoc.data();
-              branchName = bData.name || 'الفرع الرئيسي';
-              branchAddress = bData.address || '';
-              branchPhone = bData.phone || '';
-              branchOpeningTime = bData.opening_time || '08:00';
-              branchClosingTime = bData.closing_time || '23:00';
-            }
-          } else {
-            // Get first branch
-            const q = query(collection(db, 'branches'), where('tenant_id', '==', effectiveTenantId), fsLimit(1));
-            const branchSnap = await getDocs(q);
-            if (!branchSnap.empty) {
-              const bId = branchSnap.docs[0].id;
-              setBranchId(bId);
-              resolvedBranchId = bId;
-              const bData = branchSnap.docs[0].data();
-              branchName = bData.name || 'الفرع الرئيسي';
-              branchAddress = bData.address || '';
-              branchPhone = bData.phone || '';
-              branchOpeningTime = bData.opening_time || '08:00';
-              branchClosingTime = bData.closing_time || '23:00';
-            } else {
-              // Create default branch
-              const newBranch = await addDoc(collection(db, 'branches'), { 
-                tenant_id: effectiveTenantId, 
-                name: 'الفرع الرئيسي',
-                address: '',
-                phone: '',
-                opening_time: '08:00',
-                closing_time: '23:00'
-              });
-              setBranchId(newBranch.id);
-              await updateDoc(profileRef, { branch_id: newBranch.id });
-              resolvedBranchId = newBranch.id;
-            }
+          const resolvedBranchId = branchResolution.id;
+          const bData = branchResolution.data || {};
+          const branchName = bData.name || 'الفرع الرئيسي';
+          const branchAddress = bData.address || '';
+          const branchPhone = bData.phone || '';
+          const branchOpeningTime = bData.opening_time || bData.openingTime || '08:00';
+          const branchClosingTime = bData.closing_time || bData.closingTime || '23:00';
+
+          setBranchId(resolvedBranchId);
+
+          // Keep both historical field conventions in sync. This also repairs a
+          // profile that referenced a branch deleted by an older reset flow.
+          if (
+            requestedBranchId !== resolvedBranchId ||
+            profile.branchId !== resolvedBranchId ||
+            profile.branch_id !== resolvedBranchId
+          ) {
+            await setDoc(
+              profileRef,
+              {
+                branchId: resolvedBranchId,
+                branch_id: resolvedBranchId,
+              },
+              { merge: true }
+            );
+            profile.branchId = resolvedBranchId;
+            profile.branch_id = resolvedBranchId;
           }
           
           // Load tenant and settings from db
@@ -150,7 +142,7 @@ export function useTenantBranch() {
           if (resolvedBranchId) {
             useAppStore.getState().setCurrentBranch({ 
               id: resolvedBranchId, 
-              tenantId: profile.tenant_id, 
+              tenantId: effectiveTenantId, 
               name: branchName, 
               address: branchAddress, 
               phone: branchPhone, 
@@ -2071,7 +2063,7 @@ export function useSettings(tenantId: string | null) {
   const updateTenantSettings = async (settings: any) => {
     if (!tenantId) return false;
     try {
-      await updateDoc(doc(db, 'tenants', tenantId), { settings });
+      await saveTenantProfileDocument(tenantId, { settings });
       return true;
     } catch (e: any) {
       toast.error('خطأ في حفظ الإعدادات على الخادم: ' + e.message);
@@ -2082,7 +2074,7 @@ export function useSettings(tenantId: string | null) {
   const updateTenantProfile = async (data: { name?: string; name_en?: string; tax_number?: string; settings?: any }) => {
     if (!tenantId) return false;
     try {
-      await updateDoc(doc(db, 'tenants', tenantId), data);
+      await saveTenantProfileDocument(tenantId, data);
       return true;
     } catch (e: any) {
       toast.error('خطأ في حفظ بيانات المؤسسة: ' + e.message);
@@ -2091,8 +2083,16 @@ export function useSettings(tenantId: string | null) {
   };
 
   const updateBranchProfile = async (branchId: string, data: { name?: string; phone?: string; address?: string; opening_time?: string; closing_time?: string }) => {
+    if (!tenantId) {
+      toast.error('تعذر حفظ بيانات الفرع: معرف المؤسسة غير متوفر');
+      return false;
+    }
+
     try {
-      await updateDoc(doc(db, 'branches', branchId), data);
+      const result = await saveTenantBranchProfile(tenantId, branchId, data);
+      if (result.recovered) {
+        console.info('[Settings] Missing branch document was repaired before saving:', branchId);
+      }
       return true;
     } catch (e: any) {
       toast.error('خطأ في حفظ بيانات الفرع: ' + e.message);
