@@ -237,9 +237,9 @@ export const EmployeeFinancialTab: React.FC<EmployeeFinancialTabProps> = ({
       {/* 1. Top Three Summary Blocks */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         {/* Block A: Current Salary Package */}
-        <div className="p-3 bg-slate-900/70 rounded-xl border border-slate-800 space-y-2">
+        <div className="p-3 bg-muted/70 dark:bg-slate-900/70 rounded-xl border border-border dark:border-slate-800 space-y-2">
           <div className="flex items-center justify-between">
-            <span className="font-bold text-slate-200 flex items-center gap-1.5">
+            <span className="font-bold text-foreground/90 dark:text-slate-200 flex items-center gap-1.5">
               <DollarSign className="w-4 h-4 text-primary" />
               الراتب الحالي
             </span>
@@ -247,7 +247,7 @@ export const EmployeeFinancialTab: React.FC<EmployeeFinancialTabProps> = ({
               {basicSalary.toLocaleString('ar-EG')} ج.م
             </span>
           </div>
-          <div className="space-y-1 text-[11px] text-muted-foreground pt-1 border-t border-slate-800/80">
+          <div className="space-y-1 text-[11px] text-muted-foreground pt-1 border-t border-border/80 dark:border-slate-800/80">
             <div className="flex justify-between">
               <span>الراتب الأساسي:</span>
               <span className="font-mono">{basicSalary.toLocaleString('ar-EG')} ج.م</span>
@@ -264,9 +264,9 @@ export const EmployeeFinancialTab: React.FC<EmployeeFinancialTabProps> = ({
         </div>
 
         {/* Block B: Advances Summary */}
-        <div className="p-3 bg-slate-900/70 rounded-xl border border-slate-800 space-y-2">
+        <div className="p-3 bg-muted/70 dark:bg-slate-900/70 rounded-xl border border-border dark:border-slate-800 space-y-2">
           <div className="flex items-center justify-between">
-            <span className="font-bold text-slate-200 flex items-center gap-1.5">
+            <span className="font-bold text-foreground/90 dark:text-slate-200 flex items-center gap-1.5">
               <HandCoins className="w-4 h-4 text-amber-400" />
               السلف والأقساط
             </span>
@@ -280,10 +280,10 @@ export const EmployeeFinancialTab: React.FC<EmployeeFinancialTabProps> = ({
               سلفة
             </Button>
           </div>
-          <div className="space-y-1 text-[11px] text-muted-foreground pt-1 border-t border-slate-800/80">
+          <div className="space-y-1 text-[11px] text-muted-foreground pt-1 border-t border-border/80 dark:border-slate-800/80">
             <div className="flex justify-between">
               <span>إجمالي السلف النشطة:</span>
-              <span className="font-mono font-bold text-slate-200">{totalAdvances.toLocaleString('ar-EG')} ج.م</span>
+              <span className="font-mono font-bold text-foreground/90 dark:text-slate-200">{totalAdvances.toLocaleString('ar-EG')} ج.م</span>
             </div>
             <div className="flex justify-between">
               <span>المسدد منها:</span>
@@ -297,9 +297,9 @@ export const EmployeeFinancialTab: React.FC<EmployeeFinancialTabProps> = ({
         </div>
 
         {/* Block C: Payrolls Overview */}
-        <div className="p-3 bg-slate-900/70 rounded-xl border border-slate-800 space-y-2">
+        <div className="p-3 bg-muted/70 dark:bg-slate-900/70 rounded-xl border border-border dark:border-slate-800 space-y-2">
           <div className="flex items-center justify-between">
-            <span className="font-bold text-slate-200 flex items-center gap-1.5">
+            <span className="font-bold text-foreground/90 dark:text-slate-200 flex items-center gap-1.5">
               <Receipt className="w-4 h-4 text-sky-400" />
               المرتبات (كافة الفترات)
             </span>
@@ -307,10 +307,10 @@ export const EmployeeFinancialTab: React.FC<EmployeeFinancialTabProps> = ({
               {empPayrolls.length} مسير
             </Badge>
           </div>
-          <div className="space-y-1 text-[11px] text-muted-foreground pt-1 border-t border-slate-800/80">
+          <div className="space-y-1 text-[11px] text-muted-foreground pt-1 border-t border-border/80 dark:border-slate-800/80">
             <div className="flex justify-between">
               <span>إجمالي المستحق:</span>
-              <span className="font-mono font-bold text-slate-200">{totalDuePayrolls.toLocaleString('ar-EG')} ج.م</span>
+              <span className="font-mono font-bold text-foreground/90 dark:text-slate-200">{totalDuePayrolls.toLocaleString('ar-EG')} ج.م</span>
             </div>
             <div className="flex justify-between">
               <span>إجمالي المدفوع:</span>
@@ -327,7 +327,7 @@ export const EmployeeFinancialTab: React.FC<EmployeeFinancialTabProps> = ({
       {/* 2. Active Advances List if any */}
       {activeAdvances.length > 0 && (
         <div className="space-y-2 pt-1">
-          <h4 className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+          <h4 className="text-xs font-bold text-muted-foreground dark:text-slate-300 flex items-center gap-1.5">
             <Clock className="w-3.5 h-3.5 text-amber-400" />
             السلف النشطة قيد السداد ({activeAdvances.length})
           </h4>
@@ -335,11 +335,11 @@ export const EmployeeFinancialTab: React.FC<EmployeeFinancialTabProps> = ({
             {activeAdvances.map((adv) => (
               <div
                 key={adv.id}
-                className="p-3 bg-slate-950/60 rounded-lg border border-slate-800 flex items-center justify-between"
+                className="p-3 bg-card dark:bg-slate-950/60 rounded-lg border border-border dark:border-slate-800 flex items-center justify-between"
               >
                 <div>
                   <div className="flex items-center gap-2">
-                    <span className="font-bold font-mono text-slate-100">{adv.amount.toLocaleString('ar-EG')} ج.م</span>
+                    <span className="font-bold font-mono text-foreground dark:text-slate-100">{adv.amount.toLocaleString('ar-EG')} ج.م</span>
                     <Badge variant="secondary" className="text-[9px]">
                       {adv.repaymentType === 'installments' ? `${adv.numberOfInstallments} أقساط` : 'خصم كامل'}
                     </Badge>
@@ -350,7 +350,7 @@ export const EmployeeFinancialTab: React.FC<EmployeeFinancialTabProps> = ({
                   <p className="text-[10px] text-muted-foreground pt-1">
                     المتبقي: <span className="font-mono text-amber-400 font-bold">{adv.remainingAmount.toLocaleString('ar-EG')} ج.م</span> • المسدد: <span className="font-mono text-emerald-400">{adv.paidAmount.toLocaleString('ar-EG')} ج.م</span>
                   </p>
-                  <p className="text-[10px] text-slate-400 pt-0.5">
+                  <p className="text-[10px] text-muted-foreground dark:text-slate-400 pt-0.5">
                     تاريخ البدء: {adv.startDate}
                   </p>
                 </div>
@@ -380,7 +380,7 @@ export const EmployeeFinancialTab: React.FC<EmployeeFinancialTabProps> = ({
       {/* 3. Financial Transactions History / Timeline */}
       <div className="space-y-2.5 pt-2">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-          <h4 className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
+          <h4 className="text-xs font-bold text-foreground/90 dark:text-slate-200 flex items-center gap-1.5">
             <FileText className="w-3.5 h-3.5 text-primary" />
             سجل العمليات المالية والرقابية
           </h4>
@@ -389,7 +389,7 @@ export const EmployeeFinancialTab: React.FC<EmployeeFinancialTabProps> = ({
           <div className="flex items-center gap-2">
             <span className="text-[11px] text-muted-foreground">تصفية حسب الحالة:</span>
             <Select value={statusFilter} onValueChange={setStatusFilter}>
-              <SelectTrigger className="w-[130px] h-7 text-[11px] bg-slate-900 border-slate-700">
+              <SelectTrigger className="w-[130px] h-7 text-[11px] bg-muted dark:bg-slate-900 border-border dark:border-slate-700">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -403,10 +403,10 @@ export const EmployeeFinancialTab: React.FC<EmployeeFinancialTabProps> = ({
           </div>
         </div>
 
-        <div className="max-h-72 overflow-y-auto rounded-lg border border-slate-800">
+        <div className="max-h-72 overflow-y-auto rounded-lg border border-border dark:border-slate-800">
           <Table>
-            <TableHeader className="bg-slate-900/60 sticky top-0 z-10">
-              <TableRow className="border-slate-800 text-[11px]">
+            <TableHeader className="bg-muted/60 dark:bg-slate-900/60 sticky top-0 z-10">
+              <TableRow className="border-border dark:border-slate-800 text-[11px]">
                 <TableHead className="text-right">التاريخ</TableHead>
                 <TableHead className="text-right">العملية</TableHead>
                 <TableHead className="text-center">الفترة</TableHead>
@@ -430,7 +430,7 @@ export const EmployeeFinancialTab: React.FC<EmployeeFinancialTabProps> = ({
                   return (
                     <TableRow
                       key={tx.id}
-                      className={`border-slate-800/60 text-xs ${
+                      className={`border-border/60 dark:border-slate-800/60 text-xs ${
                         isVoidedOrCancelled ? 'bg-rose-950/15 text-muted-foreground' : ''
                       }`}
                     >
@@ -486,7 +486,7 @@ export const EmployeeFinancialTab: React.FC<EmployeeFinancialTabProps> = ({
                         {!isVoidedOrCancelled && (
                           <DropdownMenu>
                             <DropdownMenuTrigger asChild>
-                              <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-slate-100">
+                              <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-foreground dark:text-slate-100">
                                 <MoreVertical className="w-3.5 h-3.5" />
                               </Button>
                             </DropdownMenuTrigger>
