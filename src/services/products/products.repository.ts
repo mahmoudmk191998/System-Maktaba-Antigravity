@@ -24,6 +24,11 @@ import { validateProductForm } from './productValidators';
 import { normalizeArabicText } from './products.service';
 import { removeUndefinedFields } from '@/lib/utils';
 import { firestoreLogger } from '@/lib/firestoreLogger';
+import {
+  getBranchStockDocId,
+  getStockIdempotencyDocId,
+  normalizeStockBalance,
+} from '@/services/inventory/retailInventory.service';
 
 /**
  * Computes derived stock status flags to enable O(1) compound queries
@@ -120,6 +125,80 @@ export interface ProductsPageResult {
   products: Product[];
   lastVisible?: DocumentSnapshot;
   hasMore: boolean;
+}
+
+export interface ProductOpeningStockEntry {
+  locationId: string;
+  variantId?: string | null;
+  quantity: number;
+  unitCost: number;
+  unitId?: string;
+  notes?: string;
+}
+
+export interface CreateProductOptions {
+  openingStock?: ProductOpeningStockEntry[];
+}
+
+/**
+ * Pure validator used by the UI and tests before the Firestore transaction.
+ * Variant products must receive opening stock per variant, never on the parent balance.
+ */
+export function validateProductOpeningStock(
+  productData: Pick<Product, 'hasVariants' | 'variants' | 'trackInventory'>,
+  entries: ProductOpeningStockEntry[] = []
+): { valid: boolean; entries: ProductOpeningStockEntry[]; error?: string } {
+  if (productData.trackInventory === false || entries.length === 0) {
+    return { valid: true, entries: [] };
+  }
+
+  const variantIds = new Set((productData.variants || []).map((variant) => variant.id));
+  const normalized: ProductOpeningStockEntry[] = [];
+  const uniqueKeys = new Set<string>();
+
+  for (const rawEntry of entries) {
+    const locationId = rawEntry.locationId?.trim();
+    const variantId = rawEntry.variantId && rawEntry.variantId !== 'base'
+      ? rawEntry.variantId.trim()
+      : null;
+    const quantity = Number(rawEntry.quantity);
+    const unitCost = Number(rawEntry.unitCost);
+
+    if (!locationId) {
+      return { valid: false, entries: [], error: 'لا يمكن تسجيل كمية افتتاحية بدون تحديد الفرع أو الموقع المخزني.' };
+    }
+    if (!Number.isFinite(quantity) || quantity <= 0 || !Number.isInteger(quantity)) {
+      return { valid: false, entries: [], error: 'الكمية الافتتاحية يجب أن تكون عدداً صحيحاً أكبر من صفر.' };
+    }
+    if (!Number.isFinite(unitCost) || unitCost < 0) {
+      return { valid: false, entries: [], error: 'تكلفة الرصيد الافتتاحي غير صالحة.' };
+    }
+
+    if (productData.hasVariants) {
+      if (!variantId || !variantIds.has(variantId)) {
+        return { valid: false, entries: [], error: 'يجب ربط الكمية الافتتاحية بمتغير صحيح لهذا الصنف.' };
+      }
+    } else if (variantId) {
+      return { valid: false, entries: [], error: 'الصنف بدون متغيرات لا يقبل رصيداً افتتاحياً على مستوى متغير.' };
+    }
+
+    const key = `${locationId}::${variantId || 'base'}`;
+    if (uniqueKeys.has(key)) {
+      return { valid: false, entries: [], error: 'يوجد رصيد افتتاحي مكرر لنفس الصنف/المتغير في نفس الموقع.' };
+    }
+    uniqueKeys.add(key);
+
+    normalized.push({
+      locationId,
+      variantId,
+      quantity,
+      unitCost: Math.round(unitCost * 100) / 100,
+      unitId: rawEntry.unitId,
+      notes: rawEntry.notes?.trim() || undefined,
+    });
+  }
+
+  return { valid: true, entries: normalized };
 }
 
 /**
@@ -360,7 +439,8 @@ export async function findProductOrVariantBySku(
 export async function createProductInDb(
   tenantId: string,
   productData: Omit<Product, 'id' | 'createdAt' | 'updatedAt' | 'tenantId'>,
-  userId?: string
+  userId?: string,
+  options: CreateProductOptions = {}
 ): Promise<{ success: boolean; product?: Product; error?: string }> {
   if (!tenantId) {
     return { success: false, error: 'معرف المؤسسة (Tenant ID) غير متوفر' };
@@ -371,6 +451,15 @@ export async function createProductInDb(
     const firstErr = Object.values(validation.errors)[0];
     return { success: false, error: firstErr };
   }
+
+  const openingStockValidation = validateProductOpeningStock(
+    productData,
+    options.openingStock || []
+  );
+  if (!openingStockValidation.valid) {
+    return { success: false, error: openingStockValidation.error };
+  }
+  const openingStock = openingStockValidation.entries;
 
   const now = new Date().toISOString();
   const productRef = doc(collection(db, 'products'));
@@ -415,7 +504,45 @@ export async function createProductInDb(
         barcodeLocks.push({ ref: barcodeLockRef, barcode });
       }
 
-      // 3. ALL WRITES AFTER ALL READS: Lock SKUs
+      // 3. ALL READS FIRST: validate opening stock balance/idempotency documents.
+      const openingStockRecords: Array<{
+        entry: ProductOpeningStockEntry;
+        stockRef: ReturnType<typeof doc>;
+        movementRef: ReturnType<typeof doc>;
+        idempRef: ReturnType<typeof doc>;
+        idempotencyKey: string;
+      }> = [];
+
+      for (const entry of openingStock) {
+        const stockRef = doc(
+          db,
+          'branch_stock',
+          getBranchStockDocId(tenantId, entry.locationId, productRef.id, entry.variantId)
+        );
+        const idempotencyKey =
+          `product_create_opening:${productRef.id}:${entry.locationId}:${entry.variantId || 'base'}`;
+        const idempRef = doc(
+          db,
+          'stock_idempotency',
+          getStockIdempotencyDocId(tenantId, idempotencyKey)
+        );
+
+        const stockSnap = await transaction.get(stockRef);
+        const idempSnap = await transaction.get(idempRef);
+        if (stockSnap.exists() || idempSnap.exists()) {
+          throw new Error('تعذر إنشاء الرصيد الافتتاحي لأن هناك رصيداً أو قفلاً مخزنياً موجوداً مسبقاً لهذا الصنف.');
+        }
+
+        openingStockRecords.push({
+          entry,
+          stockRef,
+          movementRef: doc(collection(db, 'stock_movements')),
+          idempRef,
+          idempotencyKey,
+        });
+      }
+
+      // 4. ALL WRITES AFTER ALL READS: Lock SKUs
       for (const item of skuLocks) {
         transaction.set(item.ref, {
           tenantId,
@@ -426,7 +553,7 @@ export async function createProductInDb(
         });
       }
 
-      // 4. Lock Barcodes
+      // 5. Lock Barcodes
       for (const item of barcodeLocks) {
         transaction.set(item.ref, {
           tenantId,
@@ -437,8 +564,9 @@ export async function createProductInDb(
         });
       }
 
-      // 5. Compute derived low stock flags and Save Product Document
-      const qty = Number(productData.quantity || 0);
+      // 6. Compute derived low stock flags and Save Product Document
+      const openingQuantity = openingStock.reduce((sum, entry) => sum + entry.quantity, 0);
+      const qty = openingQuantity > 0 ? openingQuantity : Number(productData.quantity || 0);
       const minStock = Number(productData.minimumStock || 0);
       const stockDerived = computeStockStatus(qty, minStock);
 
@@ -460,6 +588,90 @@ export async function createProductInDb(
 
       const finalProduct = removeUndefinedFields(rawProduct);
       transaction.set(productRef, finalProduct);
+
+      // 7. Create the optional opening stock in the SAME transaction as the product.
+      // This prevents a half-created state where the product exists but its initial quantity failed.
+      for (const record of openingStockRecords) {
+        const { entry, stockRef, movementRef, idempRef, idempotencyKey } = record;
+        const variant = entry.variantId
+          ? productData.variants?.find((item) => item.id === entry.variantId)
+          : undefined;
+        const effectiveUnitCost = Math.round(
+          Number(entry.unitCost ?? variant?.purchasePrice ?? productData.purchasePrice ?? 0) * 100
+        ) / 100;
+
+        const stockBalance = normalizeStockBalance({
+          id: stockRef.id,
+          tenantId,
+          branchId: entry.locationId,
+          locationId: entry.locationId,
+          productId: productRef.id,
+          variantId: entry.variantId || null,
+          onHandQuantity: entry.quantity,
+          reservedQuantity: 0,
+          availableQuantity: entry.quantity,
+          averageCost: effectiveUnitCost,
+          minimumStock: Number(productData.minimumStock || 0),
+          lastMovementAt: now,
+          updatedAt: now,
+        });
+
+        transaction.set(
+          stockRef,
+          removeUndefinedFields({
+            ...stockBalance,
+            tenant_id: tenantId,
+            branch_id: entry.locationId,
+          })
+        );
+
+        const movementRecord = removeUndefinedFields({
+          id: movementRef.id,
+          tenantId,
+          tenant_id: tenantId,
+          branchId: entry.locationId,
+          branch_id: entry.locationId,
+          locationId: entry.locationId,
+          productId: productRef.id,
+          variantId: entry.variantId || null,
+          movementType: 'opening_balance',
+          movement_type: 'opening_balance',
+          direction: 'in',
+          quantity: entry.quantity,
+          inputQuantity: entry.quantity,
+          inputUnitId: entry.unitId || productData.unitId || null,
+          conversionFactor: 1,
+          baseQuantity: entry.quantity,
+          beforeQuantity: 0,
+          afterQuantity: entry.quantity,
+          unitCost: effectiveUnitCost,
+          totalCost: Math.round(effectiveUnitCost * entry.quantity * 100) / 100,
+          referenceType: 'opening_balance',
+          referenceId: productRef.id,
+          idempotencyKey,
+          employeeId: userId || null,
+          reason: 'product_creation',
+          notes: entry.notes || 'رصيد افتتاحي عند إنشاء الصنف',
+          createdAt: now,
+          created_at: now,
+          createdBy: userId || 'system',
+          metadata: {
+            source: 'product_form',
+            atomicWithProductCreate: true,
+          },
+        });
+        transaction.set(movementRef, movementRecord);
+
+        transaction.set(idempRef, {
+          tenantId,
+          idempotencyKey,
+          movementId: movementRef.id,
+          beforeQuantity: 0,
+          afterQuantity: entry.quantity,
+          averageCost: effectiveUnitCost,
+          createdAt: now,
+        });
+      }
 
       return finalProduct;
     });
