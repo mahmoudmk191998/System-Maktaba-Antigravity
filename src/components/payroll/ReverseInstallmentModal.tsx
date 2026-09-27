@@ -66,7 +66,7 @@ export const ReverseInstallmentModal: React.FC<ReverseInstallmentModalProps> = (
         }
       }}
     >
-      <DialogContent className="max-w-md bg-slate-950 border-slate-800 text-slate-100 p-5">
+      <DialogContent className="max-w-md bg-background dark:bg-slate-950 border-border dark:border-slate-800 text-foreground dark:text-slate-100 p-5">
         <DialogHeader className="space-y-2">
           <div className="w-10 h-10 rounded-full bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400 mb-1">
             <AlertTriangle className="w-5 h-5" />
@@ -80,16 +80,16 @@ export const ReverseInstallmentModal: React.FC<ReverseInstallmentModalProps> = (
         </DialogHeader>
 
         {/* Installment Details */}
-        <div className="my-3 p-3.5 bg-slate-900/80 rounded-lg border border-slate-800/80 space-y-2 text-xs">
-          <div className="flex justify-between items-center py-0.5 border-b border-slate-800">
+        <div className="my-3 p-3.5 bg-muted/80 dark:bg-slate-900/80 rounded-lg border border-border/80 dark:border-slate-800/80 space-y-2 text-xs">
+          <div className="flex justify-between items-center py-0.5 border-b border-border dark:border-slate-800">
             <span className="text-muted-foreground flex items-center gap-1.5">
               <Calendar className="w-3.5 h-3.5" />
               شهر الاستقطاع:
             </span>
-            <span className="font-mono text-slate-200">{installment.period}</span>
+            <span className="font-mono text-foreground/90 dark:text-slate-200">{installment.period}</span>
           </div>
 
-          <div className="flex justify-between items-center py-0.5 border-b border-slate-800">
+          <div className="flex justify-between items-center py-0.5 border-b border-border dark:border-slate-800">
             <span className="text-muted-foreground flex items-center gap-1.5">
               <DollarSign className="w-3.5 h-3.5" />
               مبلغ القسط:
@@ -101,7 +101,7 @@ export const ReverseInstallmentModal: React.FC<ReverseInstallmentModalProps> = (
 
           <div className="flex justify-between items-center py-0.5">
             <span className="text-muted-foreground">حالة راتب الشهر:</span>
-            <span className={`font-bold ${isSalaryPaid ? 'text-emerald-400' : 'text-slate-300'}`}>
+            <span className={`font-bold ${isSalaryPaid ? 'text-emerald-400' : 'text-muted-foreground dark:text-slate-300'}`}>
               {isSalaryPaid ? `مدفوع منه ${(payroll?.totalPaid || 0).toLocaleString('ar-EG')} ج.م` : 'غير مدفوع'}
             </span>
           </div>
@@ -120,7 +120,7 @@ export const ReverseInstallmentModal: React.FC<ReverseInstallmentModalProps> = (
           </div>
         ) : (
           <div className="space-y-1.5">
-            <Label className="text-xs font-bold text-slate-200 flex items-center justify-between">
+            <Label className="text-xs font-bold text-foreground/90 dark:text-slate-200 flex items-center justify-between">
               <span>سبب إلغاء القسط <span className="text-rose-400">* (إجباري)</span></span>
             </Label>
             <Textarea
@@ -130,7 +130,7 @@ export const ReverseInstallmentModal: React.FC<ReverseInstallmentModalProps> = (
                 if (e.target.value.trim()) setError('');
               }}
               placeholder="مثال: تم خصم القسط مرتين أو اتفاق على تأجيل القسط..."
-              className="text-xs bg-slate-900 border-slate-700 min-h-[75px] resize-none"
+              className="text-xs bg-muted dark:bg-slate-900 border-border dark:border-slate-700 min-h-[75px] resize-none"
               disabled={isSubmitting}
             />
             {error && (
@@ -149,7 +149,7 @@ export const ReverseInstallmentModal: React.FC<ReverseInstallmentModalProps> = (
             size="sm"
             onClick={() => onOpenChange(false)}
             disabled={isSubmitting}
-            className="flex-1 border-slate-700 text-xs"
+            className="flex-1 border-border dark:border-slate-700 text-xs"
           >
             إغلاق
           </Button>
