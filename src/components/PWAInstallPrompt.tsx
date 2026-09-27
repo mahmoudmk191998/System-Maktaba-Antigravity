@@ -84,13 +84,18 @@ export function PWAInstallPrompt() {
             <X className="w-5 h-5" />
           </button>
 
-          <div className="w-20 h-20 rounded-2xl bg-primary flex items-center justify-center mx-auto mb-4 shadow-lg">
-            <span className="text-3xl font-bold text-primary-foreground">MK</span>
+          <div className="w-24 h-24 rounded-[24px] overflow-hidden mx-auto mb-4 shadow-xl ring-1 ring-border bg-[#07111f]">
+            <img
+              src="/icons/mk-library-192-v2.png"
+              alt="MK Library"
+              className="w-full h-full object-cover"
+              draggable={false}
+            />
           </div>
 
-          <h2 className="text-xl font-bold mb-2">تثبيت MK</h2>
+          <h2 className="text-xl font-black mb-2">تثبيت نظام إدارة المكتبة</h2>
           <p className="text-muted-foreground text-sm mb-6">
-            قم بتثبيت التطبيق على جهازك للوصول السريع والعمل بدون إنترنت
+            ثبّت النظام على الشاشة الرئيسية للوصول السريع وتجربة أقرب للتطبيق الأصلي.
           </p>
 
           {isIOS ? (
