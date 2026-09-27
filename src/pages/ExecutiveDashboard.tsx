@@ -358,7 +358,7 @@ export default function ExecutiveDashboard() {
       <div className="space-y-6">
         {/* Navigation Tabs */}
         <Tabs value={activeTab} onValueChange={handleTabChange} className="space-y-6">
-          <TabsList className="bg-muted/80 dark:bg-muted dark:bg-slate-900/80 border border-border dark:border-slate-800 p-1 rounded-xl w-full sm:w-auto flex">
+          <TabsList className="bg-muted/80 dark:bg-slate-900/80 border border-border dark:border-slate-800 p-1 rounded-xl w-full sm:w-auto flex">
             <TabsTrigger value="overview" className="gap-2 flex-1 sm:flex-initial">
               <TrendingUp className="w-4 h-4" />
               اللوحة المالية الشاملة
@@ -376,7 +376,7 @@ export default function ExecutiveDashboard() {
             {loadingMetrics || !metrics ? (
               <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4 animate-pulse">
                 {[1, 2, 3, 4, 5, 6, 7, 8].map((i) => (
-                  <Card key={i} className="h-28 bg-muted/40 dark:bg-muted dark:bg-slate-900/40 border-border dark:border-slate-800" />
+                  <Card key={i} className="h-28 bg-muted/40 dark:bg-slate-900/40 border-border dark:border-slate-800" />
                 ))}
               </div>
             ) : (
@@ -629,7 +629,7 @@ export default function ExecutiveDashboard() {
                   <CardContent className="p-0">
                     <div className="border-t border-border dark:border-slate-800 overflow-x-auto">
                       <Table>
-                        <TableHeader className="bg-muted/60 dark:bg-muted dark:bg-slate-900/60 text-xs">
+                        <TableHeader className="bg-muted/60 dark:bg-slate-900/60 text-xs">
                           <TableRow className="border-border dark:border-slate-800">
                             <TableHead className="text-right">نوع البند</TableHead>
                             <TableHead className="text-right">الوصف المحاسبي</TableHead>
@@ -639,7 +639,7 @@ export default function ExecutiveDashboard() {
                           </TableRow>
                         </TableHeader>
                         <TableBody className="text-xs">
-                          <TableRow className="border-border/60 dark:border-border dark:border-slate-800/60">
+                          <TableRow className="border-border/60 dark:border-slate-800/60">
                             <TableCell className="font-bold text-blue-400">مبيعات نقدية (Cash In)</TableCell>
                             <TableCell>فواتير المبيعات المدفوعة كاش من شاشات الـ POS</TableCell>
                             <TableCell className="text-center text-emerald-400">+ تدفق داخل</TableCell>
@@ -649,7 +649,7 @@ export default function ExecutiveDashboard() {
                             </TableCell>
                           </TableRow>
 
-                          <TableRow className="border-border/60 dark:border-border dark:border-slate-800/60">
+                          <TableRow className="border-border/60 dark:border-slate-800/60">
                             <TableCell className="font-bold text-indigo-400">مبيعات إلكترونية (Bank/Wallet)</TableCell>
                             <TableCell>فواتير عبر فيزا، إنستاباي، أو فودافون كاش</TableCell>
                             <TableCell className="text-center text-muted-foreground">خارج درج النقدية</TableCell>
@@ -659,7 +659,7 @@ export default function ExecutiveDashboard() {
                             </TableCell>
                           </TableRow>
 
-                          <TableRow className="border-border/60 dark:border-border dark:border-slate-800/60">
+                          <TableRow className="border-border/60 dark:border-slate-800/60">
                             <TableCell className="font-bold text-amber-400">مصروفات تشغيلية (Operating Expenses)</TableCell>
                             <TableCell>إيجار، خامات، صيانة، نثريات (تستثني السلف)</TableCell>
                             <TableCell className="text-center text-rose-400">- تدفق خارج</TableCell>
@@ -669,7 +669,7 @@ export default function ExecutiveDashboard() {
                             </TableCell>
                           </TableRow>
 
-                          <TableRow className="border-border/60 dark:border-border dark:border-slate-800/60">
+                          <TableRow className="border-border/60 dark:border-slate-800/60">
                             <TableCell className="font-bold text-purple-400">سلف موظفين منصرفة (Advances Outflow)</TableCell>
                             <TableCell>خروج نقدية من الخزنة كعهدة سلفة (أصل/ذمة مدينة، وليست مصروف تشغيلي)</TableCell>
                             <TableCell className="text-center text-rose-400">- تدفق خارج</TableCell>
@@ -679,7 +679,7 @@ export default function ExecutiveDashboard() {
                             </TableCell>
                           </TableRow>
 
-                          <TableRow className="border-border/60 dark:border-border dark:border-slate-800/60">
+                          <TableRow className="border-border/60 dark:border-slate-800/60">
                             <TableCell className="font-bold text-emerald-400">صافي مسير الرواتب المسدد (Salary Payments)</TableCell>
                             <TableCell>المرتبات بعد خصم السلف (لا يحدث أي Double Counting)</TableCell>
                             <TableCell className="text-center text-rose-400">- تدفق خارج</TableCell>
@@ -689,7 +689,7 @@ export default function ExecutiveDashboard() {
                             </TableCell>
                           </TableRow>
 
-                          <TableRow className="border-border/60 dark:border-border dark:border-slate-800/60">
+                          <TableRow className="border-border/60 dark:border-slate-800/60">
                             <TableCell className="font-bold text-rose-400">هالك وتوالف المخزون (Waste Cost)</TableCell>
                             <TableCell>قيمة المواد التالفة أو منتهية الصلاحية من المخزن</TableCell>
                             <TableCell className="text-center text-muted-foreground">خسارة عينية</TableCell>
@@ -770,21 +770,21 @@ export default function ExecutiveDashboard() {
                   </CardHeader>
                   <CardContent className="space-y-4">
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                      <div className="p-3 rounded-xl bg-muted/60 dark:bg-muted dark:bg-slate-900/60 border border-border dark:border-slate-800">
+                      <div className="p-3 rounded-xl bg-muted/60 dark:bg-slate-900/60 border border-border dark:border-slate-800">
                         <span className="text-[11px] text-muted-foreground">نقدية البداية (عهدة)</span>
                         <div className="text-base font-bold font-mono text-foreground dark:text-slate-100 mt-1">
                           {closingPreview.openingCash.toLocaleString('ar-EG')} ج.م
                         </div>
                       </div>
 
-                      <div className="p-3 rounded-xl bg-muted/60 dark:bg-muted dark:bg-slate-900/60 border border-border dark:border-slate-800">
+                      <div className="p-3 rounded-xl bg-muted/60 dark:bg-slate-900/60 border border-border dark:border-slate-800">
                         <span className="text-[11px] text-muted-foreground">مبيعات كاش</span>
                         <div className="text-base font-bold font-mono text-emerald-400 mt-1">
                           +{closingPreview.cashSales.toLocaleString('ar-EG')} ج.م
                         </div>
                       </div>
 
-                      <div className="p-3 rounded-xl bg-muted/60 dark:bg-muted dark:bg-slate-900/60 border border-border dark:border-slate-800">
+                      <div className="p-3 rounded-xl bg-muted/60 dark:bg-slate-900/60 border border-border dark:border-slate-800">
                         <span className="text-[11px] text-muted-foreground">الخارج من الخزنة</span>
                         <div className="text-base font-bold font-mono text-rose-400 mt-1">
                           -{closingPreview.cashOutflows.toLocaleString('ar-EG')} ج.م
@@ -800,15 +800,15 @@ export default function ExecutiveDashboard() {
                     </div>
 
                     <div className="border-t border-border dark:border-slate-800 pt-3 space-y-2 text-xs">
-                      <div className="flex justify-between py-1 border-b border-border/50 dark:border-border dark:border-slate-800/40">
+                      <div className="flex justify-between py-1 border-b border-border/50 dark:border-slate-800/40">
                         <span className="text-muted-foreground">عدد الطلبات المنفذة كاش:</span>
                         <span className="font-mono">{closingPreview.ordersCount} طلب</span>
                       </div>
-                      <div className="flex justify-between py-1 border-b border-border/50 dark:border-border dark:border-slate-800/40">
+                      <div className="flex justify-between py-1 border-b border-border/50 dark:border-slate-800/40">
                         <span className="text-muted-foreground">مبيعات إلكترونية (فيزا / محافظ):</span>
                         <span className="font-mono text-blue-400">{closingPreview.electronicSales.toLocaleString('ar-EG')} ج.م</span>
                       </div>
-                      <div className="flex justify-between py-1 border-b border-border/50 dark:border-border dark:border-slate-800/40">
+                      <div className="flex justify-between py-1 border-b border-border/50 dark:border-slate-800/40">
                         <span className="text-muted-foreground">سلف موظفين منصرفة اليوم:</span>
                         <span className="font-mono text-purple-400">{closingPreview.advancesCash.toLocaleString('ar-EG')} ج.م</span>
                       </div>
@@ -958,7 +958,7 @@ export default function ExecutiveDashboard() {
               <CardContent className="p-0">
                 <div className="border-t border-border dark:border-slate-800 overflow-x-auto">
                   <Table>
-                    <TableHeader className="bg-muted/60 dark:bg-muted dark:bg-slate-900/60 text-xs">
+                    <TableHeader className="bg-muted/60 dark:bg-slate-900/60 text-xs">
                       <TableRow className="border-border dark:border-slate-800">
                         <TableHead className="text-right">التاريخ</TableHead>
                         <TableHead className="text-center">المتوقع</TableHead>
@@ -987,7 +987,7 @@ export default function ExecutiveDashboard() {
                         closingsHistory.map((c) => {
                           const isVoided = c.status === 'voided';
                           return (
-                            <TableRow key={c.id} className={`border-border/60 dark:border-border dark:border-slate-800/60 ${isVoided ? 'opacity-50' : ''}`}>
+                            <TableRow key={c.id} className={`border-border/60 dark:border-slate-800/60 ${isVoided ? 'opacity-50' : ''}`}>
                               <TableCell className="font-mono font-bold">{c.date}</TableCell>
                               <TableCell className="text-center font-mono">
                                 {c.expectedCash.toLocaleString('ar-EG')} ج.م
@@ -1110,15 +1110,15 @@ export default function ExecutiveDashboard() {
               <div className="p-3 rounded-xl border border-border dark:border-slate-800 space-y-2">
                 <h5 className="font-bold text-foreground dark:text-slate-100">المطابقة النقدية:</h5>
                 <div className="grid grid-cols-3 gap-2 text-center font-mono">
-                  <div className="p-2 rounded bg-muted/60 dark:bg-muted dark:bg-slate-900/60">
+                  <div className="p-2 rounded bg-muted/60 dark:bg-slate-900/60">
                     <span className="text-[10px] text-muted-foreground block">المتوقع</span>
                     <span className="font-bold text-primary">{viewingSnapshot.expectedCash.toLocaleString('ar-EG')} ج.م</span>
                   </div>
-                  <div className="p-2 rounded bg-muted/60 dark:bg-muted dark:bg-slate-900/60">
+                  <div className="p-2 rounded bg-muted/60 dark:bg-slate-900/60">
                     <span className="text-[10px] text-muted-foreground block">الفعلي</span>
                     <span className="font-bold text-foreground dark:text-slate-100">{viewingSnapshot.actualCash.toLocaleString('ar-EG')} ج.م</span>
                   </div>
-                  <div className="p-2 rounded bg-muted/60 dark:bg-muted dark:bg-slate-900/60">
+                  <div className="p-2 rounded bg-muted/60 dark:bg-slate-900/60">
                     <span className="text-[10px] text-muted-foreground block">الفارق</span>
                     <span className={`font-bold ${viewingSnapshot.difference < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
                       {viewingSnapshot.difference} ج.م
@@ -1141,19 +1141,19 @@ export default function ExecutiveDashboard() {
               <div className="p-3 rounded-xl border border-border dark:border-slate-800 space-y-1.5">
                 <h5 className="font-bold text-foreground dark:text-slate-100">الأرقام المالية المؤرشفة وقتها:</h5>
                 <div className="grid grid-cols-2 gap-2 text-[11px]">
-                  <div className="flex justify-between border-b border-border/50 dark:border-border dark:border-slate-800/40 py-1">
+                  <div className="flex justify-between border-b border-border/50 dark:border-slate-800/40 py-1">
                     <span className="text-muted-foreground">المبيعات الإجمالية:</span>
                     <span className="font-mono">{viewingSnapshot.salesSnapshot.toLocaleString('ar-EG')} ج.م</span>
                   </div>
-                  <div className="flex justify-between border-b border-border/50 dark:border-border dark:border-slate-800/40 py-1">
+                  <div className="flex justify-between border-b border-border/50 dark:border-slate-800/40 py-1">
                     <span className="text-muted-foreground">المبيعات النقدية (كاش):</span>
                     <span className="font-mono text-emerald-400">{viewingSnapshot.cashSalesSnapshot.toLocaleString('ar-EG')} ج.م</span>
                   </div>
-                  <div className="flex justify-between border-b border-border/50 dark:border-border dark:border-slate-800/40 py-1">
+                  <div className="flex justify-between border-b border-border/50 dark:border-slate-800/40 py-1">
                     <span className="text-muted-foreground">المصروفات التشغيلية:</span>
                     <span className="font-mono">{viewingSnapshot.operatingExpensesSnapshot.toLocaleString('ar-EG')} ج.م</span>
                   </div>
-                  <div className="flex justify-between border-b border-border/50 dark:border-border dark:border-slate-800/40 py-1">
+                  <div className="flex justify-between border-b border-border/50 dark:border-slate-800/40 py-1">
                     <span className="text-muted-foreground">الخارج من الخزنة:</span>
                     <span className="font-mono text-rose-400">{viewingSnapshot.cashOutflowsSnapshot.toLocaleString('ar-EG')} ج.م</span>
                   </div>
