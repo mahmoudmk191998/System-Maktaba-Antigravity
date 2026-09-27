@@ -226,6 +226,11 @@ export default function POSPage() {
   const [mobileTab, setMobileTab] = useState<'catalog' | 'cart'>('catalog');
   const [heldSalesCount, setHeldSalesCount] = useState<number>(0);
 
+  // Direct quantity editing in cart (keeps temporary text so the user can type
+  // values such as "30" or decimal quantities without the line being removed
+  // while the field is momentarily empty).
+  const [quantityDrafts, setQuantityDrafts] = useState<Record<string, string>>({});
+
   const toggleFullscreen = () => {
     if (!document.fullscreenElement) {
       document.documentElement.requestFullscreen().catch(() => {});
@@ -503,6 +508,45 @@ export default function POSPage() {
       addToCart(variantSelectorProduct, variant, 1);
       setVariantSelectorProduct(null);
     }
+  };
+
+  const commitDirectQuantity = (item: POSCartItem) => {
+    const rawDraft = quantityDrafts[item.id];
+    if (rawDraft === undefined) return;
+
+    const normalizedRaw = rawDraft.trim().replace(',', '.');
+    const parsed = Number(normalizedRaw);
+
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      setQuantityDrafts((prev) => {
+        const next = { ...prev };
+        delete next[item.id];
+        return next;
+      });
+      toast.error('أدخل كمية صحيحة أكبر من صفر');
+      return;
+    }
+
+    const finalQuantity = item.allowFraction
+      ? Math.round(parsed * 1000) / 1000
+      : Math.max(1, Math.round(parsed));
+
+    updateQuantity(item.id, finalQuantity);
+    setQuantityDrafts((prev) => {
+      const next = { ...prev };
+      delete next[item.id];
+      return next;
+    });
+  };
+
+  const adjustQuantity = (item: POSCartItem, delta: number) => {
+    setQuantityDrafts((prev) => {
+      if (!(item.id in prev)) return prev;
+      const next = { ...prev };
+      delete next[item.id];
+      return next;
+    });
+    updateQuantity(item.id, item.quantity + delta);
   };
 
   const handleOpenPayment = () => {
@@ -1227,23 +1271,66 @@ export default function POSPage() {
                     </div>
 
                     <div className="flex items-center justify-between pt-2 border-t border-border/40">
-                      {/* Quantity Buttons - Larger touch-friendly size */}
+                      {/* Quantity control: +/- plus direct numeric entry */}
                       <div className="flex items-center gap-1 bg-muted/50 rounded-xl border border-border/70 p-1">
                         <Button
+                          type="button"
                           size="icon"
                           variant="ghost"
-                          className="h-7 w-7 sm:h-8 sm:w-8 rounded-lg font-bold hover:bg-background shadow-xs text-foreground"
-                          onClick={() => updateQuantity(item.id, item.quantity - 1)}
+                          className="h-8 w-8 rounded-lg font-bold hover:bg-background shadow-xs text-foreground"
+                          onClick={() => adjustQuantity(item, -1)}
                           aria-label="إنقاص الكمية"
                         >
                           <Minus className="w-3.5 h-3.5" />
                         </Button>
-                        <span className="w-9 text-center text-xs sm:text-sm font-black font-mono">{item.quantity}</span>
+
+                        <Input
+                          type="number"
+                          min={item.allowFraction ? 0.001 : 1}
+                          step={item.allowFraction ? '0.001' : '1'}
+                          inputMode={item.allowFraction ? 'decimal' : 'numeric'}
+                          value={quantityDrafts[item.id] ?? String(item.quantity)}
+                          onFocus={(event) => {
+                            setQuantityDrafts((prev) => ({
+                              ...prev,
+                              [item.id]: String(item.quantity),
+                            }));
+                            requestAnimationFrame(() => event.currentTarget.select());
+                          }}
+                          onChange={(event) => {
+                            const value = event.target.value;
+                            setQuantityDrafts((prev) => ({
+                              ...prev,
+                              [item.id]: value,
+                            }));
+                          }}
+                          onBlur={() => commitDirectQuantity(item)}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter') {
+                              event.preventDefault();
+                              commitDirectQuantity(item);
+                              event.currentTarget.blur();
+                            }
+                            if (event.key === 'Escape') {
+                              setQuantityDrafts((prev) => {
+                                const next = { ...prev };
+                                delete next[item.id];
+                                return next;
+                              });
+                              event.currentTarget.blur();
+                            }
+                          }}
+                          aria-label={`كمية ${item.productName}`}
+                          title="اضغط واكتب الكمية مباشرة"
+                          className="h-8 w-16 sm:w-20 px-1 text-center text-sm font-black font-mono bg-background border-border focus-visible:ring-1"
+                        />
+
                         <Button
+                          type="button"
                           size="icon"
                           variant="ghost"
-                          className="h-7 w-7 sm:h-8 sm:w-8 rounded-lg font-bold hover:bg-background shadow-xs text-foreground"
-                          onClick={() => updateQuantity(item.id, item.quantity + 1)}
+                          className="h-8 w-8 rounded-lg font-bold hover:bg-background shadow-xs text-foreground"
+                          onClick={() => adjustQuantity(item, 1)}
                           aria-label="زيادة الكمية"
                         >
                           <Plus className="w-3.5 h-3.5" />
