@@ -241,7 +241,7 @@ export const ActiveAdvancesTable: React.FC<ActiveAdvancesTableProps> = ({
                   )}
                 </div>
 
-                <div className="grid grid-cols-3 gap-2 text-center bg-muted/20 dark:bg-slate-950/40 p-2.5 rounded-lg border border-border/60 dark:border-slate-800/60">
+                <div className="grid grid-cols-3 gap-2 text-center bg-card dark:bg-slate-950/40 p-2.5 rounded-lg border border-border/60 dark:border-slate-800/60">
                   <div>
                     <span className="text-[10px] text-muted-foreground block">مبلغ السلفة</span>
                     <span className="font-mono font-bold text-xs text-foreground/90 dark:text-slate-200">{adv.amount.toLocaleString('ar-EG')} ج.م</span>
@@ -303,7 +303,7 @@ export const ActiveAdvancesTable: React.FC<ActiveAdvancesTableProps> = ({
       </div>
 
       {/* 4. Desktop Table View (>= md) */}
-      <div className="hidden md:block rounded-xl border border-border dark:border-slate-800 overflow-x-auto bg-muted/20 dark:bg-slate-950/40">
+      <div className="hidden md:block rounded-xl border border-border dark:border-slate-800 overflow-x-auto bg-card dark:bg-slate-950/40">
         <Table>
           <TableHeader className="bg-muted/70 dark:bg-slate-900/70">
             <TableRow className="border-border dark:border-slate-800 hover:bg-transparent text-xs">
@@ -338,7 +338,7 @@ export const ActiveAdvancesTable: React.FC<ActiveAdvancesTableProps> = ({
                 return (
                   <TableRow
                     key={adv.id}
-                    className={`border-border/80 dark:border-slate-800/80 hover:bg-card dark:bg-slate-900/50 transition-colors text-xs ${
+                    className={`border-border/80 dark:border-slate-800/80 hover:bg-muted/60 dark:hover:bg-muted dark:hover:bg-slate-900/50 transition-colors text-xs ${
                       isCancelled ? 'bg-rose-950/10 text-muted-foreground' : ''
                     }`}
                   >
