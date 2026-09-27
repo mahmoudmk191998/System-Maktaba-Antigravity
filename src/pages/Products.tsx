@@ -142,11 +142,21 @@ export default function ProductsPage() {
     setPrintOpen(true);
   };
 
-  const handleSaveProduct = async (payload: any) => {
+  const handleSaveProduct = async (
+    payload: any,
+    options?: { openingStock?: Array<{
+      locationId: string;
+      variantId?: string | null;
+      quantity: number;
+      unitCost: number;
+      unitId?: string;
+      notes?: string;
+    }> }
+  ) => {
     if (editingProduct) {
       return updateProduct(editingProduct.id, payload);
     }
-    return createProduct(payload);
+    return createProduct(payload, options?.openingStock || []);
   };
 
   const handleArchive = async (id: string) => {
