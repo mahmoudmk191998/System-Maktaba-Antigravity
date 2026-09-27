@@ -136,7 +136,15 @@ export function useTenantBranch() {
               logo: tData.logo || ''
             });
             if (tData.settings) {
-              useAppStore.getState().updateSettings(tData.settings);
+              // Tenant settings are shared business configuration, while appearance is
+              // a local user/device preference. Preserve the locally persisted theme and
+              // primary color so navigating to another page never flips the UI back.
+              const localSettings = useAppStore.getState().settings;
+              useAppStore.getState().updateSettings({
+                ...tData.settings,
+                darkMode: localSettings.darkMode,
+                primaryColor: localSettings.primaryColor,
+              });
             }
           }
 
