@@ -46,7 +46,10 @@ import { useCategories } from '@/hooks/retail/useCategories';
 import { useBrands } from '@/hooks/retail/useBrands';
 import { useUserPermissions } from '@/hooks/usePermissions';
 import type { Product, ProductVariant, ProductType } from '@/types/retail.types';
-import { ProductFormDialog } from '@/components/retail/ProductFormDialog';
+import {
+  ProductFormDialog,
+  type ProductOpeningStockRequest,
+} from '@/components/retail/ProductFormDialog';
 import { ProductDetailsDrawer } from '@/components/retail/ProductDetailsDrawer';
 import { BarcodePrintDialog } from '@/components/retail/BarcodePrintDialog';
 import { BarcodeScanDialog } from '@/components/retail/BarcodeScanDialog';
@@ -54,10 +57,20 @@ import { MobileScannerModal } from '@/components/retail/pos/MobileScannerModal';
 import { CategoryManageDialog } from '@/components/retail/CategoryManageDialog';
 import { BrandManageDialog } from '@/components/retail/BrandManageDialog';
 import { useTenantBranch } from '@/hooks/useDatabase';
+import { useAppStore } from '@/lib/store';
+import { createOpeningStockBatch } from '@/services/inventory/retailInventory.service';
+import { safeHardDeleteProductInDb } from '@/services/products/products.repository';
 import { toast } from 'sonner';
 
 export default function ProductsPage() {
-  useTenantBranch();
+  const { tenantId: hookTenantId, branchId: hookBranchId } = useTenantBranch();
+  const currentTenant = useAppStore((state) => state.currentTenant);
+  const currentBranch = useAppStore((state) => state.currentBranch);
+  const currentUser = useAppStore((state) => state.currentUser);
+  const tenantId = currentTenant?.id || hookTenantId || '';
+  const openingLocationId = currentBranch?.id || hookBranchId || '';
+  const openingLocationName = currentBranch?.name || 'الفرع الحالي';
+
   const { hasPermission, isAdmin } = useUserPermissions();
 
   const canCreate = isAdmin || hasPermission('products.create');
@@ -142,11 +155,78 @@ export default function ProductsPage() {
     setPrintOpen(true);
   };
 
-  const handleSaveProduct = async (payload: any) => {
+  const handleSaveProduct = async (
+    payload: any,
+    openingStock?: ProductOpeningStockRequest
+  ) => {
     if (editingProduct) {
       return updateProduct(editingProduct.id, payload);
     }
-    return createProduct(payload);
+
+    const openingItems = [
+      ...(openingStock?.baseQuantity && openingStock.baseQuantity > 0
+        ? [{
+            variantId: null,
+            quantity: openingStock.baseQuantity,
+            unitCost: Number(payload.purchasePrice || 0),
+            unitId: payload.unitId,
+          }]
+        : []),
+      ...(openingStock?.variantQuantities || []).map((row) => ({
+        variantId: row.variantId,
+        quantity: row.quantity,
+        unitCost: Number(row.unitCost ?? payload.purchasePrice ?? 0),
+        unitId: payload.unitId,
+      })),
+    ].filter((row) => row.quantity > 0);
+
+    if (openingItems.length > 0 && (!tenantId || !openingLocationId)) {
+      return {
+        success: false,
+        error: 'لا يمكن تسجيل الكمية الافتتاحية قبل تحديد المؤسسة والفرع الحالي',
+      };
+    }
+
+    const created = await createProduct(payload);
+    if (!created.success || !created.product) {
+      return created;
+    }
+
+    if (openingItems.length === 0) {
+      return created;
+    }
+
+    const stockResult = await createOpeningStockBatch({
+      tenantId,
+      locationId: openingLocationId,
+      productId: created.product.id,
+      items: openingItems,
+      employeeId: currentUser?.id,
+      notes: `رصيد افتتاحي سريع عند إنشاء الصنف: ${created.product.name}`,
+    });
+
+    if (!stockResult.success) {
+      const rollback = await safeHardDeleteProductInDb(tenantId, created.product.id);
+
+      if (rollback.success) {
+        await refresh();
+        window.dispatchEvent(new CustomEvent('alwan_products_synced'));
+        return {
+          success: false,
+          error: `لم يتم حفظ الصنف لأن تسجيل الرصيد الافتتاحي فشل: ${stockResult.error || 'خطأ غير معروف'}`,
+        };
+      }
+
+      return {
+        success: true,
+        product: created.product,
+        warning:
+          `تم إنشاء الصنف، لكن تعذر تسجيل الرصيد الافتتاحي. افتح صفحة المخزون لإضافته يدوياً. السبب: ${stockResult.error || 'خطأ غير معروف'}`,
+      };
+    }
+
+    window.dispatchEvent(new CustomEvent('alwan_inventory_synced'));
+    return created;
   };
 
   const handleArchive = async (id: string) => {
@@ -587,6 +667,7 @@ export default function ProductsPage() {
           onOpenChange={setFormOpen}
           product={editingProduct}
           initialBarcode={prefilledBarcode}
+          openingLocationName={openingLocationName}
           onSave={handleSaveProduct}
         />
 
