@@ -50,12 +50,28 @@ import { useAppStore } from '@/lib/store';
 import { toast } from 'sonner';
 import { MobileScannerModal } from '@/components/retail/pos/MobileScannerModal';
 
+export interface ProductFormSaveOptions {
+  openingStock?: {
+    locationId: string;
+    lines: Array<{
+      variantId?: string | null;
+      quantity: number;
+      unitCost?: number;
+      unitId?: string;
+    }>;
+    notes?: string;
+  };
+}
+
 interface ProductFormDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   product?: Product | null;
   initialBarcode?: string;
-  onSave: (productData: any) => Promise<{ success: boolean; error?: string }>;
+  onSave: (
+    productData: any,
+    options?: ProductFormSaveOptions
+  ) => Promise<{ success: boolean; error?: string }>;
 }
 
 export function ProductFormDialog({
@@ -69,6 +85,7 @@ export function ProductFormDialog({
   const { brands } = useBrands();
   const { units } = useUnits();
   const settings = useAppStore((state) => state.settings);
+  const currentBranch = useAppStore((state) => state.currentBranch);
   const isTaxEnabled = Boolean(settings?.taxEnabled);
   const defaultTaxPercent = isTaxEnabled ? (settings?.taxRate ?? 14) : 0;
 
@@ -102,9 +119,11 @@ export function ProductFormDialog({
   const [minimumSellingPrice, setMinimumSellingPrice] = useState('');
   const [taxRate, setTaxRate] = useState(defaultTaxPercent.toString());
 
-  // Inventory limits
+  // Inventory limits + fast opening stock entry for new products
   const [minimumStock, setMinimumStock] = useState('5');
   const [reorderPoint, setReorderPoint] = useState('10');
+  const [openingQuantity, setOpeningQuantity] = useState('');
+  const [variantOpeningQuantities, setVariantOpeningQuantities] = useState<Record<string, string>>({});
 
   // Book Metadata
   const [isbn, setIsbn] = useState('');
@@ -152,6 +171,8 @@ export function ProductFormDialog({
         setTaxRate(prodTax.toString());
         setMinimumStock((product.minimumStock ?? 5).toString());
         setReorderPoint((product.reorderPoint ?? 10).toString());
+        setOpeningQuantity('');
+        setVariantOpeningQuantities({});
 
         // Book metadata
         if (product.bookMetadata) {
@@ -194,6 +215,8 @@ export function ProductFormDialog({
         setTaxRate(defaultTaxPercent.toString());
         setMinimumStock('5');
         setReorderPoint('10');
+        setOpeningQuantity('');
+        setVariantOpeningQuantities({});
 
         setIsbn('');
         setAuthor('');
@@ -232,10 +255,11 @@ export function ProductFormDialog({
     const vSku = generateVariantSku(sku, [`VAR${nextIndex}`]);
     const vBarcode = generateInternalEan13Barcode(Math.floor(10000 + Math.random() * 90000));
 
+    const variantId = `var_${Date.now()}_${nextIndex}`;
     setVariants([
       ...variants,
       {
-        id: `var_${Date.now()}_${nextIndex}`,
+        id: variantId,
         productId: product?.id || '',
         name: `خاصية ${nextIndex}`,
         sku: vSku,
@@ -248,10 +272,19 @@ export function ProductFormDialog({
         active: true,
       },
     ]);
+    setVariantOpeningQuantities((prev) => ({ ...prev, [variantId]: '' }));
   };
 
   const removeVariant = (index: number) => {
+    const variantId = variants[index]?.id;
     setVariants(variants.filter((_, i) => i !== index));
+    if (variantId) {
+      setVariantOpeningQuantities((prev) => {
+        const next = { ...prev };
+        delete next[variantId];
+        return next;
+      });
+    }
   };
 
   const updateVariantField = (index: number, field: keyof ProductVariant, value: any) => {
@@ -312,6 +345,60 @@ export function ProductFormDialog({
 
     const payload = removeUndefinedFields(rawPayload);
 
+    const selectedUnit = units.find((unit) => unit.id === unitId);
+    const allowFraction = Boolean(selectedUnit?.allowFraction);
+    const parseOpeningQty = (rawValue: string, label: string): number | null => {
+      if (!rawValue.trim()) return 0;
+      const parsed = Number(rawValue);
+      if (!Number.isFinite(parsed) || parsed < 0) {
+        toast.error(`${label} يجب أن تكون رقماً صحيحاً غير سالب`);
+        return null;
+      }
+      if (!allowFraction && !Number.isInteger(parsed)) {
+        toast.error(`${label} لا تقبل الكسور مع وحدة القياس الحالية`);
+        return null;
+      }
+      return parsed;
+    };
+
+    const openingStockLines: NonNullable<ProductFormSaveOptions['openingStock']>['lines'] = [];
+
+    if (!product && trackInventory) {
+      if (hasVariants) {
+        for (const variant of variants) {
+          const qty = parseOpeningQty(
+            variantOpeningQuantities[variant.id] || '',
+            `الكمية الافتتاحية للمتغير "${variant.name || variant.sku}"`
+          );
+          if (qty === null) return;
+          if (qty > 0) {
+            openingStockLines.push({
+              variantId: variant.id,
+              quantity: qty,
+              unitCost: Number(variant.purchasePrice ?? pCost),
+              unitId: unitId || undefined,
+            });
+          }
+        }
+      } else {
+        const qty = parseOpeningQty(openingQuantity, 'الكمية الافتتاحية');
+        if (qty === null) return;
+        if (qty > 0) {
+          openingStockLines.push({
+            variantId: null,
+            quantity: qty,
+            unitCost: pCost,
+            unitId: unitId || undefined,
+          });
+        }
+      }
+
+      if (openingStockLines.length > 0 && !currentBranch?.id) {
+        toast.error('لا يوجد فرع نشط لإضافة الكمية الافتتاحية');
+        return;
+      }
+    }
+
     const validation = validateProductForm(payload);
     if (!validation.isValid) {
       const firstError = Object.values(validation.errors)[0];
@@ -321,7 +408,18 @@ export function ProductFormDialog({
 
     setIsSubmitting(true);
     try {
-      const res = await onSave(payload);
+      const res = await onSave(
+        payload,
+        !product && openingStockLines.length > 0 && currentBranch?.id
+          ? {
+              openingStock: {
+                locationId: currentBranch.id,
+                lines: openingStockLines,
+                notes: `رصيد افتتاحي سريع من شاشة إنشاء الصنف - ${currentBranch.name || 'الفرع الحالي'}`,
+              },
+            }
+          : undefined
+      );
       if (res.success) {
         toast.success(product ? 'تم تحديث بيانات المنتج بنجاح' : 'تم إضافة المنتج بنجاح');
         onOpenChange(false);
@@ -714,6 +812,43 @@ export function ProductFormDialog({
                   />
                 </div>
               </div>
+
+              {!product && trackInventory && (
+                <div className="rounded-xl border border-emerald-500/25 bg-emerald-500/5 p-3.5">
+                  <div className="flex items-start gap-2.5">
+                    <div className="mt-0.5 rounded-lg bg-emerald-500/10 p-2 text-emerald-600 dark:text-emerald-400">
+                      <Package className="w-4 h-4" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                        <div>
+                          <Label className="text-xs font-black text-foreground">الكمية الافتتاحية السريعة</Label>
+                          <p className="text-[11px] text-muted-foreground mt-0.5">
+                            تُسجل كحركة رصيد افتتاحي رسمية في مخزون {currentBranch?.name || 'الفرع الحالي'} داخل نفس عملية إنشاء الصنف.
+                          </p>
+                        </div>
+                        {!hasVariants && (
+                          <Input
+                            type="number"
+                            min="0"
+                            step={units.find((unit) => unit.id === unitId)?.allowFraction ? '0.001' : '1'}
+                            value={openingQuantity}
+                            onChange={(e) => setOpeningQuantity(e.target.value)}
+                            onFocus={(e) => e.target.select()}
+                            placeholder="0"
+                            className="sm:w-32 h-10 font-black text-center bg-background"
+                          />
+                        )}
+                      </div>
+                      {hasVariants && (
+                        <p className="mt-2 text-[11px] font-semibold text-emerald-700 dark:text-emerald-300">
+                          لأن الصنف يحتوي على متغيرات، أدخل الكمية الافتتاحية لكل متغير من تبويب «الأنواع والخصائص».
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
             </TabsContent>
 
             {/* TAB 3: PRODUCT-SPECIFIC (BOOK / NOTEBOOK) */}
@@ -966,6 +1101,34 @@ export function ProductFormDialog({
                             </Button>
                           </div>
                         </div>
+
+                        {!product && trackInventory && (
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 rounded-lg bg-emerald-500/5 border border-emerald-500/20 p-2.5">
+                            <div>
+                              <Label className="text-[11px] font-bold text-foreground">
+                                الكمية الافتتاحية لهذا المتغير
+                              </Label>
+                              <p className="text-[10px] text-muted-foreground">
+                                ستُسجل مباشرة في {currentBranch?.name || 'الفرع الحالي'} عند إنشاء الصنف.
+                              </p>
+                            </div>
+                            <Input
+                              type="number"
+                              min="0"
+                              step={units.find((unit) => unit.id === unitId)?.allowFraction ? '0.001' : '1'}
+                              value={variantOpeningQuantities[variant.id] || ''}
+                              onChange={(e) =>
+                                setVariantOpeningQuantities((prev) => ({
+                                  ...prev,
+                                  [variant.id]: e.target.value,
+                                }))
+                              }
+                              onFocus={(e) => e.target.select()}
+                              placeholder="0"
+                              className="h-9 sm:w-28 font-black text-center bg-background"
+                            />
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
