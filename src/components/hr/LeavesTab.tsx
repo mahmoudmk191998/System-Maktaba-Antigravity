@@ -607,7 +607,7 @@ export function LeavesTab({
                 const statusCfg = LEAVE_STATUS_CONFIG[leave.status] || LEAVE_STATUS_CONFIG.pending;
 
                 return (
-                  <Card key={leave.id} className="border-border dark:border-slate-800 bg-muted/20 dark:bg-slate-950/40 p-3.5 space-y-3">
+                  <Card key={leave.id} className="border-border dark:border-slate-800 bg-card dark:bg-slate-950/40 p-3.5 space-y-3">
                     <div className="flex items-start justify-between gap-2">
                       <div>
                         <p className="font-bold text-sm text-foreground">{leave.employee_name_snapshot}</p>
@@ -696,7 +696,7 @@ export function LeavesTab({
                               setActionType('cancel');
                               setActionReason('');
                             }}
-                            className="h-8 px-2 text-muted-foreground dark:text-slate-400 hover:text-foreground/90 dark:text-slate-200 hover:bg-muted dark:bg-slate-800 text-xs"
+                            className="h-8 px-2 text-muted-foreground dark:text-slate-400 hover:text-foreground dark:hover:text-slate-200 hover:bg-muted dark:hover:bg-slate-800 text-xs"
                           >
                             إلغاء
                           </Button>
@@ -730,7 +730,7 @@ export function LeavesTab({
                     const statusCfg = LEAVE_STATUS_CONFIG[leave.status] || LEAVE_STATUS_CONFIG.pending;
 
                     return (
-                      <TableRow key={leave.id} className="border-border/60 dark:border-slate-800/60 hover:bg-muted/40 dark:bg-slate-900/40">
+                      <TableRow key={leave.id} className="border-border/60 dark:border-slate-800/60 hover:bg-muted/50 dark:hover:bg-muted dark:hover:bg-slate-900/40">
                         <TableCell className="font-medium text-foreground dark:text-slate-100">
                           <div>
                             <span>{leave.employee_name_snapshot}</span>
