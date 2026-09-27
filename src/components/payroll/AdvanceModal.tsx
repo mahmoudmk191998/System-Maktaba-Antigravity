@@ -179,7 +179,7 @@ export const AdvanceModal: React.FC<AdvanceModalProps> = ({
                 className={`p-2.5 rounded-xl border text-xs text-right transition-all ${
                   repaymentType === 'next_salary'
                     ? 'border-primary bg-primary/10 text-primary font-bold shadow-sm'
-                    : 'border-border dark:border-slate-800 bg-muted/40 dark:bg-slate-900/40 text-muted-foreground hover:bg-muted/60 dark:bg-slate-800/60'
+                    : 'border-border dark:border-slate-800 bg-muted/40 dark:bg-slate-900/40 text-muted-foreground hover:bg-muted/80 dark:hover:bg-muted dark:hover:bg-slate-800/60'
                 }`}
               >
                 <p className="font-bold">خصم كامل المبلغ</p>
@@ -192,7 +192,7 @@ export const AdvanceModal: React.FC<AdvanceModalProps> = ({
                 className={`p-2.5 rounded-xl border text-xs text-right transition-all ${
                   repaymentType === 'installments'
                     ? 'border-primary bg-primary/10 text-primary font-bold shadow-sm'
-                    : 'border-border dark:border-slate-800 bg-muted/40 dark:bg-slate-900/40 text-muted-foreground hover:bg-muted/60 dark:bg-slate-800/60'
+                    : 'border-border dark:border-slate-800 bg-muted/40 dark:bg-slate-900/40 text-muted-foreground hover:bg-muted/80 dark:hover:bg-muted dark:hover:bg-slate-800/60'
                 }`}
               >
                 <p className="font-bold">تقسيط السلفة</p>
