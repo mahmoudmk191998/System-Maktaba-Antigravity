@@ -234,24 +234,6 @@ export const PERMISSION_CATEGORIES: PermissionCategory[] = [
     ],
   },
   {
-    id: 'operations_legacy',
-    label: 'العمليات والخدمات العامة',
-    iconName: 'CalendarDays',
-    permissions: [
-      { id: 'tables.view', label: 'عرض شاشة الصالة (توافق سابق)' },
-      { id: 'tables.manage', label: 'إدارة الحجوزات (توافق سابق)' },
-      { id: 'callcenter.view', label: 'مركز الاتصال (توافق سابق)' },
-      { id: 'delivery.view', label: 'شاشة التوصيل (توافق سابق)' },
-      { id: 'delivery.manage', label: 'إدارة التوصيل (توافق سابق)' },
-      { id: 'kitchen.view', label: 'عرض المطبخ (توافق سابق)' },
-      { id: 'kitchen.manage_orders', label: 'إدارة طلبات المطبخ (توافق سابق)' },
-      { id: 'production.view', label: 'عرض الإنتاج (توافق سابق)' },
-      { id: 'production.manage', label: 'إدارة الإنتاج (توافق سابق)' },
-      { id: 'menu.view', label: 'عرض القائمة القديمة (توافق سابق)' },
-      { id: 'menu.manage', label: 'إدارة القائمة القديمة (توافق سابق)' },
-    ],
-  },
-  {
     id: 'settings',
     label: 'النظام والأمان والإدارة العليا',
     iconName: 'Settings',
@@ -336,7 +318,7 @@ export const ROLE_TEMPLATES: Record<string, RoleTemplate> = {
       'orders.view', 'orders.manage',
       'sales.view', 'sales.create', 'sales.refund', 'sales.discount', 'sales.wholesale', 'sales.credit', 'sales.customer_credit',
       'returns.view', 'returns.create', 'returns.refund', 'returns.exchange', 'returns.override_policy', 'returns.cross_branch', 'returns.damaged_accept', 'returns.cancel', 'refunds.manual_method',
-      'customers.view', 'customers.manage', 'customers.create', 'customers.edit', 'customers.archive', 'customers.accounts.view', 'customers.credit.manage', 'customers.credit_override', 'customers.payment.create', 'customers.payment.reverse', 'customers.adjust_balance',
+      'customers.view', 'customers.create', 'customers.edit', 'customers.archive', 'customers.accounts.view', 'customers.credit.manage', 'customers.credit_override', 'customers.payment.create', 'customers.payment.reverse', 'customers.adjust_balance',
       'price_lists.view', 'price_lists.manage',
       'receivables.view', 'receivables.manage',
       'promotions.view', 'promotions.manage',
@@ -355,8 +337,6 @@ export const ROLE_TEMPLATES: Record<string, RoleTemplate> = {
       'analytics.view', 'analytics.export', 'analytics.view_costs', 'analytics.demand_reorder', 'analytics.partner_intelligence',
       'maintenance.view', 'maintenance.manage',
       'governance.view', 'approvals.view', 'approvals.action', 'datacenter.view', 'datacenter.export', 'system_health.view', 'attachments.manage',
-      // Legacy compatibility
-      'kitchen.view', 'kitchen.manage_orders', 'production.view', 'production.manage', 'menu.view', 'menu.manage', 'tables.view', 'tables.manage', 'callcenter.view', 'delivery.view', 'delivery.manage',
     ],
   },
   cashier: {
@@ -372,11 +352,9 @@ export const ROLE_TEMPLATES: Record<string, RoleTemplate> = {
       'sales.view', 'sales.create', 'sales.reprint_receipt', 'sales.wholesale', 'sales.credit', 'sales.customer_credit',
       'returns.view', 'returns.create', 'returns.refund', 'returns.exchange',
       'cash_register.open', 'cash_register.close',
-      'customers.view', 'customers.manage', 'customer.create_from_pos', 'customers.create', 'customers.payment.create',
+      'customers.view', 'customer.create_from_pos', 'customers.create', 'customers.payment.create',
       'price_lists.view',
       'promotions.view',
-      // Legacy compatibility
-      'tables.view', 'callcenter.view', 'delivery.view',
     ],
   },
   sales_staff: {
@@ -475,9 +453,6 @@ export const ROLE_TEMPLATES: Record<string, RoleTemplate> = {
     description: 'شاشة المطبخ والإنتاج السابقة (قيد الإحلال التدريجي)',
     isSystem: true,
     permissions: [
-      'kitchen.view', 'kitchen.manage_orders',
-      'production.view', 'production.manage',
-      'menu.view',
       'inventory.waste',
     ],
   },
@@ -493,8 +468,6 @@ export const ROLE_TEMPLATES: Record<string, RoleTemplate> = {
       'sales.view',
       'inventory.view',
       'reports.view',
-      // Legacy compatibility
-      'menu.view', 'tables.view',
     ],
   },
 };
@@ -526,11 +499,6 @@ export function calculateEffectivePermissions(
     for (const p of customOverrides.revoked) {
       basePerms.delete(p);
     }
-  }
-
-  // If role is admin and no explicit revokes, grant wildcard
-  if (roleKey === 'admin' && (!customOverrides?.revoked || customOverrides.revoked.length === 0)) {
-    return ['*'];
   }
 
   return Array.from(basePerms);
