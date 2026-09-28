@@ -13,10 +13,13 @@ import { useTenantBranch } from '@/hooks/useDatabase';
 import { db } from '@/lib/firebase';
 import { collection, query, where, getDocs, addDoc, updateDoc, deleteDoc, doc, orderBy } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
+import { useUserPermissions } from '@/hooks/usePermissions';
 
 export default function Maintenance() {
   const { branchId } = useTenantBranch();
   const { toast } = useToast();
+  const { hasPermission } = useUserPermissions();
+  const canManageMaintenance = hasPermission('maintenance.manage');
 
   const [records, setRecords] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -58,6 +61,7 @@ export default function Maintenance() {
 
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!canManageMaintenance) return;
     if (!assetName) return;
     setIsSubmitting(true);
     try {
@@ -83,6 +87,7 @@ export default function Maintenance() {
 
   const handleUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!canManageMaintenance) return;
     if (!editingRecord) return;
     setIsSubmitting(true);
     try {
@@ -104,6 +109,7 @@ export default function Maintenance() {
   };
 
   const handleDelete = async (id: string) => {
+    if (!canManageMaintenance) return;
     if (!window.confirm('هل أنت متأكد من حذف هذا السجل؟')) return;
     try {
       await deleteDoc(doc(db, 'maintenance_records', id));
@@ -118,12 +124,12 @@ export default function Maintenance() {
     <MainLayout
       title="الأصول والصيانة"
       subtitle="إدارة المعدات، الماكينات، وجدولة ومتابعة أعمال الصيانة الدورية."
-      actions={
+      actions={canManageMaintenance ? (
         <Button onClick={() => setIsAddOpen(true)} className="gap-2">
           <Plus className="w-4 h-4" />
           تسجيل صيانة
         </Button>
-      }
+      ) : undefined}
     >
       <div className="grid gap-6">
         <Card>
@@ -190,14 +196,14 @@ export default function Maintenance() {
                         </TableCell>
                         <TableCell>{record.cost} جنية</TableCell>
                         <TableCell className="text-center">
-                          <div className="flex justify-center items-center gap-1">
+                          {canManageMaintenance && <div className="flex justify-center items-center gap-1">
                             <Button variant="ghost" size="icon" className="h-8 w-8 hover:text-primary" onClick={() => setEditingRecord(record)}>
                               <Edit className="w-4 h-4" />
                             </Button>
                             <Button variant="ghost" size="icon" className="h-8 w-8 hover:text-destructive" onClick={() => handleDelete(record.id)}>
                               <Trash2 className="w-4 h-4" />
                             </Button>
-                          </div>
+                          </div>}
                         </TableCell>
                       </TableRow>
                     ))
@@ -210,7 +216,7 @@ export default function Maintenance() {
       </div>
 
       {/* Add Dialog */}
-      <Dialog open={isAddOpen} onOpenChange={setIsAddOpen}>
+      <Dialog open={canManageMaintenance && isAddOpen} onOpenChange={setIsAddOpen}>
         <DialogContent>
           <form onSubmit={handleAdd}>
             <DialogHeader>
@@ -261,7 +267,7 @@ export default function Maintenance() {
       </Dialog>
 
       {/* Edit Dialog */}
-      <Dialog open={!!editingRecord} onOpenChange={(open) => !open && setEditingRecord(null)}>
+      <Dialog open={canManageMaintenance && !!editingRecord} onOpenChange={(open) => !open && setEditingRecord(null)}>
         <DialogContent>
           <form onSubmit={handleUpdate}>
             <DialogHeader>
