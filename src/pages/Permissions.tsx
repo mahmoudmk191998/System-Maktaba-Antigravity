@@ -1,12 +1,11 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { MainLayout } from '@/components/layout';
 import { cn } from '@/lib/utils';
-import { db, firebaseConfig } from '@/lib/firebase';
-import { collection, query, where, getDocs, doc, deleteDoc, addDoc, updateDoc, setDoc, writeBatch } from 'firebase/firestore';
-import { initializeApp } from 'firebase/app';
-import { getAuth, createUserWithEmailAndPassword, updateProfile } from 'firebase/auth';
+import { db } from '@/lib/firebase';
+import { collection, query, where, getDocs, doc, addDoc, updateDoc } from 'firebase/firestore';
 import { useTenantBranch } from '@/hooks/useDatabase';
 import { useAuth } from '@/hooks/useAuth';
+import { useUserPermissions } from '@/hooks/usePermissions';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
@@ -27,12 +26,18 @@ import {
   PERMISSION_CATEGORIES,
   ROLE_TEMPLATES,
   ALL_PERMISSION_IDS,
-  calculateEffectivePermissions,
   getRoleLabel,
   isOwnerRole,
   isAdminOrOwnerRole,
 } from '@/lib/permissionsModel';
 import { notifySecurityRoleChanged } from '@/services/notifications.service';
+import {
+  createGoogleEmployeeInvite,
+  getRolePermissions,
+  persistUserAccessState,
+  provisionPasswordEmployee,
+  sanitizeAssignedPermissions,
+} from '@/services/security/userAccess.service';
 
 interface UserEntry {
   id: string;
@@ -62,6 +67,7 @@ const iconMap: Record<string, any> = {
 
 export default function Permissions() {
   const { user } = useAuth();
+  const { isOwner } = useUserPermissions();
   const { tenantId, branchId } = useTenantBranch();
   const [users, setUsers] = useState<UserEntry[]>([]);
   const [branches, setBranches] = useState<BranchItem[]>([]);
@@ -92,9 +98,18 @@ export default function Permissions() {
     if (!tenantId) return;
     const fetchBranches = async () => {
       try {
-        const bSnap = await getDocs(query(collection(db, 'branches'), where('tenant_id', '==', tenantId)));
-        const branchList = bSnap.docs.map((d) => ({ id: d.id, name: d.data().name || 'فرع بدون اسم' }));
-        setBranches(branchList);
+        const [legacySnap, currentSnap] = await Promise.all([
+          getDocs(query(collection(db, 'branches'), where('tenant_id', '==', tenantId))),
+          getDocs(query(collection(db, 'branches'), where('tenantId', '==', tenantId))),
+        ]);
+        const byId = new Map<string, BranchItem>();
+        [...legacySnap.docs, ...currentSnap.docs].forEach((branchDoc) => {
+          byId.set(branchDoc.id, {
+            id: branchDoc.id,
+            name: branchDoc.data().name || 'فرع بدون اسم',
+          });
+        });
+        setBranches(Array.from(byId.values()));
       } catch (err) {
         console.warn('Error fetching branches for permissions:', err);
       }
@@ -107,9 +122,15 @@ export default function Permissions() {
     if (!tenantId) return;
     setLoading(true);
     try {
-      const profilesQ = query(collection(db, 'profiles'), where('tenant_id', '==', tenantId));
-      const profilesSnap = await getDocs(profilesQ);
-      const profiles = profilesSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      const [legacyProfilesSnap, currentProfilesSnap] = await Promise.all([
+        getDocs(query(collection(db, 'profiles'), where('tenant_id', '==', tenantId))),
+        getDocs(query(collection(db, 'profiles'), where('tenantId', '==', tenantId))),
+      ]);
+      const profilesMap = new Map<string, any>();
+      [...legacyProfilesSnap.docs, ...currentProfilesSnap.docs].forEach((profileDoc) => {
+        profilesMap.set(profileDoc.id, { id: profileDoc.id, ...profileDoc.data() });
+      });
+      const profiles = Array.from(profilesMap.values());
 
       if (profiles.length === 0) {
         setUsers([]);
@@ -131,15 +152,27 @@ export default function Permissions() {
 
         const role = roles[0]?.role || (p as any).role || 'viewer';
         const userStatus: 'active' | 'disabled' = (p as any).status === 'disabled' ? 'disabled' : 'active';
+        const profilePermissions = Array.isArray((p as any).permissions)
+          ? (p as any).permissions.filter((permission: unknown) => typeof permission === 'string')
+          : null;
+        const compatibilityPermissions = perms
+          .map((x: any) => x.permission)
+          .filter((permission: unknown): permission is string => typeof permission === 'string');
+        const effectivePermissions = isOwnerRole(role)
+          ? ['*']
+          : profilePermissions ??
+            (compatibilityPermissions.length > 0
+              ? compatibilityPermissions
+              : getRolePermissions(role));
 
         userEntries.push({
           id: p.id,
           full_name: (p as any).full_name || (p as any).email?.split('@')[0] || 'مستخدم',
           email: (p as any).email || '',
           role,
-          permissions: perms.map((x: any) => x.permission),
+          permissions: effectivePermissions,
           status: userStatus,
-          branch_id: (p as any).branch_id || null,
+          branch_id: (p as any).branch_id ?? (p as any).branchId ?? null,
         });
       }
 
