@@ -50,6 +50,29 @@ service cloud.firestore {
       return isAuthenticated() && getUserRole() in ['owner', 'super_admin', 'admin'];
     }
 
+    function isSovereignOwner() {
+      return isAuthenticated() && getUserRole() in ['owner', 'super_admin'];
+    }
+
+    function hasExplicitPermission(permissionId) {
+      return isAuthenticated() &&
+        exists(/databases/$(database)/documents/user_permissions/$(request.auth.uid + '___' + permissionId));
+    }
+
+    function canManagePermissions() {
+      return isSovereignOwner() || hasExplicitPermission('permissions.manage');
+    }
+
+    function inviteForCurrentEmailExists() {
+      return isAuthenticated() &&
+        request.auth.token.email != null &&
+        exists(/databases/$(database)/documents/user_invitations/$(request.auth.token.email));
+    }
+
+    function currentEmailInvite() {
+      return get(/databases/$(database)/documents/user_invitations/$(request.auth.token.email)).data;
+    }
+
     function hasTenantAccess(tId) {
       return isAuthenticated() && (
         isSystemAdmin() ||
@@ -281,20 +304,90 @@ service cloud.firestore {
     }
 
     // User Profiles, Roles & Granular Permissions
+    // Reads remain tenant-aware for administration and operational staff lookups.
+    // Writes to roles/permissions are NEVER granted merely because the caller is authenticated.
     match /profiles/{profileId} {
-      allow read, write: if isAuthenticated();
+      allow read: if isAuthenticated() && (
+        profileId == request.auth.uid ||
+        resource == null ||
+        hasTenantAccess(getDocTenantId(resource.data))
+      );
+
+      // Permission managers may administer tenant users.
+      allow create, update, delete: if canManagePermissions() && (
+        (resource == null && hasTenantAccess(getDocTenantId(request.resource.data))) ||
+        (resource != null && hasTenantAccess(getDocTenantId(resource.data)))
+      );
+
+      // A Google invitee may create/update ONLY their own profile using the
+      // exact tenant/role/email encoded in the pending invitation.
+      allow create, update: if profileId == request.auth.uid &&
+        inviteForCurrentEmailExists() &&
+        currentEmailInvite().status == 'pending' &&
+        currentEmailInvite().email == request.auth.token.email &&
+        getDocTenantId(request.resource.data) == getDocTenantId(currentEmailInvite()) &&
+        request.resource.data.role == currentEmailInvite().role &&
+        request.resource.data.email == request.auth.token.email;
     }
 
     match /user_roles/{roleId} {
-      allow read, write: if isAuthenticated();
+      allow read: if isAuthenticated() && (
+        resource.data.user_id == request.auth.uid ||
+        hasTenantAccess(getDocTenantId(resource.data))
+      );
+
+      allow create, update, delete: if canManagePermissions() && (
+        (resource == null && hasTenantAccess(getDocTenantId(request.resource.data))) ||
+        (resource != null && hasTenantAccess(getDocTenantId(resource.data)))
+      );
+
+      allow create, update: if roleId == request.auth.uid &&
+        request.resource.data.user_id == request.auth.uid &&
+        inviteForCurrentEmailExists() &&
+        currentEmailInvite().status == 'pending' &&
+        request.resource.data.role == currentEmailInvite().role &&
+        getDocTenantId(request.resource.data) == getDocTenantId(currentEmailInvite());
     }
 
     match /user_permissions/{permId} {
-      allow read, write: if isAuthenticated();
+      allow read: if isAuthenticated() && (
+        resource.data.user_id == request.auth.uid ||
+        hasTenantAccess(getDocTenantId(resource.data))
+      );
+
+      allow create, update, delete: if canManagePermissions() && (
+        (resource == null && hasTenantAccess(getDocTenantId(request.resource.data))) ||
+        (resource != null && hasTenantAccess(getDocTenantId(resource.data)))
+      );
+
+      // Invitation claim may write only permission IDs contained in the invite.
+      allow create, update: if request.resource.data.user_id == request.auth.uid &&
+        inviteForCurrentEmailExists() &&
+        currentEmailInvite().status == 'pending' &&
+        request.resource.data.permission in currentEmailInvite().permissions &&
+        getDocTenantId(request.resource.data) == getDocTenantId(currentEmailInvite());
+    }
+
+    match /user_invitations/{inviteId} {
+      allow read: if canManagePermissions() ||
+        (isAuthenticated() && request.auth.token.email != null && inviteId == request.auth.token.email);
+
+      allow create, update, delete: if canManagePermissions();
+
+      // The invited Google account may only mark its own pending invite accepted.
+      allow update: if isAuthenticated() &&
+        request.auth.token.email != null &&
+        inviteId == request.auth.token.email &&
+        resource.data.status == 'pending' &&
+        request.resource.data.status == 'accepted' &&
+        request.resource.data.email == resource.data.email &&
+        request.resource.data.role == resource.data.role &&
+        getDocTenantId(request.resource.data) == getDocTenantId(resource.data);
     }
 
     match /users/{userId} {
-      allow read, write: if isAuthenticated();
+      allow read: if isAuthenticated();
+      allow write: if canManagePermissions();
     }
     match /customers/{customerId} {
       allow read, write: if isAuthenticated();
@@ -931,9 +1024,10 @@ service cloud.firestore {
       );
     }
 
-    // Default catch-all: strictly restrict unlisted collections to admin/owner
+    // Default catch-all: only sovereign owner roles may access unlisted collections.
+    // Regular Admin accounts are permission-driven and must use explicit collection rules.
     match /{document=**} {
-      allow read, write: if isSystemAdmin();
+      allow read, write: if isSovereignOwner();
     }
   }
 }
