@@ -5,6 +5,7 @@ import { useAppStore } from '@/lib/store';
 import { useSettings, useUnits } from '@/hooks/useDatabase';
 import { useAuth } from '@/hooks/useAuth';
 import { useTheme } from '@/hooks/useTheme';
+import { useUserPermissions } from '@/hooks/usePermissions';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
@@ -68,6 +69,12 @@ export default function Settings() {
 
   const { user } = useAuth();
   const { theme, setTheme } = useTheme();
+  const { hasPermission } = useUserPermissions();
+  const canManageSettings = hasPermission('settings.manage');
+  const canResetData = hasPermission('settings.data_reset');
+  const canManageUnits = hasPermission('units.manage');
+  const canManagePermissions = hasPermission('permissions.manage');
+  const canViewIntegrations = hasPermission('integrations.view');
   const { updateTenantProfile, updateBranchProfile, wipeAllTenantData } = useSettings(currentTenant?.id || null);
   const { units, add: addUnit, remove: removeUnit, seedStandardUnits } = useUnits(currentTenant?.id || null);
 
@@ -116,6 +123,10 @@ export default function Settings() {
 
   const handleSave = async () => {
     if (isSaving) return;
+    if (!canManageSettings) {
+      toast.error('ليس لديك صلاحية تعديل إعدادات النظام');
+      return;
+    }
 
     if (!tenantName.trim()) {
       toast.error('يرجى إدخال اسم المؤسسة');
@@ -222,6 +233,10 @@ export default function Settings() {
   };
 
   const handleWipeData = async () => {
+    if (!canResetData) {
+      toast.error('ليس لديك صلاحية مسح وإعادة تهيئة بيانات المؤسسة');
+      return;
+    }
     if (wipeConfirmInput.trim() !== 'مسح' && wipeConfirmInput.trim() !== 'تأكيد' && wipeConfirmInput.trim().toUpperCase() !== 'CONFIRM') {
       toast.error('يرجى كتابة كلمة "مسح" في الحقل لتأكيد العملية');
       return;
@@ -301,6 +316,10 @@ export default function Settings() {
   };
 
   const handleResetOrderCounter = async () => {
+    if (!canManageSettings) {
+      toast.error('ليس لديك صلاحية تعديل عدادات نقطة البيع');
+      return;
+    }
     if (!currentBranch?.id) return;
     if (window.confirm('هل أنت متأكد من رغبتك في تصفير عداد أرقام الطلبات؟ هذا يعني أن الطلب القادم سيبدأ من رقم 1. يرجى توخي الحذر لتجنب تكرار أرقام الطلبات لنفس اليوم.')) {
       setIsResettingCounter(true);
@@ -889,16 +908,19 @@ export default function Settings() {
                     <p className="font-semibold text-sm">لوحة إدارة الصلاحيات المتقدمة</p>
                     <p className="text-xs text-muted-foreground">تعديل صلاحيات الأدوار وإضافة مستخدمين جدد</p>
                   </div>
-                  <Button asChild variant="default" size="sm" className="gap-1.5">
-                    <Link to="/permissions">
-                      <Shield className="w-4 h-4" />
-                      فتح شاشة الصلاحيات
-                    </Link>
-                  </Button>
+                  {canManagePermissions && (
+                    <Button asChild variant="default" size="sm" className="gap-1.5">
+                      <Link to="/permissions">
+                        <Shield className="w-4 h-4" />
+                        فتح شاشة الصلاحيات
+                      </Link>
+                    </Button>
+                  )}
                 </div>
               </CardContent>
             </Card>
 
+            {canResetData && (
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2 text-destructive">
@@ -1023,6 +1045,7 @@ export default function Settings() {
                 </Dialog>
               </CardContent>
             </Card>
+            )}
           </div>
         </TabsContent>
 
@@ -1166,12 +1189,14 @@ export default function Settings() {
                 <p className="text-sm text-muted-foreground">
                   تتم إدارة مفاتيح الـ API، أجهزة الـ USB Hardware، والتكاملات البرمجية الخارجية من خلال مركز التكاملات المخصص.
                 </p>
-                <Button asChild variant="outline" className="w-full gap-2 justify-between">
-                  <Link to="/integrations">
-                    <span>فتح مركز التكاملات الشامل (Integrations Hub)</span>
-                    <ArrowRight className="w-4 h-4" />
-                  </Link>
-                </Button>
+                {canViewIntegrations && (
+                  <Button asChild variant="outline" className="w-full gap-2 justify-between">
+                    <Link to="/integrations">
+                      <span>فتح مركز التكاملات الشامل (Integrations Hub)</span>
+                      <ArrowRight className="w-4 h-4" />
+                    </Link>
+                  </Button>
+                )}
               </CardContent>
             </Card>
           </div>
@@ -1189,16 +1214,20 @@ export default function Settings() {
                 <CardDescription>إدارة وحدات القياس المستخدمة في المخزون والوصفات</CardDescription>
               </div>
               <div className="flex flex-wrap gap-2 w-full sm:w-auto">
-                <Button variant="outline" size="sm" onClick={async () => await seedStandardUnits()}>
-                  استعادة الوحدات الافتراضية
-                </Button>
-                <Button size="sm" onClick={() => setNewUnitMode(true)}>
-                  إضافة وحدة
-                </Button>
+                {canManageUnits && (
+                  <>
+                    <Button variant="outline" size="sm" onClick={async () => await seedStandardUnits()}>
+                      استعادة الوحدات الافتراضية
+                    </Button>
+                    <Button size="sm" onClick={() => setNewUnitMode(true)}>
+                      إضافة وحدة
+                    </Button>
+                  </>
+                )}
               </div>
             </CardHeader>
             <CardContent className="space-y-4">
-              {newUnitMode && (
+              {canManageUnits && newUnitMode && (
                 <div className="p-4 bg-muted rounded-lg flex flex-col sm:flex-row items-stretch sm:items-end gap-2 mb-4">
                   <div className="space-y-2 flex-1">
                     <Label>اسم الوحدة</Label>
@@ -1259,11 +1288,13 @@ export default function Settings() {
                           </Badge>
                         </td>
                         <td className="p-3">
+                          {canManageUnits && (
                           <Button variant="ghost" size="sm" className="text-destructive h-8 px-2 w-full" onClick={() => {
                             if(window.confirm('هل أنت متأكد من حذف هذه الوحدة؟')) removeUnit(unit.id);
                           }}>
                             حذف
                           </Button>
+                          )}
                         </td>
                       </tr>
                     ))}
@@ -1282,6 +1313,7 @@ export default function Settings() {
         </TabsContent>
 
         {/* Save Button */}
+        {canManageSettings && (
         <div className="flex justify-end pt-4 border-t">
           <Button onClick={handleSave} disabled={isSaving} className="gap-2 w-full sm:w-auto sm:min-w-[160px]">
             {isSaving ? (
@@ -1297,6 +1329,7 @@ export default function Settings() {
             )}
           </Button>
         </div>
+        )}
       </Tabs>
     </MainLayout>
   );
