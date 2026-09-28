@@ -32,6 +32,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useTenantBranch } from '@/hooks/useDatabase';
 import { useAuth } from '@/hooks/useAuth';
+import { useUserPermissions } from '@/hooks/usePermissions';
 import { useToast } from '@/hooks/use-toast';
 
 import type {
@@ -84,6 +85,12 @@ export default function Accounting() {
   const { tenantId } = useTenantBranch();
   const { user } = useAuth();
   const { toast } = useToast();
+  const { hasPermission } = useUserPermissions();
+  const canManageChart = hasPermission('accounting.manage_chart');
+  const canCreateEntry = hasPermission('accounting.create_entry');
+  const canReverseEntry = hasPermission('accounting.reverse_entry');
+  const canManagePeriods = hasPermission('accounting.manage_periods');
+  const canOpeningBalances = hasPermission('accounting.opening_balances');
 
   const [activeTab, setActiveTab] = useState('overview');
   const [loading, setLoading] = useState(true);
@@ -132,7 +139,7 @@ export default function Accounting() {
       setAccounts(chart);
 
       // Auto-seed if completely empty
-      if (chart.length === 0) {
+      if (chart.length === 0 && canManageChart) {
         await seedDefaultChartOfAccounts(tenantId, user?.uid || 'system');
         const reChart = await getChartOfAccounts(tenantId);
         setAccounts(reChart);
@@ -188,6 +195,10 @@ export default function Accounting() {
   // Handle Init Fiscal Year
   const handleInitYear = async () => {
     if (!tenantId) return;
+    if (!canManagePeriods) {
+      toast({ title: 'غير مصرح', description: 'ليس لديك صلاحية إدارة الفترات المالية', variant: 'destructive' });
+      return;
+    }
     try {
       await initializeFiscalYear(tenantId, selectedYear, user?.uid || 'system');
       toast({ title: 'تم إنشاء السنة المالية', description: `تم تهيئة 12 فترة مالية لسنة ${selectedYear}` });
@@ -200,6 +211,10 @@ export default function Accounting() {
   // Handle Close / Reopen Period
   const handleTogglePeriod = async (period: FiscalPeriod) => {
     if (!tenantId) return;
+    if (!canManagePeriods) {
+      toast({ title: 'غير مصرح', description: 'ليس لديك صلاحية إغلاق أو إعادة فتح الفترات المالية', variant: 'destructive' });
+      return;
+    }
     try {
       if (period.status === 'closed') {
         await reopenFiscalPeriod(tenantId, period.id, user?.uid || 'system', 'إعادة فتح إدارية');
@@ -254,7 +269,8 @@ export default function Accounting() {
             <Button
               variant="outline"
               size="sm"
-              onClick={() => setOpeningWizardOpen(true)}
+              onClick={() => canOpeningBalances && setOpeningWizardOpen(true)}
+              disabled={!canOpeningBalances}
               className="gap-1.5 text-xs"
             >
               <Scale className="w-4 h-4" />
@@ -264,7 +280,8 @@ export default function Accounting() {
             <Button
               variant="outline"
               size="sm"
-              onClick={() => setNewAccountOpen(true)}
+              onClick={() => canManageChart && setNewAccountOpen(true)}
+              disabled={!canManageChart}
               className="gap-1.5 text-xs"
             >
               <Plus className="w-4 h-4" />
@@ -273,7 +290,8 @@ export default function Accounting() {
 
             <Button
               size="sm"
-              onClick={() => setNewJournalOpen(true)}
+              onClick={() => canCreateEntry && setNewJournalOpen(true)}
+              disabled={!canCreateEntry}
               className="gap-1.5 text-xs shadow-sm"
             >
               <Plus className="w-4 h-4" />
@@ -552,7 +570,8 @@ export default function Accounting() {
               <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
                 <Button
                   size="sm"
-                  onClick={() => setNewAccountOpen(true)}
+                  onClick={() => canManageChart && setNewAccountOpen(true)}
+              disabled={!canManageChart}
                   className="h-9 gap-1 text-xs"
                 >
                   <Plus className="w-3.5 h-3.5" />
@@ -642,7 +661,8 @@ export default function Accounting() {
 
               <Button
                 size="sm"
-                onClick={() => setNewJournalOpen(true)}
+                onClick={() => canCreateEntry && setNewJournalOpen(true)}
+              disabled={!canCreateEntry}
                 className="h-9 gap-1.5 text-xs"
               >
                 <Plus className="w-3.5 h-3.5" />
@@ -1222,6 +1242,7 @@ export default function Accounting() {
                 <Button
                   size="sm"
                   onClick={handleInitYear}
+                    disabled={!canManagePeriods}
                   className="h-8 gap-1.5 text-xs"
                 >
                   <Plus className="w-3.5 h-3.5" />
@@ -1276,6 +1297,7 @@ export default function Accounting() {
                           variant="ghost"
                           size="sm"
                           onClick={() => handleTogglePeriod(period)}
+                              disabled={!canManagePeriods}
                           className="h-7 text-xs gap-1"
                         >
                           {period.status === 'closed' ? (
@@ -1308,7 +1330,7 @@ export default function Accounting() {
 
         {/* MODALS */}
         <NewJournalEntryModal
-          open={newJournalOpen}
+          open={canCreateEntry && newJournalOpen}
           onOpenChange={setNewJournalOpen}
           tenantId={tenantId || ''}
           userId={user?.uid || 'system'}
@@ -1316,7 +1338,7 @@ export default function Accounting() {
         />
 
         <NewAccountModal
-          open={newAccountOpen}
+          open={canManageChart && newAccountOpen}
           onOpenChange={setNewAccountOpen}
           tenantId={tenantId || ''}
           existingAccounts={accounts}
@@ -1324,7 +1346,7 @@ export default function Accounting() {
         />
 
         <OpeningBalancesWizard
-          open={openingWizardOpen}
+          open={canOpeningBalances && openingWizardOpen}
           onOpenChange={setOpeningWizardOpen}
           tenantId={tenantId || ''}
           userId={user?.uid || 'system'}
@@ -1337,6 +1359,7 @@ export default function Accounting() {
           entry={selectedEntry}
           tenantId={tenantId || ''}
           userId={user?.uid || 'system'}
+          canReverse={canReverseEntry}
           onReversalSuccess={loadAllAccountingData}
         />
       </div>
