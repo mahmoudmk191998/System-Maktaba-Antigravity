@@ -61,7 +61,9 @@ const WORKFLOW_LABELS: Record<ApprovalWorkflowType, string> = {
 export default function Approvals() {
   const { tenantId, branchId } = useTenantBranch();
   const { user } = useAuth();
-  const { userRole, isOwner, isAdmin } = useUserPermissions();
+  const { roles, isOwner, isAdmin, hasPermission } = useUserPermissions();
+  const userRole = roles[0] || (isOwner ? 'owner' : isAdmin ? 'super_admin' : 'manager');
+  const canActOnApprovals = isAdmin || hasPermission('approvals.action');
   const { currency } = useFormatters();
 
   const [activeTab, setActiveTab] = useState<'pending_for_me' | 'my_requests' | 'approved' | 'rejected'>('pending_for_me');
@@ -131,6 +133,10 @@ export default function Approvals() {
 
   const handleAction = async (action: 'approve' | 'reject' | 'cancel') => {
     if (!tenantId || !selectedRequest || !user) return;
+    if (action !== 'cancel' && !canActOnApprovals) {
+      toast.error('ليس لديك صلاحية الموافقة أو الرفض على الطلبات الحساسة');
+      return;
+    }
     setIsProcessing(true);
     try {
       await processApprovalAction({
@@ -138,7 +144,7 @@ export default function Approvals() {
         requestId: selectedRequest.id,
         actorId: user.uid,
         actorName: user.displayName || user.email || 'مسؤول',
-        actorRole: userRole || (isOwner ? 'owner' : isAdmin ? 'admin' : 'manager'),
+        actorRole: userRole,
         action,
         comment: actionComment,
       });
