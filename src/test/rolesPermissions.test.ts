@@ -18,9 +18,10 @@ describe('Production-Grade Roles & Permissions (RBAC) Test Suite', () => {
       expect(isAdminOrOwnerRole('owner')).toBe(true);
     });
 
-    it('Admin has all operational and managerial permissions', () => {
+    it('Admin starts with all registered permissions but is not an unconditional wildcard', () => {
       const adminPerms = calculateEffectivePermissions('admin');
-      expect(adminPerms).toEqual(['*']);
+      expect(adminPerms).not.toContain('*');
+      expect(new Set(adminPerms)).toEqual(new Set(ALL_PERMISSION_IDS));
       expect(isAdminOrOwnerRole('admin')).toBe(true);
     });
 
@@ -117,13 +118,15 @@ describe('Production-Grade Roles & Permissions (RBAC) Test Suite', () => {
       expect(effective).toContain('pos.create_order');
     });
 
-    it('Admin with explicit revoked permissions no longer has wildcard (*)', () => {
+    it('Admin honors explicit revokes exactly like other customizable roles', () => {
       const effective = calculateEffectivePermissions('admin', {
-        revoked: ['permissions.manage'],
+        revoked: ['permissions.manage', 'products.delete'],
       });
       expect(effective).not.toContain('*');
       expect(effective).not.toContain('permissions.manage');
+      expect(effective).not.toContain('products.delete');
       expect(effective).toContain('pos.view');
+      expect(effective).toContain('products.edit');
     });
   });
 
