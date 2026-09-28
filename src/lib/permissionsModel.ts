@@ -245,6 +245,7 @@ export const PERMISSION_CATEGORIES: PermissionCategory[] = [
       { id: 'maintenance.manage', label: 'إدارة طلبات الصيانة ومتابعة المعدات' },
       { id: 'integrations.view', label: 'عرض وإدارة منصات التكاملات والـ API' },
       { id: 'audit.view', label: 'استعراض سجل التدقيق الأمني للعمليات' },
+      { id: 'notifications.view', label: 'عرض سجل وإشعارات النظام الموجهة للمستخدم' },
     ],
   },
   {
