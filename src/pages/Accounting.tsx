@@ -32,6 +32,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useTenantBranch } from '@/hooks/useDatabase';
 import { useAuth } from '@/hooks/useAuth';
+import { useUserPermissions } from '@/hooks/usePermissions';
 import { useToast } from '@/hooks/use-toast';
 
 import type {
@@ -84,6 +85,13 @@ export default function Accounting() {
   const { tenantId } = useTenantBranch();
   const { user } = useAuth();
   const { toast } = useToast();
+  const { hasPermission } = useUserPermissions();
+  const canCreateEntry = hasPermission('accounting.create_entry');
+  const canReverseEntry = hasPermission('accounting.reverse_entry');
+  const canManageChart = hasPermission('accounting.manage_chart');
+  const canManagePeriods = hasPermission('accounting.manage_periods');
+  const canOpeningBalances = hasPermission('accounting.opening_balances');
+  const canReconcile = hasPermission('accounting.reconcile');
 
   const [activeTab, setActiveTab] = useState('overview');
   const [loading, setLoading] = useState(true);
@@ -132,7 +140,7 @@ export default function Accounting() {
       setAccounts(chart);
 
       // Auto-seed if completely empty
-      if (chart.length === 0) {
+      if (chart.length === 0 && canManageChart) {
         await seedDefaultChartOfAccounts(tenantId, user?.uid || 'system');
         const reChart = await getChartOfAccounts(tenantId);
         setAccounts(reChart);
@@ -187,6 +195,10 @@ export default function Accounting() {
 
   // Handle Init Fiscal Year
   const handleInitYear = async () => {
+    if (!canManagePeriods) {
+      toast({ title: 'غير مصرح', description: 'ليس لديك صلاحية إدارة الفترات المالية', variant: 'destructive' });
+      return;
+    }
     if (!tenantId) return;
     try {
       await initializeFiscalYear(tenantId, selectedYear, user?.uid || 'system');
@@ -199,6 +211,10 @@ export default function Accounting() {
 
   // Handle Close / Reopen Period
   const handleTogglePeriod = async (period: FiscalPeriod) => {
+    if (!canManagePeriods) {
+      toast({ title: 'غير مصرح', description: 'ليس لديك صلاحية إغلاق أو إعادة فتح الفترات المالية', variant: 'destructive' });
+      return;
+    }
     if (!tenantId) return;
     try {
       if (period.status === 'closed') {
@@ -251,7 +267,7 @@ export default function Accounting() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <Button
+            {canOpeningBalances && <Button
               variant="outline"
               size="sm"
               onClick={() => setOpeningWizardOpen(true)}
@@ -259,9 +275,9 @@ export default function Accounting() {
             >
               <Scale className="w-4 h-4" />
               <span>معالج الأرصدة الافتتاحية</span>
-            </Button>
+            </Button>}
 
-            <Button
+            {canManageChart && <Button
               variant="outline"
               size="sm"
               onClick={() => setNewAccountOpen(true)}
@@ -269,16 +285,16 @@ export default function Accounting() {
             >
               <Plus className="w-4 h-4" />
               <span>إضافة حساب مالي</span>
-            </Button>
+            </Button>}
 
-            <Button
+            {canCreateEntry && <Button
               size="sm"
               onClick={() => setNewJournalOpen(true)}
               className="gap-1.5 text-xs shadow-sm"
             >
               <Plus className="w-4 h-4" />
               <span>قيد يومية جديد</span>
-            </Button>
+            </Button>}
           </div>
         </div>
 
@@ -349,7 +365,7 @@ export default function Accounting() {
               <DollarSign className="w-3.5 h-3.5" />
               <span>التدفقات النقدية</span>
             </TabsTrigger>
-            <TabsTrigger value="reconciliations" className="text-xs gap-1.5">
+            {canReconcile && <TabsTrigger value="reconciliations" className="text-xs gap-1.5">
               <ShieldCheck className="w-3.5 h-3.5" />
               <span>المطابقات (Audit 2)</span>
             </TabsTrigger>
@@ -550,14 +566,14 @@ export default function Accounting() {
               </div>
 
               <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
-                <Button
+                {canManageChart && <Button
                   size="sm"
                   onClick={() => setNewAccountOpen(true)}
                   className="h-9 gap-1 text-xs"
                 >
                   <Plus className="w-3.5 h-3.5" />
                   <span>إضافة حساب مالي</span>
-                </Button>
+                </Button>}
               </div>
             </div>
 
@@ -640,14 +656,14 @@ export default function Accounting() {
                 />
               </div>
 
-              <Button
+              {canCreateEntry && <Button
                 size="sm"
                 onClick={() => setNewJournalOpen(true)}
                 className="h-9 gap-1.5 text-xs"
               >
                 <Plus className="w-3.5 h-3.5" />
                 <span>إنشاء قيد يدوي</span>
-              </Button>
+              </Button>}
             </div>
 
             <div className="border rounded-lg overflow-hidden bg-card">
@@ -701,7 +717,7 @@ export default function Accounting() {
                         >
                           <Eye className="w-3.5 h-3.5" />
                           <span>تفاصيل</span>
-                        </Button>
+                        </Button>}
                       </TableCell>
                     </TableRow>
                   ))}
@@ -1218,7 +1234,7 @@ export default function Accounting() {
                 </Select>
               </div>
 
-              {fiscalPeriods.length === 0 && (
+              {canManagePeriods && fiscalPeriods.length === 0 && (
                 <Button
                   size="sm"
                   onClick={handleInitYear}
@@ -1272,7 +1288,7 @@ export default function Accounting() {
                         </Badge>
                       </TableCell>
                       <TableCell className="text-center">
-                        <Button
+                        {canManagePeriods && <Button
                           variant="ghost"
                           size="sm"
                           onClick={() => handleTogglePeriod(period)}
@@ -1308,7 +1324,7 @@ export default function Accounting() {
 
         {/* MODALS */}
         <NewJournalEntryModal
-          open={newJournalOpen}
+          open={canCreateEntry && newJournalOpen}
           onOpenChange={setNewJournalOpen}
           tenantId={tenantId || ''}
           userId={user?.uid || 'system'}
@@ -1316,7 +1332,7 @@ export default function Accounting() {
         />
 
         <NewAccountModal
-          open={newAccountOpen}
+          open={canManageChart && newAccountOpen}
           onOpenChange={setNewAccountOpen}
           tenantId={tenantId || ''}
           existingAccounts={accounts}
@@ -1324,7 +1340,7 @@ export default function Accounting() {
         />
 
         <OpeningBalancesWizard
-          open={openingWizardOpen}
+          open={canOpeningBalances && openingWizardOpen}
           onOpenChange={setOpeningWizardOpen}
           tenantId={tenantId || ''}
           userId={user?.uid || 'system'}
@@ -1337,6 +1353,7 @@ export default function Accounting() {
           entry={selectedEntry}
           tenantId={tenantId || ''}
           userId={user?.uid || 'system'}
+          canReverse={canReverseEntry}
           onReversalSuccess={loadAllAccountingData}
         />
       </div>
