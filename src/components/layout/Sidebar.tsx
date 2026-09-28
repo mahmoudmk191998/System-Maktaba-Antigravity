@@ -28,17 +28,17 @@ const navGroups = [
     title: 'المبيعات والعملاء',
     items: [
       { path: '/pos', label: 'نقاط البيع السريعة (POS)', icon: ShoppingCart, perms: ['pos.view'] },
-      { path: '/orders-history', label: 'سجل فواتير المبيعات', icon: Receipt, perms: ['pos.view', 'sales.view'] },
-      { path: '/returns', label: 'مرتجعات واستبدال المبيعات', icon: RotateCcw, perms: ['returns.view', 'sales.view', 'pos.view'] },
+      { path: '/orders-history', label: 'سجل فواتير المبيعات', icon: Receipt, perms: ['orders.view', 'sales.view'] },
+      { path: '/returns', label: 'مرتجعات واستبدال المبيعات', icon: RotateCcw, perms: ['returns.view'] },
       { path: '/customers', label: 'العملاء', icon: Users, perms: ['customers.view'] },
-      { path: '/receivables', label: 'الآجل والمديونيات', icon: CreditCard, perms: ['customers.view'] },
+      { path: '/receivables', label: 'الآجل والمديونيات', icon: CreditCard, perms: ['receivables.view'] },
       { path: '/promotions', label: 'العروض والخصومات', icon: Percent, perms: ['promotions.view'] },
     ]
   },
   {
     title: 'المنتجات والكتالوج',
     items: [
-      { path: '/products', label: 'فهرس المنتجات والكتب', icon: BookOpen, perms: ['products.view', 'menu.view'] },
+      { path: '/products', label: 'فهرس المنتجات والكتب', icon: BookOpen, perms: ['products.view'] },
     ]
   },
   {
@@ -60,15 +60,15 @@ const navGroups = [
   {
     title: 'الحوكمة وإدارة البيانات',
     items: [
-      { path: '/approvals', label: 'مركز الموافقات', icon: CheckSquare, perms: ['approvals.view', 'governance.view'] },
-      { path: '/datacenter', label: 'مركز استيراد وتصدير البيانات', icon: FileSpreadsheet, perms: ['datacenter.view', 'settings.manage'] },
-      { path: '/system-health', label: 'فحص سلامة النظام والصيانة', icon: Activity, perms: ['system_health.view', 'settings.manage', 'accounting.view'] },
+      { path: '/approvals', label: 'مركز الموافقات', icon: CheckSquare, perms: ['approvals.view'] },
+      { path: '/datacenter', label: 'مركز استيراد وتصدير البيانات', icon: FileSpreadsheet, perms: ['datacenter.view'] },
+      { path: '/system-health', label: 'فحص سلامة النظام والصيانة', icon: Activity, perms: ['system_health.view'] },
     ]
   },
   {
     title: 'المالية والتقارير',
     items: [
-      { path: '/executive', label: 'اللوحة المالية والإغلاق', icon: TrendingUp, perms: ['financial_dashboard.view', 'reports.view', 'accounting.view'] },
+      { path: '/executive', label: 'اللوحة المالية والإغلاق', icon: TrendingUp, perms: ['financial_dashboard.view'] },
       { path: '/reports', label: 'التقارير والتحليلات', icon: BarChart3, perms: ['reports.view'] },
       { path: '/accounting', label: 'الحسابات العامة', icon: Calculator, perms: ['accounting.view'] },
       { path: '/expenses', label: 'المصروفات', icon: Receipt, perms: ['expenses.view'] },
@@ -78,7 +78,7 @@ const navGroups = [
     title: 'النظام والإعدادات',
     items: [
       { path: '/settings', label: 'الإعدادات', icon: Settings, perms: ['settings.view'] },
-      { path: '/backup', label: 'النسخ الاحتياطي والتعافي', icon: Database, perms: ['backup.view', 'settings.manage'] },
+      { path: '/backup', label: 'النسخ الاحتياطي والتعافي', icon: Database, perms: ['backup.view'] },
       { path: '/permissions', label: 'الصلاحيات', icon: Shield, perms: ['permissions.manage'] },
       { path: '/maintenance', label: 'الأصول والصيانة', icon: Wrench, perms: ['maintenance.view'] },
       { path: '/integrations', label: 'مركز التكاملات', icon: Puzzle, perms: ['integrations.view'] },
@@ -91,7 +91,7 @@ const navGroups = [
 const allNavItems = navGroups.flatMap(group => group.items);
 
 function NavGroupMenu({ group, location, isAdmin, hasAnyPermission, onNavigate, sidebarCollapsed }: any) {
-  const allowedItems = group.items.filter((item: any) => isAdmin || hasAnyPermission(item.perms));
+  const allowedItems = group.items.filter((item: any) => hasAnyPermission(item.perms));
   if (allowedItems.length === 0) return null;
 
   const isActiveGroup = allowedItems.some((item: any) => location.pathname === item.path);
@@ -359,7 +359,7 @@ export function Sidebar() {
             {/* Pop-up Group Menu */}
             {activeGroup && (
               <div className="dynamic-island px-4 py-3 min-w-[200px] flex justify-center gap-2 animate-fade-in origin-bottom">
-                {navGroups.find(g => g.title === activeGroup)?.items.filter(item => isAdmin || hasAnyPermission(item.perms)).map((item) => {
+                {navGroups.find(g => g.title === activeGroup)?.items.filter(item => hasAnyPermission(item.perms)).map((item) => {
                   const isActive = location.pathname === item.path;
                   const Icon = item.icon;
                   return (
@@ -389,7 +389,7 @@ export function Sidebar() {
               <div className="w-px h-8 bg-white/10 mx-2" />
 
               {navGroups.map((group) => {
-                const allowedItems = group.items.filter((item: any) => isAdmin || hasAnyPermission(item.perms));
+                const allowedItems = group.items.filter((item: any) => hasAnyPermission(item.perms));
                 if (allowedItems.length === 0) return null;
 
                 if (group.title === 'الرئيسية') return null; // handled via logo
