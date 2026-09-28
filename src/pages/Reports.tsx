@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { MainLayout } from '@/components/layout';
 import { useTenantBranch } from '@/hooks/useDatabase';
+import { useUserPermissions } from '@/hooks/usePermissions';
 import { useAppStore } from '@/lib/store';
 import { useFormatters } from '@/lib/formatters';
 import {
@@ -96,11 +97,18 @@ export default function Reports() {
   const tenantId = currentTenant?.id || hookTenantId || '';
   const branchId = currentBranch?.id || hookBranchId || '';
   const { currency, number } = useFormatters();
+  const { hasPermission } = useUserPermissions();
+  const canViewCosts = hasPermission('analytics.view_costs');
+  const canExport = hasPermission('analytics.export') || hasPermission('reports.sales') || hasPermission('reports.inventory');
 
   // Primary UI state
   const [activeTab, setActiveTab] = useState<string>('overview');
   const [loading, setLoading] = useState<boolean>(true);
-  const [revealCosts, setRevealCosts] = useState<boolean>(true);
+  const [revealCosts, setRevealCosts] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (!canViewCosts && revealCosts) setRevealCosts(false);
+  }, [canViewCosts, revealCosts]);
 
   // Filters (defaults to 'all' to immediately show entire sales invoice history)
   const [datePreset, setDatePreset] = useState<DatePreset>('all');
@@ -437,6 +445,10 @@ export default function Reports() {
 
   // CSV Exporter
   const handleExportCsv = () => {
+    if (!canExport) {
+      toast.error('ليس لديك صلاحية تصدير التقارير');
+      return;
+    }
     try {
       const headers = ['الصنف', 'القسم', 'الكمية المباعة', 'إجمالي المبيعات', 'التكلفة', 'الربح', 'الهامش'];
       const rows = metrics.topProducts.map((p) => [
@@ -550,7 +562,7 @@ export default function Reports() {
             </Select>
 
             {/* Cost Masking */}
-            <Button
+            {canViewCosts && (<Button
               variant="outline"
               size="sm"
               onClick={() => setRevealCosts(!revealCosts)}
@@ -559,7 +571,7 @@ export default function Reports() {
             >
               {revealCosts ? <EyeOff className="w-3.5 h-3.5 text-muted-foreground" /> : <Eye className="w-3.5 h-3.5 text-primary" />}
               <span className="hidden xl:inline">{revealCosts ? 'حجب التكاليف' : 'إظهار التكاليف'}</span>
-            </Button>
+            </Button>)}
 
             {/* Refresh */}
             <Button
@@ -577,6 +589,8 @@ export default function Reports() {
             <Button
               size="sm"
               onClick={handleExportCsv}
+              disabled={!canExport}
+              title={!canExport ? 'لا تملك صلاحية تصدير التقارير' : 'تصدير التقرير'}
               className="h-8 px-3 text-xs gap-1.5 bg-primary text-primary-foreground hover:bg-primary/90"
             >
               <Download className="w-3.5 h-3.5" />
