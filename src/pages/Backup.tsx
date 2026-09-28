@@ -60,7 +60,7 @@ import type {
 
 export default function BackupPage() {
   const { user } = useAuth();
-  const { hasPermission, isAdmin } = useUserPermissions();
+  const { hasPermission } = useUserPermissions();
   const { tenantId: hookTenantId } = useTenantBranch();
   const tenantId = hookTenantId || 'tenant_main';
   const [branches, setBranches] = useState<any[]>([]);
@@ -73,11 +73,11 @@ export default function BackupPage() {
   }, [tenantId]);
 
   // Permission Checks
-  const canView = isAdmin || hasPermission('backup.view');
-  const canCreate = isAdmin || hasPermission('backup.create');
-  const canDownload = isAdmin || hasPermission('backup.download');
-  const canRestore = isAdmin || hasPermission('backup.restore');
-  const canDelete = isAdmin || hasPermission('backup.delete');
+  const canView = hasPermission('backup.view');
+  const canCreate = hasPermission('backup.create');
+  const canDownload = hasPermission('backup.download');
+  const canRestore = hasPermission('backup.restore');
+  const canDelete = hasPermission('backup.delete');
 
   // Active Tab
   const [activeTab, setActiveTab] = useState<'overview' | 'create' | 'history' | 'restore'>('overview');
