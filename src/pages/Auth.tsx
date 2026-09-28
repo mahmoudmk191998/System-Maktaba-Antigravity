@@ -37,6 +37,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { LibraryAtmosphere } from '@/components/auth/LibraryAtmosphere';
+import { claimGoogleStaffInvitation } from '@/services/security/userProvisioning.service';
 
 export default function Auth() {
   const navigate = useNavigate();
@@ -92,17 +93,34 @@ export default function Auth() {
     setLoading(true);
     try {
       const provider = new GoogleAuthProvider();
+      provider.setCustomParameters({ prompt: 'select_account' });
+
       const result = await signInWithPopup(firebaseAuth, provider);
       const additionalInfo = getAdditionalUserInfo(result);
-      
-      if (additionalInfo?.isNewUser) {
-        await result.user.delete();
+
+      // Existing provisioned user succeeds immediately. A first-time Google
+      // identity must have a pending invitation created from Permissions.
+      const claim = await claimGoogleStaffInvitation(result.user);
+
+      if (!claim.success) {
+        if (additionalInfo?.isNewUser) {
+          await result.user.delete().catch(() => {});
+        }
         await firebaseAuth.signOut();
-        toast.error('الحساب غير مسجل في بطاقات المكتبة. يرجى إنشاء حساب جديد أولاً.');
+
+        toast.error(
+          claim.reason === 'missing_email'
+            ? 'تعذر قراءة البريد الإلكتروني من حساب Google.'
+            : 'هذا البريد غير مدعو للنظام. يجب أن يضيفه المالك أو المدير أولاً من صفحة الصلاحيات.'
+        );
         return;
       }
-      
-      toast.success('تم التحقق من بطاقة القارئ عبر حساب جوجل بنجاح');
+
+      toast.success(
+        claim.existing
+          ? 'تم تسجيل الدخول بحساب Google بنجاح'
+          : 'تم قبول دعوة الموظف وربط حساب Google بالصلاحيات بنجاح'
+      );
       navigate('/');
     } catch (error: any) {
       toast.error(error.message || 'خطأ في تسجيل الدخول بحساب جوجل');
@@ -111,47 +129,11 @@ export default function Auth() {
     }
   };
 
-  const handleGoogleSignup = async () => {
-    setLoading(true);
-    try {
-      const provider = new GoogleAuthProvider();
-      const result = await signInWithPopup(firebaseAuth, provider);
-      const additionalInfo = getAdditionalUserInfo(result);
-      
-      if (!additionalInfo?.isNewUser) {
-        toast.success('بطاقة هذا الحساب موجودة بالفعل. تم تسجيل الدخول.');
-      } else {
-        toast.success('تم إصدار بطاقة حساب جوجل بنجاح في سجلات المكتبة');
-      }
-      navigate('/');
-    } catch (error: any) {
-      toast.error(error.message || 'خطأ في إنشاء الحساب بحساب جوجل');
-    } finally {
-      setLoading(false);
-    }
-  };
+  const handleGoogleSignup = handleGoogleLogin;
 
   const handleSignup = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (signupPassword !== signupConfirmPassword) {
-      toast.error('كلمات المرور غير متطابقة');
-      return;
-    }
-    if (signupPassword.length < 6) {
-      toast.error('كلمة المرور يجب أن تكون 6 أحرف على الأقل');
-      return;
-    }
-    setLoading(true);
-    try {
-      const userCredential = await createUserWithEmailAndPassword(firebaseAuth, signupEmail, signupPassword);
-      await updateProfile(userCredential.user, { displayName: signupName });
-      toast.success('تم تسجيل بطاقة الموظف الجديد في سجلات المكتبة بنجاح!');
-      navigate('/');
-    } catch (error: any) {
-      toast.error(error.message || 'خطأ في إنشاء الحساب');
-    } finally {
-      setLoading(false);
-    }
+    toast.info('إنشاء حسابات الموظفين يتم من صفحة الصلاحيات بواسطة المالك أو المدير لضمان ربط الدور والصلاحيات بشكل صحيح.');
   };
 
   // -------------------------------------------------------------
@@ -485,171 +467,30 @@ export default function Auth() {
                   {/* Tab 2: New Account / Employee Card Enrollment */}
                   {/* --------------------------------------------------- */}
                   <TabsContent value="signup" className="mt-0 space-y-5 outline-none">
-                    {!isCreationUnlocked ? (
-                      <div className="space-y-5 py-2 text-center">
-                        <div className="w-14 h-14 bg-red-950/40 rounded-2xl flex items-center justify-center mx-auto border-2 border-red-500/30 shadow-lg shadow-red-900/20">
-                          <ShieldAlert className="w-7 h-7 text-red-400" />
-                        </div>
-                        <div className="space-y-1.5">
-                          <h3 className="text-lg font-black text-amber-100">سجل الموظفين مقفل</h3>
-                          <p className="text-xs text-amber-200/70 max-w-xs mx-auto leading-relaxed">
-                            يتطلب إصدار بطاقة مستخدم جديدة إدخال رمز تصريح أمين المكتبة / مسؤول النظام.
-                          </p>
-                        </div>
-                        
-                        <div className="space-y-2 text-right">
-                          <Label className="text-amber-300/80 text-xs font-semibold flex items-center justify-between">
-                            <span>رمز تصريح المسؤول (Admin PIN)</span>
-                            <span className="text-[10px] text-amber-400/40 font-mono">MASTER PIN</span>
-                          </Label>
-                          <div className="relative group">
-                            <Lock className="absolute right-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-amber-500/60 group-focus-within:text-amber-400 transition-colors" />
-                            <Input
-                              type="password"
-                              placeholder="أدخل رمز المسؤول واضغط Enter..."
-                              value={signupAuthPassword}
-                              onChange={(e) => setSignupAuthPassword(e.target.value)}
-                              className="pr-11 h-11 bg-black/50 border border-amber-600/30 text-amber-100 placeholder:text-amber-200/25 focus-visible:ring-1 focus-visible:ring-amber-500/60 rounded-xl text-center tracking-widest text-base font-mono font-bold"
-                              dir="ltr"
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter') {
-                                  e.preventDefault();
-                                  if (signupAuthPassword === '112233445566') {
-                                    setIsCreationUnlocked(true);
-                                    setSignupAuthPassword('');
-                                    toast.success('تم فك قفل سجل الموظفين بنجاح');
-                                  } else {
-                                    toast.error('رمز المسؤول غير صحيح (المطلوب: 112233445566)');
-                                  }
-                                }
-                              }}
-                            />
-                          </div>
-                        </div>
-
-                        <Button 
-                          type="button"
-                          className="w-full h-11 font-bold bg-amber-500/10 hover:bg-amber-500/20 text-amber-200 border border-amber-500/30 rounded-xl text-xs transition-all" 
-                          onClick={() => {
-                            if (signupAuthPassword === '112233445566') {
-                              setIsCreationUnlocked(true);
-                              setSignupAuthPassword('');
-                              toast.success('تم فك قفل سجل الموظفين بنجاح');
-                            } else {
-                              toast.error('رمز المسؤول غير صحيح (المطلوب: 112233445566)');
-                            }
-                          }}
-                        >
-                          فك قفل السجل وبدء التسجيل
-                        </Button>
+                    <div className="space-y-5 py-5 text-center">
+                      <div className="w-16 h-16 bg-amber-500/10 rounded-2xl flex items-center justify-center mx-auto border border-amber-500/30">
+                        <ShieldAlert className="w-7 h-7 text-amber-400" />
                       </div>
-                    ) : (
-                      <motion.form 
-                        initial={{ opacity: 0, y: 15 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        className="space-y-4"
-                        onSubmit={handleSignup}
+                      <div className="space-y-2">
+                        <h3 className="text-lg font-black text-amber-100">إنشاء الحسابات من الإدارة فقط</h3>
+                        <p className="text-xs text-amber-200/70 max-w-sm mx-auto leading-relaxed">
+                          لمنع الحسابات غير المربوطة بالصلاحيات، يقوم المالك أو المدير بإنشاء الموظف من صفحة
+                          «الصلاحيات». إذا تمت دعوتك عبر Gmail اضغط الزر التالي واختر نفس حساب Google المدعو.
+                        </p>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="w-full h-11 bg-black/30 border border-amber-600/30 hover:bg-amber-500/10 text-amber-200 rounded-xl font-bold gap-2 text-xs"
+                        onClick={handleGoogleSignup}
+                        disabled={loading}
                       >
-                        <div className="space-y-1">
-                          <h3 className="text-lg font-black text-amber-100 flex items-center gap-2">
-                            <Feather className="w-4 h-4 text-amber-400" />
-                            <span>إصدار بطاقة موظف جديد</span>
-                          </h3>
-                          <p className="text-xs text-amber-200/70">سجل بيانات الموظف الجديد للبدء بالعمل في المكتبة</p>
-                        </div>
-
-                        {/* Full Name */}
-                        <div className="space-y-1.5">
-                          <Label className="text-amber-300/80 text-xs font-semibold">اسم الموظف / القارئ الكامل</Label>
-                          <div className="relative group">
-                            <User className="absolute right-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-amber-500/60 group-focus-within:text-amber-400 transition-colors" />
-                            <Input
-                              placeholder="الاسم الثلاثي"
-                              value={signupName}
-                              onChange={(e) => setSignupName(e.target.value)}
-                              className="pr-11 h-11 bg-black/50 border border-amber-600/30 text-amber-100 placeholder:text-amber-200/25 focus-visible:ring-1 focus-visible:ring-amber-500/60 rounded-xl text-sm"
-                              required
-                            />
-                          </div>
-                        </div>
-
-                        {/* Email */}
-                        <div className="space-y-1.5">
-                          <Label className="text-amber-300/80 text-xs font-semibold">البريد الإلكتروني المكتبي</Label>
-                          <div className="relative group">
-                            <Mail className="absolute right-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-amber-500/60 group-focus-within:text-amber-400 transition-colors" />
-                            <Input
-                              type="email"
-                              placeholder="employee@mksystem.com"
-                              value={signupEmail}
-                              onChange={(e) => setSignupEmail(e.target.value)}
-                              className="pr-11 h-11 bg-black/50 border border-amber-600/30 text-amber-100 placeholder:text-amber-200/25 focus-visible:ring-1 focus-visible:ring-amber-500/60 rounded-xl text-sm"
-                              required
-                              dir="ltr"
-                            />
-                          </div>
-                        </div>
-
-                        {/* Password & Confirm */}
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                          <div className="space-y-1.5">
-                            <Label className="text-amber-300/80 text-xs font-semibold">كلمة المرور</Label>
-                            <Input
-                              type="password"
-                              placeholder="6+ حروف"
-                              value={signupPassword}
-                              onChange={(e) => setSignupPassword(e.target.value)}
-                              className="h-11 text-center bg-black/50 border border-amber-600/30 text-amber-100 placeholder:text-amber-200/25 focus-visible:ring-1 focus-visible:ring-amber-500/60 rounded-xl text-sm font-bold"
-                              required
-                              dir="ltr"
-                            />
-                          </div>
-                          <div className="space-y-1.5">
-                            <Label className="text-amber-300/80 text-xs font-semibold">تأكيد المرور</Label>
-                            <Input
-                              type="password"
-                              placeholder="تطابق"
-                              value={signupConfirmPassword}
-                              onChange={(e) => setSignupConfirmPassword(e.target.value)}
-                              className="h-11 text-center bg-black/50 border border-amber-600/30 text-amber-100 placeholder:text-amber-200/25 focus-visible:ring-1 focus-visible:ring-amber-500/60 rounded-xl text-sm font-bold"
-                              required
-                              dir="ltr"
-                            />
-                          </div>
-                        </div>
-
-                        {/* Submit Signup */}
-                        <Button 
-                          type="submit" 
-                          className="w-full h-11 font-bold text-sm mt-3 bg-gradient-to-l from-[#b45309] to-[#d97706] hover:from-[#92400e] hover:to-[#b45309] text-amber-950 shadow-[0_6px_20px_rgba(217,119,6,0.25)] transition-all rounded-xl border border-amber-400/40" 
-                          disabled={loading}
-                        >
-                          {loading ? 'جاري إصدار البطاقة...' : 'إصدار بطاقة الموظف في السجلات'}
-                        </Button>
-
-                        {/* Divider */}
-                        <div className="relative my-3 flex items-center justify-center">
-                          <div className="absolute inset-x-0 h-px bg-amber-800/30" />
-                          <span className="relative bg-[#160e08] px-3 text-amber-300/50 text-[11px] font-bold tracking-wider rounded-full border border-amber-700/30">
-                            أو
-                          </span>
-                        </div>
-
-                        {/* Google Signup */}
-                        <Button 
-                          type="button" 
-                          variant="outline" 
-                          className="w-full h-11 bg-black/30 border border-amber-600/30 hover:bg-amber-500/10 text-amber-200 transition-all rounded-xl font-bold gap-2 text-xs shadow-sm" 
-                          onClick={handleGoogleSignup} 
-                          disabled={loading}
-                        >
-                          <svg className="h-4 w-4 text-current" aria-hidden="true" focusable="false" data-prefix="fab" data-icon="google" role="img" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 488 512">
-                            <path fill="currentColor" d="M488 261.8C488 403.3 391.1 504 248 504 110.8 504 0 393.2 0 256S110.8 8 248 8c66.8 0 123 24.5 166.3 64.9l-67.5 64.9C258.5 52.6 94.3 116.6 94.3 256c0 86.5 69.1 156.6 153.7 156.6 98.2 0 135-70.4 140.8-106.9H248v-85.3h236.1c2.3 12.7 3.9 24.9 3.9 41.4z" />
-                          </svg>
-                          <span>إصدار سريع عبر Google</span>
-                        </Button>
-                      </motion.form>
-                    )}
+                        <svg className="h-4 w-4" aria-hidden="true" viewBox="0 0 488 512">
+                          <path fill="currentColor" d="M488 261.8C488 403.3 391.1 504 248 504 110.8 504 0 393.2 0 256S110.8 8 248 8c66.8 0 123 24.5 166.3 64.9l-67.5 64.9C258.5 52.6 94.3 116.6 94.3 256c0 86.5 69.1 156.6 153.7 156.6 98.2 0 135-70.4 140.8-106.9H248v-85.3h236.1c2.3 12.7 3.9 24.9 3.9 41.4z" />
+                        </svg>
+                        تفعيل دعوة الموظف عبر Google
+                      </Button>
+                    </div>
                   </TabsContent>
                 </CardContent>
               </Tabs>
