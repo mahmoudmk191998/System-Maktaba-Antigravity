@@ -34,9 +34,10 @@ export function normalizeInviteEmail(email: string): string {
 }
 
 export function inviteDocumentId(email: string): string {
-  // Firestore document IDs cannot contain '/'. Email itself is otherwise safe,
-  // but encodeURIComponent also keeps the ID stable and URL-safe.
-  return encodeURIComponent(normalizeInviteEmail(email));
+  // Valid email addresses do not contain '/', so the normalized email can be
+  // used directly. Keeping the document ID equal to Firebase Auth's email lets
+  // Firestore security rules verify invitation ownership without a query.
+  return normalizeInviteEmail(email).replaceAll('/', '_');
 }
 
 export function permissionDocumentId(userId: string, permission: string): string {
