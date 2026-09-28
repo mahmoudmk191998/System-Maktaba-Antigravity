@@ -87,7 +87,7 @@ export default function POSPage() {
   const { currentTenant, currentBranch, settings } = useAppStore();
   const { currency, number } = useFormatters();
   const { user } = useAuth();
-  const { hasPermission, isAdmin } = useUserPermissions();
+  const { hasPermission } = useUserPermissions();
 
   const tenantId = currentTenant?.id || hookTenantId || '';
   const branchId = currentBranch?.id || hookBranchId || '';
@@ -95,11 +95,21 @@ export default function POSPage() {
   const cashierId = user?.uid || '';
   const cashierName = user?.displayName || user?.email || 'كاشير';
 
-  // Permissions
-  const canWholesale = isAdmin || hasPermission('sales.wholesale');
-  const canOverridePrice = isAdmin || hasPermission('sales.override_price') || hasPermission('pos.override_price');
-  const canDiscount = isAdmin || hasPermission('sales.discount') || hasPermission('pos.apply_discount');
-  const canManageRegister = isAdmin || hasPermission('cash_register.open') || hasPermission('pos.open_drawer');
+  // Granular permissions — no role-based bypasses.
+  const canSell = hasPermission('sales.create') || hasPermission('pos.create_order');
+  const canWholesale = hasPermission('sales.wholesale');
+  const canOverridePrice =
+    hasPermission('sales.override_price') || hasPermission('pos.override_price');
+  const canDiscount =
+    hasPermission('sales.discount') || hasPermission('pos.apply_discount');
+  const canOpenRegister =
+    hasPermission('cash_register.open') || hasPermission('pos.open_drawer');
+  const canCloseRegister =
+    hasPermission('cash_register.close') || hasPermission('pos.close_session');
+  const canOpenDrawer = hasPermission('pos.open_drawer');
+  const canViewReturns = hasPermission('returns.view');
+  const canBelowMinimum = hasPermission('sales.sell_below_minimum');
+  const canHoldSale = hasPermission('pos.edit_order') || canSell;
 
   // Register Shift Hook
   const {
@@ -289,7 +299,7 @@ export default function POSPage() {
   };
 
   const handleOpenCashDrawer = () => {
-    if (!canManageRegister) {
+    if (!canOpenDrawer) {
       toast.error('ليس لديك صلاحية فتح درج الكاشير');
       return;
     }
@@ -371,7 +381,7 @@ export default function POSPage() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [cartItems, settings.openDrawerPassword, canManageRegister]);
+  }, [cartItems, settings.openDrawerPassword, canOpenDrawer]);
 
   const handleScanBarcode = async (barcode: string) => {
     const raw = (barcode || '').trim();
@@ -550,11 +560,19 @@ export default function POSPage() {
   };
 
   const handleOpenPayment = () => {
+    if (!canSell) {
+      toast.error('ليس لديك صلاحية إصدار فاتورة بيع');
+      return;
+    }
     if (cartItems.length === 0) {
       toast.error('سلة المشتريات فارغة');
       return;
     }
     if (!isShiftOpen) {
+      if (!canOpenRegister) {
+        toast.error('يجب فتح وردية أولاً، ولا تملك صلاحية فتح الوردية');
+        return;
+      }
       toast.error('يجب فتح وردية الكاشير أولاً لبدء البيع وإصدار الفواتير');
       setRegisterModalMode('open');
       setRegisterModalOpen(true);
@@ -567,6 +585,11 @@ export default function POSPage() {
     payments: PaymentEntry[],
     clientCheckoutId: string
   ): Promise<Sale | null> => {
+    if (!canSell) {
+      toast.error('ليس لديك صلاحية إنشاء عملية بيع');
+      return null;
+    }
+
     const saleResult = await completeSaleTransaction({
       tenantId,
       branchId,
@@ -606,7 +629,7 @@ export default function POSPage() {
       taxIncluded: totals.taxIncluded,
       serviceChargeIncluded: totals.serviceChargeIncluded,
       clientCheckoutId,
-      allowBelowMinimum: isAdmin,
+      allowBelowMinimum: canBelowMinimum,
     });
 
     if (saleResult.success && saleResult.sale) {
@@ -623,6 +646,10 @@ export default function POSPage() {
   };
 
   const handleHoldCart = async () => {
+    if (!canHoldSale) {
+      toast.error('ليس لديك صلاحية تعديل أو تعليق عملية البيع');
+      return;
+    }
     if (cartItems.length === 0) {
       toast.error('لا يمكن تعليق سلة فارغة');
       return;
@@ -767,9 +794,19 @@ export default function POSPage() {
                   : "bg-destructive text-destructive-foreground hover:bg-destructive/90"
               )}
               onClick={() => {
+                const allowed = isShiftOpen ? canCloseRegister : canOpenRegister;
+                if (!allowed) {
+                  toast.error(
+                    isShiftOpen
+                      ? 'ليس لديك صلاحية إغلاق الوردية'
+                      : 'ليس لديك صلاحية فتح الوردية'
+                  );
+                  return;
+                }
                 setRegisterModalMode(isShiftOpen ? 'close' : 'open');
                 setRegisterModalOpen(true);
               }}
+              disabled={isShiftOpen ? !canCloseRegister : !canOpenRegister}
             >
               {isShiftOpen ? (
                 <>
@@ -804,7 +841,7 @@ export default function POSPage() {
             )}
 
             {/* Held Carts Button with DYNAMIC COUNTER BADGE */}
-            <Button
+            {canHoldSale && <Button
               size="sm"
               variant={heldSalesCount > 0 ? "default" : "outline"}
               className={cn(
@@ -823,10 +860,10 @@ export default function POSPage() {
                   {heldSalesCount}
                 </span>
               )}
-            </Button>
+            </Button>}
 
             {/* Returns & Exchanges Quick Button */}
-            <Button
+            {canViewReturns && <Button
               size="sm"
               variant="outline"
               className="gap-1.5 text-xs h-9 px-3 font-bold rounded-xl border-amber-500/30 text-amber-700 hover:bg-amber-500/10"
@@ -835,7 +872,7 @@ export default function POSPage() {
             >
               <RotateCcw className="w-3.5 h-3.5" />
               <span className="hidden sm:inline">المرتجعات</span>
-            </Button>
+            </Button>}
 
             {/* Mobile Camera Barcode/QR Scanner Button */}
             <Button
@@ -850,7 +887,7 @@ export default function POSPage() {
             </Button>
 
             {/* Manual Cash Drawer Open Button */}
-            {canManageRegister && (
+            {canOpenDrawer && (
               <Button
                 size="sm"
                 variant="outline"
@@ -1486,7 +1523,8 @@ export default function POSPage() {
                 <Button
                   className="col-span-3 h-12 text-base sm:text-lg font-black gap-2 bg-emerald-600 hover:bg-emerald-700 text-white shadow-lg shadow-emerald-600/25 rounded-xl transition-all"
                   onClick={handleOpenPayment}
-                  disabled={cartItems.length === 0}
+                  disabled={cartItems.length === 0 || !canSell}
+                  title={!canSell ? 'لا تملك صلاحية إصدار فاتورة بيع' : 'دفع وإنهاء الفاتورة'}
                 >
                   <CheckCircle2 className="w-5 h-5 shrink-0" />
                   <span>دفع وإنهاء الفاتورة (F8)</span>
@@ -1792,6 +1830,10 @@ export default function POSPage() {
         mode={registerModalMode}
         activeShift={activeShift}
         onConfirmOpen={async (openCash, notes) => {
+          if (!canOpenRegister) {
+            toast.error('ليس لديك صلاحية فتح الوردية');
+            return false;
+          }
           const res = await openShift(openCash, notes);
           if (res.success) {
             toast.success('تم فتح الوردية بنجاح');
@@ -1801,6 +1843,10 @@ export default function POSPage() {
           return false;
         }}
         onConfirmClose={async (actualCash, notes) => {
+          if (!canCloseRegister) {
+            toast.error('ليس لديك صلاحية إغلاق الوردية');
+            return false;
+          }
           const res = await closeShift(actualCash, notes);
           if (res.success) {
             toast.success('تم إغلاق الوردية وجرد الدرج بنجاح');
