@@ -97,7 +97,7 @@ export function MainLayout({ children, title, subtitle, actions, showBack, onBac
   const { signOut, user } = useAuth();
   const { profile } = useProfile();
   const { theme, toggleTheme } = useTheme();
-  const { isStandalone, installOrShowHelp } = usePWAInstall();
+  const { isStandalone, canNativeInstall, installNative } = usePWAInstall();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -117,7 +117,7 @@ export function MainLayout({ children, title, subtitle, actions, showBack, onBac
   };
 
   const handleInstallClick = async () => {
-    await installOrShowHelp();
+    await installNative();
   };
 
   const handleSignOut = async () => {
@@ -225,16 +225,16 @@ export function MainLayout({ children, title, subtitle, actions, showBack, onBac
                 </div>
               </div>
 
-              {/* Desktop install action stays visible until the app is actually installed.
-                  Native prompt is used when available; otherwise the global PWA helper
-                  opens browser-specific installation instructions. */}
-              {!isStandalone && (
+              {/* Native-only install action.
+                  The button exists only while Chrome/Edge exposes beforeinstallprompt,
+                  and clicking it opens the browser's own install UI immediately. */}
+              {!isStandalone && canNativeInstall && (
                 <Button
                   onClick={handleInstallClick}
                   variant="default"
                   size="sm"
                   className="hidden md:flex gap-2 rounded-full shadow-lg shadow-primary/20 hover:-translate-y-0.5 transition-all text-xs font-bold"
-                  title="تثبيت النظام على هذا الجهاز"
+                  title="فتح نافذة التثبيت الأصلية"
                 >
                   <Download className="w-3.5 h-3.5" />
                   تثبيت النظام
