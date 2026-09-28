@@ -34,6 +34,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
+import { useUserPermissions } from '@/hooks/usePermissions';
 import { 
   BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, 
   Tooltip as RechartsTooltip, ResponsiveContainer, Legend
@@ -45,6 +46,14 @@ const CATEGORIES: ExpenseCategory[] = ['رواتب', 'مشتريات', 'صيان
 
 export default function Expenses() {
   const { tenantId, branchId } = useTenantBranch();
+  const { hasPermission } = useUserPermissions();
+  const canManageExpenses = hasPermission('expenses.manage');
+  const canDeleteExpenses = hasPermission('expenses.delete');
+  const canViewPayroll = hasPermission('payroll.view');
+  const canPayPayroll = hasPermission('payroll.pay');
+  const canVoidPayroll = hasPermission('payroll.void');
+  const canManageAdvances = hasPermission('advances.manage');
+  const canExportReports = hasPermission('reports.view') || hasPermission('analytics.export');
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [loading, setLoading] = useState(true);
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
@@ -118,6 +127,10 @@ export default function Expenses() {
   }, [tenantId, branchId]); // Re-fetch on mount or tenant/branch change, filters apply in-memory
 
   const handleDelete = async (id: string) => {
+    if (!canDeleteExpenses) {
+      toast({ title: 'غير مصرح', description: 'ليس لديك صلاحية حذف المصروفات', variant: 'destructive' });
+      return;
+    }
     if (!window.confirm('هل أنت متأكد من حذف هذا المصروف؟')) return;
     try {
       await deleteExpense(id);
@@ -130,6 +143,10 @@ export default function Expenses() {
   };
 
   const handleBulkDelete = async () => {
+    if (!canDeleteExpenses) {
+      toast({ title: 'غير مصرح', description: 'ليس لديك صلاحية حذف المصروفات', variant: 'destructive' });
+      return;
+    }
     if (!window.confirm(`هل أنت متأكد من حذف ${selectedExpenses.length} مصروف؟`)) return;
     try {
       for (const id of selectedExpenses) {
@@ -145,6 +162,10 @@ export default function Expenses() {
 
   const handleUpdate = async () => {
     if (!editingExpense) return;
+    if (!canManageExpenses) {
+      toast({ title: 'غير مصرح', description: 'ليس لديك صلاحية تعديل المصروفات', variant: 'destructive' });
+      return;
+    }
     setIsSubmitting(true);
     try {
       await updateExpense(editingExpense.id, {
@@ -289,6 +310,10 @@ export default function Expenses() {
   }, [activeExpenses]);
 
   const handleExportCSV = () => {
+    if (!canExportReports) {
+      toast({ title: 'غير مصرح', description: 'ليس لديك صلاحية تصدير التقارير', variant: 'destructive' });
+      return;
+    }
     const headers = ['التاريخ', 'التصنيف', 'البيان', 'المبلغ'].join(',');
     const rows = filteredAndCategorizedExpenses.map(e => 
       `${e.date},${e.category},"${e.description.replace(/"/g, '""')}",${e.amount}`
@@ -346,20 +371,24 @@ export default function Expenses() {
             </div>
           )}
 
-          {selectedExpenses.length > 0 && (
+          {canDeleteExpenses && selectedExpenses.length > 0 && (
             <Button onClick={handleBulkDelete} variant="destructive" className="gap-2 shrink-0 hidden sm:flex">
               <Trash2 className="w-4 h-4" />
               حذف ({selectedExpenses.length})
             </Button>
           )}
+          {canExportReports && (
           <Button variant="outline" className="hidden sm:flex gap-2" onClick={handleExportCSV}>
             <Download className="w-4 h-4" />
             تصدير
           </Button>
+          )}
+          {canManageExpenses && (
           <Button onClick={() => setIsAddDialogOpen(true)} className="gap-2">
             <Plus className="w-4 h-4" />
             إضافة مصروف
           </Button>
+          )}
         </div>
       }
     >
@@ -375,6 +404,7 @@ export default function Expenses() {
           >
             كافة المصروفات التشغيلية
           </Button>
+          {canViewPayroll && (
           <Button
             variant={categoryFilter === 'رواتب' ? 'default' : 'outline'}
             size="sm"
@@ -384,6 +414,7 @@ export default function Expenses() {
             <DollarSign className="w-3.5 h-3.5" />
             رواتب ومسير الأجور
           </Button>
+          )}
         </div>
 
         {categoryFilter === 'رواتب' ? (
@@ -397,18 +428,26 @@ export default function Expenses() {
               currentPeriod={payrollPeriod}
               onPeriodChange={setPayrollPeriod}
               onDisbursePayment={async (data) => {
+                if (!canPayPayroll) {
+                  toast({ title: 'غير مصرح', description: 'ليس لديك صلاحية صرف الرواتب', variant: 'destructive' });
+                  return false;
+                }
                 const ok = await disburseSalaryPayment(data);
                 if (ok) fetchExpenses();
                 return ok;
               }}
               onVoidPayment={async (id, reason) => {
+                if (!canVoidPayroll) {
+                  toast({ title: 'غير مصرح', description: 'ليس لديك صلاحية إلغاء سندات صرف الرواتب', variant: 'destructive' });
+                  return false;
+                }
                 const ok = await voidSalaryPayment(id, reason);
                 if (ok) fetchExpenses();
                 return ok;
               }}
-              onCreateAdvance={createAdvance}
-              onDeleteAdvance={deleteAdvance}
-              onCancelAdvance={cancelAdvance}
+              onCreateAdvance={canManageAdvances ? createAdvance : async () => false}
+              onDeleteAdvance={canManageAdvances ? deleteAdvance : async () => false}
+              onCancelAdvance={canManageAdvances ? cancelAdvance : async () => false}
               isSubmittingPayment={isSubmittingPayment}
             />
 
@@ -619,7 +658,7 @@ export default function Expenses() {
                 <CardDescription>عرض تفصيلي لجميع المصروفات ضمن الفترة المحددة</CardDescription>
               </div>
               <div className="flex w-full sm:w-auto gap-2">
-                {selectedExpenses.length > 0 && (
+                {canDeleteExpenses && selectedExpenses.length > 0 && (
                   <Button onClick={handleBulkDelete} variant="destructive" className="gap-2 shrink-0 sm:hidden flex-1">
                     <Trash2 className="w-4 h-4" />
                     حذف المحددة
@@ -698,14 +737,16 @@ export default function Expenses() {
                           <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-primary" onClick={() => setViewingExpense(expense)}>
                             <Eye className="w-3.5 h-3.5" />
                           </Button>
-                          {!isVoided && (
+                          {!isVoided && canManageExpenses && (
                             <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-primary" onClick={() => setEditingExpense(expense)}>
                               <Edit className="w-3.5 h-3.5" />
                             </Button>
                           )}
-                          <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive" onClick={() => handleDelete(expense.id)}>
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </Button>
+                          {canDeleteExpenses && (
+                            <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive" onClick={() => handleDelete(expense.id)}>
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </Button>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -839,11 +880,11 @@ export default function Expenses() {
         </Card>
 
         {/* Existing Add/Edit Dialogs */}
-        <AddExpenseDialog 
+        {canManageExpenses && <AddExpenseDialog 
           open={isAddDialogOpen} 
           onOpenChange={setIsAddDialogOpen} 
           onSuccess={fetchExpenses} 
-        />
+        />}
 
         <Dialog open={!!editingExpense} onOpenChange={(open) => !open && setEditingExpense(null)}>
           <DialogContent className="sm:max-w-[425px] max-h-[90dvh] overflow-y-auto">
