@@ -6,9 +6,8 @@ import {
   signInWithEmailAndPassword, 
   createUserWithEmailAndPassword, 
   updateProfile, 
-  GoogleAuthProvider, 
-  signInWithPopup, 
-  getAdditionalUserInfo 
+  GoogleAuthProvider,
+  signInWithPopup
 } from 'firebase/auth';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -37,6 +36,10 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { LibraryAtmosphere } from '@/components/auth/LibraryAtmosphere';
+import {
+  claimGoogleEmployeeInvite,
+  hasUserProfile,
+} from '@/services/security/userAccess.service';
 
 export default function Auth() {
   const navigate = useNavigate();
@@ -88,48 +91,67 @@ export default function Auth() {
     }
   };
 
-  const handleGoogleLogin = async () => {
+  const handleGoogleAccess = async () => {
     setLoading(true);
     try {
       const provider = new GoogleAuthProvider();
+      provider.setCustomParameters({ prompt: 'select_account' });
+
       const result = await signInWithPopup(firebaseAuth, provider);
-      const additionalInfo = getAdditionalUserInfo(result);
-      
-      if (additionalInfo?.isNewUser) {
-        await result.user.delete();
-        await firebaseAuth.signOut();
-        toast.error('الحساب غير مسجل في بطاقات المكتبة. يرجى إنشاء حساب جديد أولاً.');
+
+      // Existing activated employee/owner: normal login.
+      if (await hasUserProfile(result.user.uid)) {
+        toast.success('تم تسجيل الدخول بحساب Google بنجاح');
+        navigate('/');
         return;
       }
-      
-      toast.success('تم التحقق من بطاقة القارئ عبر حساب جوجل بنجاح');
-      navigate('/');
+
+      // First Google login for a Gmail address invited from Permissions.
+      const claim = await claimGoogleEmployeeInvite(result.user);
+      if (claim.claimed) {
+        toast.success('تم تفعيل دعوة الموظف وربط Gmail بالصلاحيات بنجاح');
+        navigate('/');
+        return;
+      }
+
+      // No valid invite means this Firebase identity must not enter the ERP.
+      // Delete only identities created by this very popup attempt; never delete
+      // a pre-existing Google identity just because its profile is missing.
+      const creationTime = result.user.metadata.creationTime
+        ? Date.parse(result.user.metadata.creationTime)
+        : 0;
+      const lastSignInTime = result.user.metadata.lastSignInTime
+        ? Date.parse(result.user.metadata.lastSignInTime)
+        : 0;
+      const wasJustCreated =
+        creationTime > 0 &&
+        lastSignInTime > 0 &&
+        Math.abs(lastSignInTime - creationTime) < 5000;
+
+      if (wasJustCreated) {
+        try {
+          await result.user.delete();
+        } catch (cleanupError) {
+          console.warn('Unable to remove uninvited Google Auth identity:', cleanupError);
+        }
+      }
+
+      await firebaseAuth.signOut();
+
+      if (claim.reason === 'expired') {
+        toast.error('دعوة Google منتهية أو غير صالحة. اطلب من المدير إنشاء دعوة جديدة.');
+      } else {
+        toast.error('هذا Gmail غير مضاف من صفحة الصلاحيات. اطلب من المدير دعوتك أولاً.');
+      }
     } catch (error: any) {
-      toast.error(error.message || 'خطأ في تسجيل الدخول بحساب جوجل');
+      toast.error(error.message || 'خطأ في تسجيل الدخول بحساب Google');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleGoogleSignup = async () => {
-    setLoading(true);
-    try {
-      const provider = new GoogleAuthProvider();
-      const result = await signInWithPopup(firebaseAuth, provider);
-      const additionalInfo = getAdditionalUserInfo(result);
-      
-      if (!additionalInfo?.isNewUser) {
-        toast.success('بطاقة هذا الحساب موجودة بالفعل. تم تسجيل الدخول.');
-      } else {
-        toast.success('تم إصدار بطاقة حساب جوجل بنجاح في سجلات المكتبة');
-      }
-      navigate('/');
-    } catch (error: any) {
-      toast.error(error.message || 'خطأ في إنشاء الحساب بحساب جوجل');
-    } finally {
-      setLoading(false);
-    }
-  };
+  const handleGoogleLogin = handleGoogleAccess;
+  const handleGoogleSignup = handleGoogleAccess;
 
   const handleSignup = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -646,7 +668,7 @@ export default function Auth() {
                           <svg className="h-4 w-4 text-current" aria-hidden="true" focusable="false" data-prefix="fab" data-icon="google" role="img" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 488 512">
                             <path fill="currentColor" d="M488 261.8C488 403.3 391.1 504 248 504 110.8 504 0 393.2 0 256S110.8 8 248 8c66.8 0 123 24.5 166.3 64.9l-67.5 64.9C258.5 52.6 94.3 116.6 94.3 256c0 86.5 69.1 156.6 153.7 156.6 98.2 0 135-70.4 140.8-106.9H248v-85.3h236.1c2.3 12.7 3.9 24.9 3.9 41.4z" />
                           </svg>
-                          <span>إصدار سريع عبر Google</span>
+                          <span>تفعيل دعوة الموظف عبر Google</span>
                         </Button>
                       </motion.form>
                     )}
