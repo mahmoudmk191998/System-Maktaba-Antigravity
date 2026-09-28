@@ -63,13 +63,14 @@ export default function ProductsPage() {
   const currentTenant = useAppStore((state) => state.currentTenant);
   const currentBranch = useAppStore((state) => state.currentBranch);
   const currentUser = useAppStore((state) => state.currentUser);
-  const { hasPermission, isAdmin } = useUserPermissions();
+  const { hasPermission } = useUserPermissions();
 
-  const canCreate = isAdmin || hasPermission('products.create');
-  const canEdit = isAdmin || hasPermission('products.edit');
-  const canArchive = isAdmin || hasPermission('products.archive') || hasPermission('products.delete');
-  const canManageCategories = isAdmin || hasPermission('categories.manage');
-  const canManageBrands = isAdmin || hasPermission('brands.manage');
+  const canCreate = hasPermission('products.create');
+  const canEdit = hasPermission('products.edit');
+  const canArchive = hasPermission('products.archive');
+  const canManageCategories = hasPermission('categories.manage');
+  const canManageBrands = hasPermission('brands.manage');
+  const canSetOpeningBalance = hasPermission('inventory.opening_balance');
 
   const { categories } = useCategories();
   const { brands } = useBrands();
@@ -151,7 +152,17 @@ export default function ProductsPage() {
     const { __openingStock, ...productPayload } = payload || {};
 
     if (editingProduct) {
+      if (!canEdit) return { success: false, error: 'ليس لديك صلاحية تعديل الأصناف' };
       return updateProduct(editingProduct.id, productPayload);
+    }
+
+    if (!canCreate) {
+      return { success: false, error: 'ليس لديك صلاحية إضافة أصناف جديدة' };
+    }
+
+    if (__openingStock?.quantity > 0 && !canSetOpeningBalance) {
+      toast.error('ليس لديك صلاحية تسجيل رصيد افتتاحي للمخزون');
+      return { success: false, error: 'Missing inventory.opening_balance permission' };
     }
 
     const createResult = await createProduct(productPayload);
@@ -201,6 +212,10 @@ export default function ProductsPage() {
   };
 
   const handleArchive = async (id: string) => {
+    if (!canArchive) {
+      toast.error('ليس لديك صلاحية أرشفة الأصناف');
+      return;
+    }
     if (!confirm('هل تريد أرشفة هذا الصنف؟ لن يظهر في نقطة البيع لاحقاً.')) return;
     const res = await archiveProduct(id);
     if (res.success) {
@@ -211,6 +226,10 @@ export default function ProductsPage() {
   };
 
   const handleRestore = async (id: string) => {
+    if (!canArchive) {
+      toast.error('ليس لديك صلاحية استعادة الأصناف المؤرشفة');
+      return;
+    }
     const res = await restoreProduct(id);
     if (res.success) {
       toast.success('تمت استعادة الصنف بنجاح');
