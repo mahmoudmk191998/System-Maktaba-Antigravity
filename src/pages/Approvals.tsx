@@ -61,7 +61,9 @@ const WORKFLOW_LABELS: Record<ApprovalWorkflowType, string> = {
 export default function Approvals() {
   const { tenantId, branchId } = useTenantBranch();
   const { user } = useAuth();
-  const { userRole, isOwner, isAdmin } = useUserPermissions();
+  const { roles, hasPermission } = useUserPermissions();
+  const canActOnApprovals = hasPermission('approvals.action');
+  const actorRole = roles[0] || 'manager';
   const { currency } = useFormatters();
 
   const [activeTab, setActiveTab] = useState<'pending_for_me' | 'my_requests' | 'approved' | 'rejected'>('pending_for_me');
@@ -131,6 +133,13 @@ export default function Approvals() {
 
   const handleAction = async (action: 'approve' | 'reject' | 'cancel') => {
     if (!tenantId || !selectedRequest || !user) return;
+
+    const isRequesterCancellation =
+      action === 'cancel' && selectedRequest.requestedBy === user.uid;
+    if (!isRequesterCancellation && !canActOnApprovals) {
+      toast.error('ليس لديك صلاحية اعتماد أو رفض الطلبات');
+      return;
+    }
     setIsProcessing(true);
     try {
       await processApprovalAction({
@@ -138,7 +147,7 @@ export default function Approvals() {
         requestId: selectedRequest.id,
         actorId: user.uid,
         actorName: user.displayName || user.email || 'مسؤول',
-        actorRole: userRole || (isOwner ? 'owner' : isAdmin ? 'admin' : 'manager'),
+        actorRole,
         action,
         comment: actionComment,
       });
@@ -427,7 +436,10 @@ export default function Approvals() {
                       variant="outline"
                       size="sm"
                       onClick={() => handleAction('cancel')}
-                      disabled={isProcessing}
+                      disabled={
+                        isProcessing ||
+                        (selectedRequest.requestedBy !== user?.uid && !canActOnApprovals)
+                      }
                       className="text-xs"
                     >
                       إلغاء الطلب
@@ -436,7 +448,7 @@ export default function Approvals() {
                       variant="destructive"
                       size="sm"
                       onClick={() => handleAction('reject')}
-                      disabled={isProcessing}
+                      disabled={isProcessing || !canActOnApprovals}
                       className="text-xs"
                     >
                       رفض الطلب
@@ -444,7 +456,11 @@ export default function Approvals() {
                     <Button
                       size="sm"
                       onClick={() => handleAction('approve')}
-                      disabled={isProcessing || selectedRequest.requestedBy === user?.uid}
+                      disabled={
+                        isProcessing ||
+                        !canActOnApprovals ||
+                        selectedRequest.requestedBy === user?.uid
+                      }
                       className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs"
                     >
                       اعتماد الطلب
