@@ -10,6 +10,7 @@ import { useStockMovements } from '@/hooks/retail/useStockMovements';
 import { useTransfers } from '@/hooks/retail/useTransfers';
 import { useInventoryCounts } from '@/hooks/retail/useInventoryCounts';
 import { useDamageLoss } from '@/hooks/retail/useDamageLoss';
+import { useUserPermissions } from '@/hooks/usePermissions';
 import { useProducts } from '@/hooks/retail/useProducts';
 import { useCategories } from '@/hooks/retail/useCategories';
 import {
@@ -47,6 +48,17 @@ import type { StockBalance, StockMovement, BranchTransfer } from '@/types/retail
 import { toast } from 'sonner';
 
 export default function Inventory() {
+  const { hasPermission } = useUserPermissions();
+  const canAdjust = hasPermission('inventory.adjust');
+  const canOpeningBalance = hasPermission('inventory.opening_balance');
+  const canCount = hasPermission('inventory.count');
+  const canPostCount = hasPermission('inventory.count.post');
+  const canDamage = hasPermission('inventory.damage') || hasPermission('inventory.waste');
+  const canTransferCreate = hasPermission('transfers.create');
+  const canTransferApprove = hasPermission('transfers.approve');
+  const canTransferDispatch = hasPermission('transfers.dispatch');
+  const canTransferReceive = hasPermission('transfers.receive');
+
   const {
     balances,
     locations,
@@ -176,11 +188,19 @@ export default function Inventory() {
   }, [allStockRows, products, searchTerm, selectedCategory, filterLowStock, filterOutOfStock]);
 
   const handleOpenAdjustment = (balance: StockBalance) => {
+    if (!canAdjust) {
+      toast.error('ليس لديك صلاحية إجراء تسويات مخزنية');
+      return;
+    }
     setAdjustmentTarget(balance);
     setIsAdjustmentOpen(true);
   };
 
   const handleStartCount = async () => {
+    if (!canCount) {
+      toast.error('ليس لديك صلاحية بدء جلسة جرد');
+      return;
+    }
     if (!selectedLocationId) {
       toast.error('يرجى اختيار الفرع أو المخزن أولاً');
       return;
@@ -230,7 +250,7 @@ export default function Inventory() {
               </select>
             </div>
 
-            <Button
+            {canOpeningBalance && (<Button
               size="sm"
               variant="outline"
               onClick={() => setIsOpeningBalanceOpen(true)}
@@ -238,9 +258,9 @@ export default function Inventory() {
             >
               <Layers className="w-3.5 h-3.5" />
               رصيد افتتاحي
-            </Button>
+            </Button>)}
 
-            <Button
+            {canTransferCreate && (<Button
               size="sm"
               variant="outline"
               onClick={() => setIsTransferOpen(true)}
@@ -248,9 +268,9 @@ export default function Inventory() {
             >
               <Truck className="w-3.5 h-3.5" />
               مناقلة جديدة
-            </Button>
+            </Button>)}
 
-            <Button
+            {canDamage && (<Button
               size="sm"
               variant="outline"
               onClick={() => setIsDamageOpen(true)}
@@ -258,16 +278,16 @@ export default function Inventory() {
             >
               <AlertOctagon className="w-3.5 h-3.5" />
               تسجيل هالك
-            </Button>
+            </Button>)}
 
-            <Button
+            {canCount && (<Button
               size="sm"
               onClick={handleStartCount}
               className="gap-1.5 text-xs font-bold bg-emerald-600 hover:bg-emerald-700"
             >
               <Barcode className="w-3.5 h-3.5" />
               بدء جرد فعلي
-            </Button>
+            </Button>)}
           </div>
         </div>
 
@@ -498,7 +518,7 @@ export default function Inventory() {
                               )}
                             </td>
                             <td className="p-3 text-center">
-                              <Button
+                              {canAdjust && (<Button
                                 size="sm"
                                 variant="outline"
                                 onClick={() => handleOpenAdjustment(b)}
@@ -506,7 +526,7 @@ export default function Inventory() {
                               >
                                 <Scale className="w-3 h-3" />
                                 تسوية
-                              </Button>
+                              </Button>)}
                             </td>
                           </tr>
                         );
@@ -559,7 +579,7 @@ export default function Inventory() {
                         </div>
 
                         <div className="flex justify-end pt-1">
-                          <Button
+                          {canAdjust && (<Button
                             size="sm"
                             variant="outline"
                             onClick={() => handleOpenAdjustment(b)}
@@ -567,7 +587,7 @@ export default function Inventory() {
                           >
                             <Scale className="w-3.5 h-3.5" />
                             إجراء تسوية مخزنية
-                          </Button>
+                          </Button>)}
                         </div>
                       </div>
                     );
@@ -724,7 +744,7 @@ export default function Inventory() {
                           </td>
                           <td className="p-3 text-center">
                             <div className="flex items-center justify-center gap-1.5">
-                              {t.status === 'requested' && (
+                              {canTransferApprove && t.status === 'requested' && (
                                 <Button
                                   size="sm"
                                   variant="outline"
@@ -739,7 +759,7 @@ export default function Inventory() {
                                 </Button>
                               )}
 
-                              {(t.status === 'approved' || t.status === 'draft') && (
+                              {canTransferDispatch && (t.status === 'approved' || t.status === 'draft') && (
                                 <Button
                                   size="sm"
                                   className="h-7 text-xs font-bold bg-indigo-600 hover:bg-indigo-700"
@@ -753,7 +773,7 @@ export default function Inventory() {
                                 </Button>
                               )}
 
-                              {t.status === 'in_transit' && (
+                              {canTransferReceive && t.status === 'in_transit' && (
                                 <Button
                                   size="sm"
                                   className="h-7 text-xs font-bold bg-emerald-600 hover:bg-emerald-700"
@@ -910,7 +930,7 @@ export default function Inventory() {
                           </td>
                           <td className="p-3 text-center">
                             <div className="flex items-center justify-center gap-1">
-                              {d.type === 'lost' && (
+                              {canDamage && d.type === 'lost' && (
                                 <Button
                                   size="sm"
                                   variant="ghost"
@@ -943,7 +963,7 @@ export default function Inventory() {
                                   استرداد بعد الفقد
                                 </Button>
                               )}
-                              <Button
+                              {canDamage && (<Button
                                 size="sm"
                                 variant="ghost"
                                 className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
@@ -960,7 +980,7 @@ export default function Inventory() {
                                 }}
                               >
                                 <Trash2 className="w-4 h-4" />
-                              </Button>
+                              </Button>)}
                             </div>
                           </td>
                         </tr>
@@ -975,11 +995,12 @@ export default function Inventory() {
 
         {/* DIALOGS */}
         <StockAdjustmentDialog
-          open={isAdjustmentOpen}
+          open={canAdjust && isAdjustmentOpen}
           onOpenChange={setIsAdjustmentOpen}
           balanceItem={adjustmentTarget}
           productName={products.find((p) => p.id === adjustmentTarget?.productId)?.name}
           onAdjust={async (...args) => {
+            if (!canAdjust) return { success: false, error: 'Missing inventory.adjust permission' };
             const res = await adjustStock(...args);
             if (res.success) {
               await Promise.all([refreshMovements(), refreshDamage()]);
@@ -989,20 +1010,26 @@ export default function Inventory() {
         />
 
         <OpeningBalanceDialog
-          open={isOpeningBalanceOpen}
+          open={canOpeningBalance && isOpeningBalanceOpen}
           onOpenChange={setIsOpeningBalanceOpen}
           products={products}
           selectedLocationName={selectedLocObj?.name}
-          onSubmitBalance={addOpeningBalance}
+          onSubmitBalance={async (...args) => {
+            if (!canOpeningBalance) return { success: false, error: 'Missing inventory.opening_balance permission' };
+            return addOpeningBalance(...args);
+          }}
         />
 
         <TransferManageDialog
-          open={isTransferOpen}
+          open={canTransferCreate && isTransferOpen}
           onOpenChange={setIsTransferOpen}
           locations={locations}
           currentLocationId={selectedLocationId}
           products={products}
-          onCreateTransfer={createTransfer}
+          onCreateTransfer={async (...args) => {
+            if (!canTransferCreate) return { success: false, error: 'Missing transfers.create permission' };
+            return createTransfer(...args);
+          }}
         />
 
         <InventoryCountModal
@@ -1011,15 +1038,21 @@ export default function Inventory() {
           session={activeSession}
           onScanBarcode={scanBarcode}
           onUpdateQty={updateItemQty}
-          onPostSession={postSession}
+          onPostSession={async (...args) => {
+            if (!canPostCount) return { success: false, error: 'Missing inventory.count.post permission' };
+            return postSession(...args);
+          }}
         />
 
         <DamageLossModal
-          open={isDamageOpen}
+          open={canDamage && isDamageOpen}
           onOpenChange={setIsDamageOpen}
           products={products}
           currentLocationId={selectedLocationId}
-          onRecordDamage={recordDamage}
+          onRecordDamage={async (...args) => {
+            if (!canDamage) return { success: false, error: 'Missing inventory.damage permission' };
+            return recordDamage(...args);
+          }}
         />
       </div>
     </MainLayout>
