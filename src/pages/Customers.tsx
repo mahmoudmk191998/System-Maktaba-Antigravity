@@ -82,10 +82,11 @@ export default function Customers() {
   const [isPriceListModalOpen, setIsPriceListModalOpen] = useState(false);
 
   // Permissions
-  const canCreateCustomer = hasPermission('customers.create') || hasPermission('customers.manage');
-  const canEditCustomer = hasPermission('customers.edit') || hasPermission('customers.manage');
-  const canReceivePayment = hasPermission('customers.payment.create') || hasPermission('customers.manage');
-  const canManagePriceLists = hasPermission('price_lists.manage') || hasPermission('customers.manage');
+  const canCreateCustomer = hasPermission('customers.create');
+  const canEditCustomer = hasPermission('customers.edit');
+  const canReceivePayment = hasPermission('customers.payment.create');
+  const canManagePriceLists = hasPermission('price_lists.manage');
+  const canViewCustomerAccounts = hasPermission('customers.accounts.view');
 
   // Filtered Customers
   const filteredCustomers = useMemo(() => {
@@ -378,7 +379,9 @@ export default function Customers() {
                       <TableRow
                         key={c.id}
                         className="hover:bg-muted/40 transition-colors cursor-pointer"
-                        onClick={() => handleOpenDrawer(c)}
+                        onClick={() => {
+                          if (canViewCustomerAccounts) handleOpenDrawer(c);
+                        }}
                       >
                         {/* Code */}
                         <TableCell className="font-mono text-xs font-bold text-muted-foreground">
@@ -484,15 +487,17 @@ export default function Customers() {
                               </Button>
                             )}
 
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              className="h-8 w-8 p-0 text-primary hover:bg-primary/10"
-                              onClick={() => handleOpenDrawer(c)}
-                              title="كشف الحساب والملف"
-                            >
-                              <Eye className="w-4 h-4" />
-                            </Button>
+                            {canViewCustomerAccounts && (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-8 w-8 p-0 text-primary hover:bg-primary/10"
+                                onClick={() => handleOpenDrawer(c)}
+                                title="كشف الحساب والملف"
+                              >
+                                <Eye className="w-4 h-4" />
+                              </Button>
+                            )}
 
                             <DropdownMenu>
                               <DropdownMenuTrigger asChild>
@@ -507,10 +512,12 @@ export default function Customers() {
                                     <span>تعديل البيانات</span>
                                   </DropdownMenuItem>
                                 )}
-                                <DropdownMenuItem onClick={() => handleOpenDrawer(c)} className="gap-2">
-                                  <Eye className="w-4 h-4" />
-                                  <span>كشف الحساب والعمليات</span>
-                                </DropdownMenuItem>
+                                {canViewCustomerAccounts && (
+                                  <DropdownMenuItem onClick={() => handleOpenDrawer(c)} className="gap-2">
+                                    <Eye className="w-4 h-4" />
+                                    <span>كشف الحساب والعمليات</span>
+                                  </DropdownMenuItem>
+                                )}
                                 {canReceivePayment && (
                                   <DropdownMenuItem onClick={() => handleOpenPayment(c)} className="gap-2 text-emerald-600">
                                     <Receipt className="w-4 h-4" />
