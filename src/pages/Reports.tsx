@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { MainLayout } from '@/components/layout';
 import { useTenantBranch } from '@/hooks/useDatabase';
 import { useAppStore } from '@/lib/store';
+import { useUserPermissions } from '@/hooks/usePermissions';
 import { useFormatters } from '@/lib/formatters';
 import {
   BarChart3,
@@ -90,6 +91,9 @@ interface CashierSummary {
 }
 
 export default function Reports() {
+  const { hasPermission } = useUserPermissions();
+  const canExportAnalytics = hasPermission('analytics.export');
+  const canViewCosts = hasPermission('analytics.view_costs');
   const currentTenant = useAppStore((state) => state.currentTenant);
   const currentBranch = useAppStore((state) => state.currentBranch);
   const { tenantId: hookTenantId, branchId: hookBranchId } = useTenantBranch();
@@ -437,6 +441,10 @@ export default function Reports() {
 
   // CSV Exporter
   const handleExportCsv = () => {
+    if (!canExportAnalytics) {
+      toast.error('ليس لديك صلاحية تصدير التقارير');
+      return;
+    }
     try {
       const headers = ['الصنف', 'القسم', 'الكمية المباعة', 'إجمالي المبيعات', 'التكلفة', 'الربح', 'الهامش'];
       const rows = metrics.topProducts.map((p) => [
@@ -553,7 +561,13 @@ export default function Reports() {
             <Button
               variant="outline"
               size="sm"
-              onClick={() => setRevealCosts(!revealCosts)}
+              onClick={() => {
+                if (!canViewCosts) {
+                  toast.error('ليس لديك صلاحية عرض التكاليف وهوامش الربح الحساسة');
+                  return;
+                }
+                setRevealCosts(!revealCosts);
+              }}
               className="h-8 px-2.5 text-xs gap-1.5 border-border bg-background"
               title={revealCosts ? 'حجب التكاليف والأرباح' : 'إظهار التكاليف والأرباح'}
             >
