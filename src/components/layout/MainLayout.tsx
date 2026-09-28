@@ -5,6 +5,7 @@ import { useIsMobile } from '@/hooks/use-mobile';
 import { useAuth } from '@/hooks/useAuth';
 import { useTheme } from '@/hooks/useTheme';
 import { useProfile } from '@/hooks/useProfile';
+import { usePWAInstall } from '@/hooks/usePWAInstall';
 import { Sidebar, SidebarContent } from './Sidebar';
 import { MobileBottomNav } from './MobileBottomNav';
 import { NotificationBell } from '@/components/notifications/NotificationBell';
@@ -96,11 +97,11 @@ export function MainLayout({ children, title, subtitle, actions, showBack, onBac
   const { signOut, user } = useAuth();
   const { profile } = useProfile();
   const { theme, toggleTheme } = useTheme();
+  const { isStandalone, installOrShowHelp } = usePWAInstall();
   const navigate = useNavigate();
   const location = useLocation();
 
   const [menuOpen, setMenuOpen] = useState(false);
-  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
 
   const handleBack = () => {
     if (onBack) {
@@ -115,25 +116,8 @@ export function MainLayout({ children, title, subtitle, actions, showBack, onBac
     }
   };
 
-  useEffect(() => {
-    const handleBeforeInstallPrompt = (e: any) => {
-      e.preventDefault();
-      setDeferredPrompt(e);
-    };
-    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
-    return () => {
-      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
-    };
-  }, []);
-
   const handleInstallClick = async () => {
-    if (deferredPrompt) {
-      deferredPrompt.prompt();
-      const { outcome } = await deferredPrompt.userChoice;
-      if (outcome === 'accepted') {
-        setDeferredPrompt(null);
-      }
-    }
+    await installOrShowHelp();
   };
 
   const handleSignOut = async () => {
@@ -241,13 +225,16 @@ export function MainLayout({ children, title, subtitle, actions, showBack, onBac
                 </div>
               </div>
 
-              {/* Install App Button */}
-              {deferredPrompt && (
-                <Button 
-                  onClick={handleInstallClick} 
-                  variant="default" 
-                  size="sm" 
-                  className="hidden sm:flex gap-2 rounded-full shadow-lg shadow-primary/20 hover:-translate-y-0.5 transition-all text-xs font-bold"
+              {/* Desktop install action stays visible until the app is actually installed.
+                  Native prompt is used when available; otherwise the global PWA helper
+                  opens browser-specific installation instructions. */}
+              {!isStandalone && (
+                <Button
+                  onClick={handleInstallClick}
+                  variant="default"
+                  size="sm"
+                  className="hidden md:flex gap-2 rounded-full shadow-lg shadow-primary/20 hover:-translate-y-0.5 transition-all text-xs font-bold"
+                  title="تثبيت النظام على هذا الجهاز"
                 >
                   <Download className="w-3.5 h-3.5" />
                   تثبيت النظام
