@@ -17,10 +17,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { toast } from 'sonner';
 import {
-  Shield, Users, UserPlus, Save, Search, Edit, Trash2, Eye,
+  Shield, Users, UserPlus, Save, Search, Edit, Eye,
   ShoppingCart, ChefHat, Package, Truck, BarChart3, Settings, FileText,
   CalendarDays, UtensilsCrossed, Percent, UserCog, Puzzle, LayoutDashboard,
-  AlertTriangle, ChevronLeft, RotateCcw, CheckCircle2, XCircle, Building2, Check, X
+  ChevronLeft, RotateCcw, CheckCircle2, XCircle, Building2, Check, X
 } from 'lucide-react';
 import {
   PERMISSION_CATEGORIES,
@@ -88,10 +88,6 @@ export default function Permissions() {
     branchId: 'all',
   });
   const [useGoogleAuth, setUseGoogleAuth] = useState(false);
-
-  // Delete User Confirmation
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-  const [deletingUser, setDeletingUser] = useState(false);
 
   // Fetch branches
   useEffect(() => {
@@ -273,7 +269,12 @@ export default function Permissions() {
 
   // Apply Role Template directly
   const applyRoleTemplate = async (roleKey: string) => {
-    if (!selectedUser) return;
+    if (!selectedUser || !tenantId) return;
+
+    if ((isOwnerRole(selectedUser.role) || isOwnerRole(roleKey)) && !isOwner) {
+      toast.error('تعيين أو تعديل دور المالك/المدير الأعلى متاح للمالك فقط.');
+      return;
+    }
 
     // Safety: check if demoting the last admin
     if (
@@ -288,49 +289,24 @@ export default function Permissions() {
     const template = ROLE_TEMPLATES[roleKey];
     if (!template) return;
 
-    const newPerms = template.permissions.includes('*') ? [...ALL_PERMISSION_IDS] : [...template.permissions];
-    setEditPermissions(newPerms);
+    const newPerms = getRolePermissions(roleKey);
+    setEditPermissions(newPerms.includes('*') ? [...ALL_PERMISSION_IDS] : newPerms);
 
     setLoading(true);
     try {
-      // 1. Update user_roles collection
-      const rolesQ = query(collection(db, 'user_roles'), where('user_id', '==', selectedUser.id));
-      const rolesSnap = await getDocs(rolesQ);
-      for (const rDoc of rolesSnap.docs) {
-        await deleteDoc(rDoc.ref);
-      }
-      await addDoc(collection(db, 'user_roles'), {
-        user_id: selectedUser.id,
+      await persistUserAccessState({
+        tenantId,
+        userId: selectedUser.id,
         role: roleKey,
-        tenant_id: tenantId,
-        updated_at: new Date().toISOString(),
+        permissions: newPerms,
+        branchId: selectedUser.branch_id ?? null,
+        actorUid: user?.uid || null,
+        profile: {
+          full_name: selectedUser.full_name,
+          email: selectedUser.email,
+          status: selectedUser.status,
+        },
       });
-
-      // 2. Update profiles collection
-      await updateDoc(doc(db, 'profiles', selectedUser.id), {
-        role: roleKey,
-        updated_at: new Date().toISOString(),
-      });
-
-      // 3. Update user_permissions collection using atomic batch
-      const permsQ = query(collection(db, 'user_permissions'), where('user_id', '==', selectedUser.id));
-      const permsSnap = await getDocs(permsQ);
-      const permBatch = writeBatch(db);
-      for (const pDoc of permsSnap.docs) {
-        permBatch.delete(pDoc.ref);
-      }
-      const nowStr = new Date().toISOString();
-      for (const p of newPerms) {
-        const pRef = doc(collection(db, 'user_permissions'));
-        permBatch.set(pRef, {
-          tenant_id: tenantId || null,
-          user_id: selectedUser.id,
-          permission: p,
-          granted_by: user?.uid || null,
-          created_at: nowStr,
-        });
-      }
-      await permBatch.commit();
 
       // 4. Record Audit Log
       await addDoc(collection(db, 'audit_logs'), {
@@ -410,89 +386,128 @@ export default function Permissions() {
 
   // Update User Branch
   const handleBranchChange = async (newBranchId: string) => {
-    if (!selectedUser) return;
+    if (!selectedUser || !tenantId) return;
+    if (isOwnerRole(selectedUser.role) && !isOwner) {
+      toast.error('لا يمكنك تعديل حساب مالك من حساب غير مالك.');
+      return;
+    }
+
     const finalBranchId = newBranchId === 'all' ? null : newBranchId;
 
     try {
-      await updateDoc(doc(db, 'profiles', selectedUser.id), {
-        branch_id: finalBranchId,
-        updated_at: new Date().toISOString(),
+      await persistUserAccessState({
+        tenantId,
+        userId: selectedUser.id,
+        role: selectedUser.role,
+        permissions: selectedUser.permissions,
+        branchId: finalBranchId,
+        actorUid: user?.uid || null,
+        profile: {
+          full_name: selectedUser.full_name,
+          email: selectedUser.email,
+          status: selectedUser.status,
+        },
       });
       setSelectedUser((prev) => (prev ? { ...prev, branch_id: finalBranchId } : null));
       toast.success('تم تحديث فرع المستخدم بنجاح');
       await fetchUsers();
-    } catch (err) {
-      toast.error('فشل في تحديث فرع المستخدم');
+    } catch (err: any) {
+      toast.error('فشل في تحديث فرع المستخدم: ' + (err?.message || 'خطأ غير معروف'));
     }
   };
 
   // Save manual permission changes
+  // Save manual permission changes
   const savePermissions = async () => {
-    if (!selectedUser) return;
+    if (!selectedUser || !tenantId) return;
+
+    if (isOwnerRole(selectedUser.role)) {
+      if (!isOwner) {
+        toast.error('لا يمكنك تعديل صلاحيات حساب مالك.');
+        return;
+      }
+      toast.info('حساب المالك يمتلك جميع الصلاحيات سيادياً ولا يمكن تجزئتها.');
+      return;
+    }
+
+    const sanitizedPermissions = sanitizeAssignedPermissions(
+      selectedUser.role,
+      editPermissions
+    );
+
+    if (
+      isSelectedCurrentUser &&
+      !sanitizedPermissions.includes('permissions.manage')
+    ) {
+      toast.error('لا يمكنك إزالة صلاحية إدارة الصلاحيات من حسابك الحالي.');
+      return;
+    }
 
     setLoading(true);
     try {
-      // 1. Delete existing user_permissions and add new ones in an atomic batch
-      const permsQ = query(collection(db, 'user_permissions'), where('user_id', '==', selectedUser.id));
-      const permsSnap = await getDocs(permsQ);
-      
-      const batch = writeBatch(db);
-      for (const pDoc of permsSnap.docs) {
-        batch.delete(pDoc.ref);
-      }
+      await persistUserAccessState({
+        tenantId,
+        userId: selectedUser.id,
+        role: selectedUser.role,
+        permissions: sanitizedPermissions,
+        branchId: selectedUser.branch_id ?? null,
+        actorUid: user?.uid || null,
+        profile: {
+          full_name: selectedUser.full_name,
+          email: selectedUser.email,
+          status: selectedUser.status,
+        },
+      });
 
       const now = new Date().toISOString();
-      for (const p of editPermissions) {
-        const pRef = doc(collection(db, 'user_permissions'));
-        batch.set(pRef, {
-          tenant_id: tenantId || null,
-          user_id: selectedUser.id,
-          permission: p,
-          granted_by: user?.uid || null,
+      try {
+        await addDoc(collection(db, 'audit_logs'), {
+          tenantId,
+          tenant_id: tenantId,
+          action: 'PERMISSIONS_UPDATED',
+          target_id: selectedUser.id,
+          target_name: selectedUser.full_name,
+          user: user?.email || 'المدير',
+          user_id: user?.uid || null,
+          details: `تحديث الصلاحيات للمستخدم ${selectedUser.full_name} (${sanitizedPermissions.length} صلاحية)`,
           created_at: now,
         });
+      } catch (auditErr) {
+        console.warn('Audit log write failed non-fatally:', auditErr);
       }
 
-      await batch.commit();
-
-      // 2. Audit log
-      if (tenantId) {
-        try {
-          await addDoc(collection(db, 'audit_logs'), {
-            tenant_id: tenantId,
-            action: 'PERMISSIONS_UPDATED',
-            target_id: selectedUser.id,
-            target_name: selectedUser.full_name,
-            user: user?.email || 'المدير',
-            details: `تحديث الصلاحيات للمستخدم ${selectedUser.full_name} (${editPermissions.length} صلاحية)`,
-            created_at: now,
-          });
-        } catch (auditErr) {
-          console.warn('Audit log write failed non-fatally:', auditErr);
-        }
-      }
-
-      toast.success(`تم حفظ ${editPermissions.length} صلاحية للمستخدم بنجاح`);
-      setSelectedUser((prev) => (prev ? { ...prev, permissions: editPermissions } : null));
+      toast.success(`تم حفظ ${sanitizedPermissions.length} صلاحية فعلية للمستخدم`);
+      setEditPermissions(sanitizedPermissions);
+      setSelectedUser((prev) =>
+        prev ? { ...prev, permissions: sanitizedPermissions } : null
+      );
       await fetchUsers();
     } catch (err: any) {
       console.error('Error saving permissions:', err);
-      toast.error(err?.message ? `حدث خطأ أثناء حفظ الصلاحيات: ${err.message}` : 'حدث خطأ أثناء حفظ الصلاحيات');
+      toast.error(
+        err?.message
+          ? `حدث خطأ أثناء حفظ الصلاحيات: ${err.message}`
+          : 'حدث خطأ أثناء حفظ الصلاحيات'
+      );
     } finally {
       setLoading(false);
     }
   };
 
   // Add new user handler
+  // Add new user handler
   const handleAddUser = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!tenantId) return;
 
-    if (!newUserForm.name.trim()) {
+    const name = newUserForm.name.trim();
+    const email = newUserForm.email.trim().toLowerCase();
+
+    if (!name) {
       toast.error('يرجى إدخال اسم الموظف');
       return;
     }
-    if (!newUserForm.email.trim()) {
+    if (!email) {
       toast.error('يرجى إدخال البريد الإلكتروني');
       return;
     }
@@ -500,130 +515,81 @@ export default function Permissions() {
       toast.error('يجب أن تكون كلمة المرور 6 أحرف أو أكثر');
       return;
     }
+    if (isOwnerRole(newUserForm.role) && !isOwner) {
+      toast.error('إنشاء حساب مالك أو مدير أعلى متاح للمالك فقط.');
+      return;
+    }
+
+    const branchVal = newUserForm.branchId === 'all' ? null : newUserForm.branchId;
+    const initialPermissions = getRolePermissions(newUserForm.role);
 
     setAddingUser(true);
     try {
-      let createdUid = '';
-
       if (useGoogleAuth) {
-        createdUid = `user_${Date.now()}`;
+        await createGoogleEmployeeInvite({
+          tenantId,
+          name,
+          email,
+          role: newUserForm.role,
+          permissions: initialPermissions,
+          branchId: branchVal,
+          actorUid: user?.uid || null,
+        });
+
+        toast.success(
+          'تم إنشاء دعوة Google حقيقية. يجب على الموظف تسجيل الدخول بنفس Gmail المحدد لتفعيل الحساب.'
+        );
       } else {
-        const secondaryApp = initializeApp(firebaseConfig, `user-create-${Date.now()}`);
-        const secondaryAuth = getAuth(secondaryApp);
-        const cred = await createUserWithEmailAndPassword(secondaryAuth, newUserForm.email, newUserForm.password);
-        createdUid = cred.user.uid;
-        await updateProfile(cred.user, { displayName: newUserForm.name });
+        await provisionPasswordEmployee({
+          tenantId,
+          name,
+          email,
+          password: newUserForm.password,
+          role: newUserForm.role,
+          permissions: initialPermissions,
+          branchId: branchVal,
+          actorUid: user?.uid || null,
+        });
+
+        toast.success('تم إنشاء حساب Firebase للموظف وربطه بالصلاحيات بنجاح');
       }
 
-      // Create profile document
-      const branchVal = newUserForm.branchId === 'all' ? null : newUserForm.branchId;
-      await setDoc(doc(db, 'profiles', createdUid), {
-        full_name: newUserForm.name,
-        email: newUserForm.email,
-        tenant_id: tenantId,
-        branch_id: branchVal,
-        role: newUserForm.role,
-        status: 'active',
-        created_at: new Date().toISOString(),
-      });
-
-      // Add user_roles
-      await addDoc(collection(db, 'user_roles'), {
-        user_id: createdUid,
-        role: newUserForm.role,
-        tenant_id: tenantId,
-        created_at: new Date().toISOString(),
-      });
-
-      // Apply initial role permissions
-      const initialTemplate = ROLE_TEMPLATES[newUserForm.role];
-      const initialPerms = initialTemplate
-        ? initialTemplate.permissions.includes('*')
-          ? ALL_PERMISSION_IDS
-          : initialTemplate.permissions
-        : [];
-
-      for (const p of initialPerms) {
-        await addDoc(collection(db, 'user_permissions'), {
-          user_id: createdUid,
-          permission: p,
-          granted_by: user?.uid,
+      try {
+        await addDoc(collection(db, 'audit_logs'), {
+          tenantId,
+          tenant_id: tenantId,
+          action: useGoogleAuth ? 'GOOGLE_USER_INVITED' : 'USER_CREATED',
+          target_name: name,
+          target_email: email,
+          user: user?.email || 'المدير',
+          user_id: user?.uid || null,
+          details: useGoogleAuth
+            ? `إنشاء دعوة Google للموظف ${name} بدور ${getRoleLabel(newUserForm.role)}`
+            : `إنشاء مستخدم Firebase للموظف ${name} بدور ${getRoleLabel(newUserForm.role)}`,
           created_at: new Date().toISOString(),
         });
+      } catch (auditErr) {
+        console.warn('User provisioning audit log failed non-fatally:', auditErr);
       }
 
-      // Log to audit
-      await addDoc(collection(db, 'audit_logs'), {
-        tenant_id: tenantId,
-        action: 'USER_CREATED',
-        target_id: createdUid,
-        target_name: newUserForm.name,
-        user: user?.email || 'المدير',
-        details: `إضافة مستخدم جديد: ${newUserForm.name} بدور: ${getRoleLabel(newUserForm.role)}`,
-        created_at: new Date().toISOString(),
-      });
-
-      toast.success('تمت إضافة المستخدم بنجاح');
       setShowAddUser(false);
-      setNewUserForm({ name: '', email: '', password: '', role: 'cashier', branchId: 'all' });
+      setUseGoogleAuth(false);
+      setNewUserForm({
+        name: '',
+        email: '',
+        password: '',
+        role: 'cashier',
+        branchId: 'all',
+      });
       await fetchUsers();
     } catch (err: any) {
-      console.error('Error creating user:', err);
-      toast.error('حدث خطأ أثناء إنشاء المستخدم: ' + (err.message || ''));
+      console.error('Error creating/inviting user:', err);
+      toast.error(
+        'حدث خطأ أثناء إنشاء المستخدم: ' +
+          (err?.message || 'خطأ غير معروف')
+      );
     } finally {
       setAddingUser(false);
-    }
-  };
-
-  // Delete User Handler
-  const handleDeleteUser = async () => {
-    if (!selectedUser) return;
-
-    if (isSelectedCurrentUser) {
-      toast.error('لا يمكنك حذف حسابك الشخصي الذي تستخدمه حالياً.');
-      return;
-    }
-
-    if (isAdminOrOwnerRole(selectedUser.role) && activeAdminCount <= 1) {
-      toast.error('لا يمكن حذف هذا المستخدم لأنه المدير الوحيد في المنشأة.');
-      return;
-    }
-
-    setDeletingUser(true);
-    try {
-      // 1. Delete roles
-      const rolesQ = query(collection(db, 'user_roles'), where('user_id', '==', selectedUser.id));
-      const rolesSnap = await getDocs(rolesQ);
-      for (const d of rolesSnap.docs) await deleteDoc(d.ref);
-
-      // 2. Delete permissions
-      const permsQ = query(collection(db, 'user_permissions'), where('user_id', '==', selectedUser.id));
-      const permsSnap = await getDocs(permsQ);
-      for (const d of permsSnap.docs) await deleteDoc(d.ref);
-
-      // 3. Delete profile
-      await deleteDoc(doc(db, 'profiles', selectedUser.id));
-
-      // 4. Audit log
-      await addDoc(collection(db, 'audit_logs'), {
-        tenant_id: tenantId,
-        action: 'USER_DELETED',
-        target_id: selectedUser.id,
-        target_name: selectedUser.full_name,
-        user: user?.email || 'المدير',
-        details: `حذف المستخدم: ${selectedUser.full_name} (${selectedUser.email})`,
-        created_at: new Date().toISOString(),
-      });
-
-      toast.success('تم حذف المستخدم بنجاح');
-      setShowDeleteConfirm(false);
-      setSelectedUser(null);
-      await fetchUsers();
-    } catch (err: any) {
-      console.error('Error deleting user:', err);
-      toast.error('حدث خطأ أثناء حذف المستخدم');
-    } finally {
-      setDeletingUser(false);
     }
   };
 
@@ -758,7 +724,7 @@ export default function Permissions() {
                     <div className="mt-3 pt-2.5 border-t border-border/30 flex items-center justify-between text-xs text-muted-foreground">
                       <div className="flex items-center gap-1">
                         <Shield className="w-3.5 h-3.5 text-primary" />
-                        <span>{u.permissions.length} صلاحية مخصصة</span>
+                        <span>{isOwnerRole(u.role) ? 'جميع الصلاحيات' : `${u.permissions.length} صلاحية مخصصة`}</span>
                       </div>
                       <ChevronLeft className={cn('w-4 h-4 transition-transform', isSelected && 'text-primary translate-x-[-2px]')} />
                     </div>
@@ -799,23 +765,13 @@ export default function Permissions() {
                   <div className="flex items-center gap-2 flex-wrap">
                     <Button
                       onClick={savePermissions}
+                      disabled={isOwnerRole(selectedUser.role)}
                       className="h-11 rounded-2xl gap-2 font-bold px-6 shadow-lg shadow-primary/25"
                     >
                       <Save className="w-4 h-4" />
                       حفظ الصلاحيات
                     </Button>
 
-                    {!isSelectedCurrentUser && (
-                      <Button
-                        variant="outline"
-                        size="icon"
-                        className="h-11 w-11 rounded-2xl text-destructive border-border/60 hover:border-destructive/40 hover:bg-destructive/10"
-                        onClick={() => setShowDeleteConfirm(true)}
-                        title="حذف المستخدم"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </Button>
-                    )}
                   </div>
                 </div>
 
@@ -829,7 +785,9 @@ export default function Permissions() {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent className="rounded-xl">
-                        {Object.values(ROLE_TEMPLATES).map((tmpl) => (
+                        {Object.values(ROLE_TEMPLATES)
+                          .filter((tmpl) => isOwner || !isOwnerRole(tmpl.key))
+                          .map((tmpl) => (
                           <SelectItem key={tmpl.key} value={tmpl.key} className="text-xs font-bold cursor-pointer">
                             {tmpl.label}
                           </SelectItem>
@@ -945,6 +903,7 @@ export default function Permissions() {
                             variant="ghost"
                             size="sm"
                             onClick={() => toggleCategory(category.id)}
+                            disabled={isOwnerRole(selectedUser.role)}
                             className="h-8 text-xs font-bold rounded-lg px-2.5 text-muted-foreground hover:text-foreground"
                           >
                             {allEnabled ? 'إلغاء الكل' : 'تحديد الكل'}
@@ -953,6 +912,7 @@ export default function Permissions() {
                             variant="ghost"
                             size="sm"
                             onClick={() => resetCategoryToRoleDefault(category.id)}
+                            disabled={isOwnerRole(selectedUser.role)}
                             className="h-8 text-xs font-bold rounded-lg px-2.5 text-muted-foreground hover:text-primary gap-1"
                             title="إعادة الصلاحيات لهذا القسم إلى افتراضي الدور"
                           >
@@ -969,7 +929,7 @@ export default function Permissions() {
                           return (
                             <div
                               key={perm.id}
-                              onClick={() => togglePermission(perm.id)}
+                              onClick={() => !isOwnerRole(selectedUser.role) && togglePermission(perm.id)}
                               className={cn(
                                 'flex items-center justify-between p-3 rounded-xl border transition-all cursor-pointer select-none',
                                 isChecked
@@ -984,7 +944,8 @@ export default function Permissions() {
                                 </p>
                               </div>
                               <Switch
-                                checked={isChecked}
+                                checked={isOwnerRole(selectedUser.role) || isChecked}
+                                disabled={isOwnerRole(selectedUser.role)}
                                 onCheckedChange={() => togglePermission(perm.id)}
                                 onClick={(e) => e.stopPropagation()}
                                 className="scale-90"
@@ -1043,7 +1004,7 @@ export default function Permissions() {
                 type="email"
                 value={newUserForm.email}
                 onChange={(e) => setNewUserForm((f) => ({ ...f, email: e.target.value }))}
-                placeholder="user@restaurant.com"
+                placeholder="employee@mklibrary.com"
                 className="rounded-xl h-10"
                 required
                 dir="ltr"
@@ -1052,8 +1013,8 @@ export default function Permissions() {
 
             <div className="flex items-center justify-between p-3 border rounded-2xl bg-muted/20">
               <div className="space-y-0.5">
-                <Label className="text-xs font-bold">تسجيل الدخول عبر Google</Label>
-                <p className="text-[10px] text-muted-foreground">السماح بالدخول بحساب Google دون كلمة مرور</p>
+                <Label className="text-xs font-bold">دعوة عبر Google / Gmail</Label>
+                <p className="text-[10px] text-muted-foreground">ينشئ دعوة مرتبطة بالإيميل؛ الموظف يفعّلها بأول تسجيل دخول Google بنفس الحساب.</p>
               </div>
               <Switch checked={useGoogleAuth} onCheckedChange={setUseGoogleAuth} />
             </div>
@@ -1084,7 +1045,9 @@ export default function Permissions() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent className="rounded-xl">
-                    {Object.values(ROLE_TEMPLATES).map((tmpl) => (
+                    {Object.values(ROLE_TEMPLATES)
+                          .filter((tmpl) => isOwner || !isOwnerRole(tmpl.key))
+                          .map((tmpl) => (
                       <SelectItem key={tmpl.key} value={tmpl.key} className="text-xs font-bold">
                         {tmpl.label}
                       </SelectItem>
@@ -1135,43 +1098,6 @@ export default function Permissions() {
         </DialogContent>
       </Dialog>
 
-      {/* Delete User Confirmation Dialog */}
-      <Dialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
-        <DialogContent className="max-w-sm rounded-3xl font-cairo" dir="rtl">
-          <DialogHeader>
-            <DialogTitle className="text-lg font-bold text-destructive flex items-center gap-2">
-              <AlertTriangle className="w-5 h-5" />
-              تأكيد حذف المستخدم
-            </DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3 py-2 text-sm text-muted-foreground leading-relaxed">
-            <p>
-              هل أنت متأكد من رغبتك في حذف حساب المستخدم{' '}
-              <strong className="text-foreground">{selectedUser?.full_name}</strong> نهائياً؟
-            </p>
-            <p className="text-xs text-destructive/90 bg-destructive/10 p-2.5 rounded-xl border border-destructive/20">
-              سيتم سحب جميع الصلاحيات والأدوار فوراً وحذف ملف الدخول.
-            </p>
-          </div>
-          <div className="flex items-center justify-end gap-2 pt-2">
-            <Button
-              variant="outline"
-              onClick={() => setShowDeleteConfirm(false)}
-              className="rounded-xl text-xs font-bold h-10"
-            >
-              إلغاء
-            </Button>
-            <Button
-              variant="destructive"
-              disabled={deletingUser}
-              onClick={handleDeleteUser}
-              className="rounded-xl text-xs font-bold h-10 gap-2"
-            >
-              {deletingUser ? 'جاري الحذف...' : 'تأكيد الحذف النهائي'}
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
     </MainLayout>
   );
 }
