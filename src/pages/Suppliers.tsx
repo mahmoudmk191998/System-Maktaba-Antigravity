@@ -64,7 +64,10 @@ export default function Suppliers() {
   const currentUser = useAppStore((state) => state.currentUser);
   const { hasPermission, isAdmin } = useUserPermissions();
 
-  const canManage = isAdmin || hasPermission('suppliers.manage') || hasPermission('suppliers.create');
+  const canCreateSupplier = isAdmin || hasPermission('suppliers.create') || hasPermission('suppliers.manage');
+  const canEditSupplier = isAdmin || hasPermission('suppliers.edit') || hasPermission('suppliers.manage');
+  const canArchiveSupplier = isAdmin || hasPermission('suppliers.archive') || hasPermission('suppliers.manage');
+  const canViewSupplierAccounts = isAdmin || hasPermission('supplier_accounts.view');
   const canPay = isAdmin || hasPermission('suppliers.pay') || hasPermission('supplier_payments.create');
 
   const {
@@ -274,7 +277,7 @@ export default function Suppliers() {
       title="الموردين ودور النشر (Suppliers & Publishers)"
       subtitle="سجل الموردين ودور النشر، كشوف الحسابات الجارية، وسندات صرف ودفعات الحساب"
       actions={
-        canManage && (
+        canCreateSupplier && (
           <Button onClick={handleOpenAdd} className="gap-2 font-bold text-xs sm:text-sm shadow-sm">
             <Plus className="w-4 h-4" />
             <span>إضافة مورد / دار نشر</span>
@@ -472,19 +475,21 @@ export default function Suppliers() {
                       <td className="p-3.5 text-center">
                         <div className="flex items-center justify-center gap-1.5">
                           {/* Statement / Ledger */}
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="h-7 px-2.5 text-xs gap-1 text-primary"
-                            onClick={() => {
-                              setLedgerSupplier(sup);
-                              setIsLedgerOpen(true);
-                            }}
-                            title="عرض كشف الحساب والقيود"
-                          >
-                            <FileText className="w-3.5 h-3.5" />
-                            كشف حساب
-                          </Button>
+                          {canViewSupplierAccounts && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-7 px-2.5 text-xs gap-1 text-primary"
+                              onClick={() => {
+                                setLedgerSupplier(sup);
+                                setIsLedgerOpen(true);
+                              }}
+                              title="عرض كشف الحساب والقيود"
+                            >
+                              <FileText className="w-3.5 h-3.5" />
+                              كشف حساب
+                            </Button>
+                          )}
 
                           {/* Actions for Active Suppliers */}
                           {viewMode === 'active' && (
@@ -506,7 +511,7 @@ export default function Suppliers() {
                               )}
 
                               {/* Edit */}
-                              {canManage && (
+                              {canEditSupplier && (
                                 <Button
                                   size="sm"
                                   variant="ghost"
@@ -519,7 +524,7 @@ export default function Suppliers() {
                               )}
 
                               {/* Archive */}
-                              {canManage && (
+                              {canArchiveSupplier && (
                                 <Button
                                   size="sm"
                                   variant="ghost"
@@ -534,7 +539,7 @@ export default function Suppliers() {
                           )}
 
                           {/* Actions for Archived Suppliers */}
-                          {viewMode === 'archived' && canManage && (
+                          {viewMode === 'archived' && canArchiveSupplier && (
                             <Button
                               size="sm"
                               className="h-7 px-2.5 text-xs gap-1.5 bg-primary hover:bg-primary/90 text-primary-foreground font-bold"
