@@ -14,10 +14,14 @@ import { Progress } from '@/components/ui/progress';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { usePromotions, useTenantBranch, useOrders } from '@/hooks/useDatabase';
+import { useUserPermissions } from '@/hooks/usePermissions';
+import { toast } from 'sonner';
 
 // Removed mock data
 
 export default function Promotions() {
+  const { hasPermission } = useUserPermissions();
+  const canManagePromotions = hasPermission('promotions.manage');
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [isAddCouponOpen, setIsAddCouponOpen] = useState(false);
   const [newPromo, setNewPromo] = useState({ name: '', type: 'percentage', value: '', minOrder: '', startDate: '', endDate: '' });
@@ -66,7 +70,7 @@ export default function Promotions() {
 
   return (
     <MainLayout title="العروض والخصومات" subtitle="إدارة العروض والكوبونات"
-      actions={<div className="flex items-center gap-2"><Button variant="outline" onClick={() => setIsAddCouponOpen(true)} className="gap-2 text-xs md:text-sm"><Plus className="w-4 h-4" /><span className="hidden sm:inline">كوبون جديد</span></Button><Button onClick={() => setIsAddOpen(true)} className="gap-2 text-xs md:text-sm"><Plus className="w-4 h-4" /><span className="hidden sm:inline">عرض جديد</span></Button></div>}
+      actions={canManagePromotions ? <div className="flex items-center gap-2"><Button variant="outline" onClick={() => setIsAddCouponOpen(true)} className="gap-2 text-xs md:text-sm"><Plus className="w-4 h-4" /><span className="hidden sm:inline">كوبون جديد</span></Button><Button onClick={() => setIsAddOpen(true)} className="gap-2 text-xs md:text-sm"><Plus className="w-4 h-4" /><span className="hidden sm:inline">عرض جديد</span></Button></div> : undefined}
     >
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4 mb-6">
         <Card><CardContent className="p-3 md:p-4"><div className="flex items-center gap-3"><div className="w-10 h-10 md:w-12 md:h-12 rounded-xl bg-primary/10 text-primary flex items-center justify-center"><Percent className="w-5 h-5 md:w-6 md:h-6" /></div><div><p className="text-lg md:text-2xl font-bold">{number(activePromotions)}</p><p className="text-xs md:text-sm text-muted-foreground">عروض نشطة</p></div></div></CardContent></Card>
@@ -95,9 +99,13 @@ export default function Promotions() {
                   </div>
                   <div className="flex items-center gap-2 md:gap-4 flex-shrink-0">
                     {promo.usageLimit && <div className="hidden md:block w-24"><div className="flex justify-between text-xs mb-1"><span>الاستخدام</span><span>{promo.usageCount}/{promo.usageLimit}</span></div><Progress value={(promo.usageCount / promo.usageLimit) * 100} className="h-2" /></div>}
-                    <Button variant="ghost" size="icon" onClick={() => setEditingPromo(promo)}><Edit className="w-4 h-4 text-muted-foreground" /></Button>
-                    <Button variant="ghost" size="icon" onClick={async () => { if(confirm('هل أنت متأكد من حذف هذا العرض؟')) await deletePromotion(promo.id); }}><Trash2 className="w-4 h-4 text-destructive" /></Button>
-                    <Switch checked={promo.isActive} onCheckedChange={(v) => updatePromotion(promo.id, { is_active: v })} />
+                    {canManagePromotions && (
+                      <>
+                        <Button variant="ghost" size="icon" onClick={() => setEditingPromo(promo)}><Edit className="w-4 h-4 text-muted-foreground" /></Button>
+                        <Button variant="ghost" size="icon" onClick={async () => { if(confirm('هل أنت متأكد من حذف هذا العرض؟')) await deletePromotion(promo.id); }}><Trash2 className="w-4 h-4 text-destructive" /></Button>
+                        <Switch checked={promo.isActive} onCheckedChange={(v) => updatePromotion(promo.id, { is_active: v })} />
+                      </>
+                    )}
                   </div>
                 </div>
               </CardContent>
@@ -111,11 +119,13 @@ export default function Promotions() {
               <Card key={coupon.id} className={cn(!coupon.isActive && 'opacity-60')}>
                 <CardContent className="p-3 md:p-4">
                   <div className="flex items-start justify-between mb-3"><div><div className="flex items-center gap-2 mb-2"><code className="text-base md:text-xl font-bold bg-muted px-2 py-1 rounded">{coupon.code}</code><Button variant="ghost" size="icon" className="h-7 w-7"><Copy className="w-4 h-4" /></Button></div><Badge variant={coupon.isActive ? 'default' : 'secondary'}>{coupon.isActive ? 'نشط' : 'غير نشط'}</Badge></div><div className="text-left"><p className="text-xl md:text-2xl font-bold text-primary">{coupon.type === 'percentage' ? `${coupon.discount}%` : currency(coupon.discount)}</p><p className="text-xs text-muted-foreground">خصم</p></div></div>
-                  <div className="flex gap-2 mt-3">
-                    <Button variant="outline" size="sm" className="flex-1" onClick={() => setEditingCoupon(coupon)}><Edit className="w-4 h-4 ml-1" />تعديل</Button>
-                    <Button variant="outline" size="icon" className="text-destructive hover:bg-destructive/10" onClick={async () => { if(confirm('هل أنت متأكد من حذف هذا الكوبون؟')) await deleteCoupon(coupon.id); }}><Trash2 className="w-4 h-4" /></Button>
-                    <Switch checked={coupon.isActive} onCheckedChange={(v) => updateCoupon(coupon.id, { is_active: v })} />
-                  </div>
+                  {canManagePromotions && (
+                    <div className="flex gap-2 mt-3">
+                      <Button variant="outline" size="sm" className="flex-1" onClick={() => setEditingCoupon(coupon)}><Edit className="w-4 h-4 ml-1" />تعديل</Button>
+                      <Button variant="outline" size="icon" className="text-destructive hover:bg-destructive/10" onClick={async () => { if(confirm('هل أنت متأكد من حذف هذا الكوبون؟')) await deleteCoupon(coupon.id); }}><Trash2 className="w-4 h-4" /></Button>
+                      <Switch checked={coupon.isActive} onCheckedChange={(v) => updateCoupon(coupon.id, { is_active: v })} />
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             ))}
@@ -123,7 +133,7 @@ export default function Promotions() {
         </TabsContent>
       </Tabs>
 
-      <Dialog open={isAddOpen} onOpenChange={setIsAddOpen}>
+      <Dialog open={canManagePromotions && isAddOpen} onOpenChange={setIsAddOpen}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>إضافة عرض جديد</DialogTitle>
@@ -195,7 +205,7 @@ export default function Promotions() {
         </DialogContent>
       </Dialog>
       
-      <Dialog open={isAddCouponOpen} onOpenChange={setIsAddCouponOpen}>
+      <Dialog open={canManagePromotions && isAddCouponOpen} onOpenChange={setIsAddCouponOpen}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>إضافة كوبون جديد</DialogTitle>
