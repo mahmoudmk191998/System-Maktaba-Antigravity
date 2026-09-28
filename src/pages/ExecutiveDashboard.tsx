@@ -82,6 +82,7 @@ export default function ExecutiveDashboard() {
   const branchId = currentBranch?.id || hookBranchId || 'all';
   const { user } = useAuth();
   const { hasPermission, isAdmin, isOwner } = useUserPermissions();
+  const canVoidDailyClosing = isAdmin || isOwner || hasPermission('daily_closing.void');
   const { toast } = useToast();
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -1040,7 +1041,7 @@ export default function ExecutiveDashboard() {
                                   >
                                     <Eye className="w-3.5 h-3.5" />
                                   </Button>
-                                  {!isVoided && (isAdmin || isOwner) && (
+                                  {!isVoided && canVoidDailyClosing && (
                                     <Button
                                       variant="ghost"
                                       size="sm"
