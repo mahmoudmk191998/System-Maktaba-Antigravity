@@ -45,8 +45,16 @@ import { DamageLossModal } from '@/components/retail/DamageLossModal';
 import { StockMovementsDrawer } from '@/components/retail/StockMovementsDrawer';
 import type { StockBalance, StockMovement, BranchTransfer } from '@/types/retail.types';
 import { toast } from 'sonner';
+import { useUserPermissions } from '@/hooks/usePermissions';
 
 export default function Inventory() {
+  const { hasPermission } = useUserPermissions();
+  const canOpeningBalance = hasPermission('inventory.opening_balance');
+  const canAdjustStock = hasPermission('inventory.adjust');
+  const canTransferStock = hasPermission('inventory.transfer');
+  const canCountStock = hasPermission('inventory.count');
+  const canDamageStock = hasPermission('inventory.damage');
+
   const {
     balances,
     locations,
@@ -176,11 +184,19 @@ export default function Inventory() {
   }, [allStockRows, products, searchTerm, selectedCategory, filterLowStock, filterOutOfStock]);
 
   const handleOpenAdjustment = (balance: StockBalance) => {
+    if (!canAdjustStock) {
+      toast.error('ليس لديك صلاحية تسوية المخزون');
+      return;
+    }
     setAdjustmentTarget(balance);
     setIsAdjustmentOpen(true);
   };
 
   const handleStartCount = async () => {
+    if (!canCountStock) {
+      toast.error('ليس لديك صلاحية بدء أو ترحيل جلسات الجرد');
+      return;
+    }
     if (!selectedLocationId) {
       toast.error('يرجى اختيار الفرع أو المخزن أولاً');
       return;
@@ -230,7 +246,7 @@ export default function Inventory() {
               </select>
             </div>
 
-            <Button
+            {canOpeningBalance && <Button
               size="sm"
               variant="outline"
               onClick={() => setIsOpeningBalanceOpen(true)}
@@ -238,9 +254,9 @@ export default function Inventory() {
             >
               <Layers className="w-3.5 h-3.5" />
               رصيد افتتاحي
-            </Button>
+            </Button>}
 
-            <Button
+            {canTransferStock && <Button
               size="sm"
               variant="outline"
               onClick={() => setIsTransferOpen(true)}
@@ -248,9 +264,9 @@ export default function Inventory() {
             >
               <Truck className="w-3.5 h-3.5" />
               مناقلة جديدة
-            </Button>
+            </Button>}
 
-            <Button
+            {canDamageStock && <Button
               size="sm"
               variant="outline"
               onClick={() => setIsDamageOpen(true)}
@@ -258,16 +274,16 @@ export default function Inventory() {
             >
               <AlertOctagon className="w-3.5 h-3.5" />
               تسجيل هالك
-            </Button>
+            </Button>}
 
-            <Button
+            {canCountStock && <Button
               size="sm"
               onClick={handleStartCount}
               className="gap-1.5 text-xs font-bold bg-emerald-600 hover:bg-emerald-700"
             >
               <Barcode className="w-3.5 h-3.5" />
               بدء جرد فعلي
-            </Button>
+            </Button>}
           </div>
         </div>
 
@@ -724,7 +740,7 @@ export default function Inventory() {
                           </td>
                           <td className="p-3 text-center">
                             <div className="flex items-center justify-center gap-1.5">
-                              {t.status === 'requested' && (
+                              {canTransferStock && t.status === 'requested' && (
                                 <Button
                                   size="sm"
                                   variant="outline"
@@ -739,7 +755,7 @@ export default function Inventory() {
                                 </Button>
                               )}
 
-                              {(t.status === 'approved' || t.status === 'draft') && (
+                              {canTransferStock && (t.status === 'approved' || t.status === 'draft') && (
                                 <Button
                                   size="sm"
                                   className="h-7 text-xs font-bold bg-indigo-600 hover:bg-indigo-700"
@@ -753,7 +769,7 @@ export default function Inventory() {
                                 </Button>
                               )}
 
-                              {t.status === 'in_transit' && (
+                              {canTransferStock && t.status === 'in_transit' && (
                                 <Button
                                   size="sm"
                                   className="h-7 text-xs font-bold bg-emerald-600 hover:bg-emerald-700"
@@ -834,6 +850,10 @@ export default function Inventory() {
                             variant="outline"
                             className="h-7 text-xs font-bold"
                             onClick={() => {
+                              if (s.status !== 'posted' && !canCountStock) {
+                                toast.error('ليس لديك صلاحية متابعة جلسة الجرد');
+                                return;
+                              }
                               setActiveSession(s);
                               setIsCountModalOpen(true);
                             }}
@@ -910,7 +930,7 @@ export default function Inventory() {
                           </td>
                           <td className="p-3 text-center">
                             <div className="flex items-center justify-center gap-1">
-                              {d.type === 'lost' && (
+                              {canDamageStock && d.type === 'lost' && (
                                 <Button
                                   size="sm"
                                   variant="ghost"
@@ -943,7 +963,7 @@ export default function Inventory() {
                                   استرداد بعد الفقد
                                 </Button>
                               )}
-                              <Button
+                              {canDamageStock && <Button
                                 size="sm"
                                 variant="ghost"
                                 className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
@@ -960,7 +980,7 @@ export default function Inventory() {
                                 }}
                               >
                                 <Trash2 className="w-4 h-4" />
-                              </Button>
+                              </Button>}
                             </div>
                           </td>
                         </tr>
@@ -975,11 +995,12 @@ export default function Inventory() {
 
         {/* DIALOGS */}
         <StockAdjustmentDialog
-          open={isAdjustmentOpen}
+          open={canAdjustStock && isAdjustmentOpen}
           onOpenChange={setIsAdjustmentOpen}
           balanceItem={adjustmentTarget}
           productName={products.find((p) => p.id === adjustmentTarget?.productId)?.name}
           onAdjust={async (...args) => {
+            if (!canAdjustStock) return { success: false, error: 'غير مصرح بتسوية المخزون' };
             const res = await adjustStock(...args);
             if (res.success) {
               await Promise.all([refreshMovements(), refreshDamage()]);
@@ -989,37 +1010,49 @@ export default function Inventory() {
         />
 
         <OpeningBalanceDialog
-          open={isOpeningBalanceOpen}
+          open={canOpeningBalance && isOpeningBalanceOpen}
           onOpenChange={setIsOpeningBalanceOpen}
           products={products}
           selectedLocationName={selectedLocObj?.name}
-          onSubmitBalance={addOpeningBalance}
+          onSubmitBalance={async (...args) => {
+            if (!canOpeningBalance) return { success: false, error: 'غير مصرح بإدخال رصيد افتتاحي' };
+            return addOpeningBalance(...args);
+          }}
         />
 
         <TransferManageDialog
-          open={isTransferOpen}
+          open={canTransferStock && isTransferOpen}
           onOpenChange={setIsTransferOpen}
           locations={locations}
           currentLocationId={selectedLocationId}
           products={products}
-          onCreateTransfer={createTransfer}
+          onCreateTransfer={async (...args) => {
+            if (!canTransferStock) return { success: false, error: 'غير مصرح بإنشاء مناقلة' };
+            return createTransfer(...args);
+          }}
         />
 
         <InventoryCountModal
-          open={isCountModalOpen}
+          open={isCountModalOpen && (activeSession?.status === 'posted' || canCountStock)}
           onOpenChange={setIsCountModalOpen}
           session={activeSession}
           onScanBarcode={scanBarcode}
           onUpdateQty={updateItemQty}
-          onPostSession={postSession}
+          onPostSession={async (...args) => {
+            if (!canCountStock) return { success: false, error: 'غير مصرح بترحيل الجرد' };
+            return postSession(...args);
+          }}
         />
 
         <DamageLossModal
-          open={isDamageOpen}
+          open={canDamageStock && isDamageOpen}
           onOpenChange={setIsDamageOpen}
           products={products}
           currentLocationId={selectedLocationId}
-          onRecordDamage={recordDamage}
+          onRecordDamage={async (...args) => {
+            if (!canDamageStock) return { success: false, error: 'غير مصرح بتسجيل الهالك' };
+            return recordDamage(...args);
+          }}
         />
       </div>
     </MainLayout>
