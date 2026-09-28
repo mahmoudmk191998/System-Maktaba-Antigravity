@@ -89,11 +89,6 @@ export async function triggerNativeInstall(): Promise<InstallOutcome> {
   }
 }
 
-export function showPWAInstallHelp() {
-  if (typeof window === 'undefined') return;
-  window.dispatchEvent(new CustomEvent('pwa:show-install-help'));
-}
-
 export function usePWAInstall() {
   const [, forceRender] = useState(0);
 
@@ -114,16 +109,7 @@ export function usePWAInstall() {
       isStandalone,
       canNativeInstall,
       platform,
-      async installOrShowHelp(): Promise<InstallOutcome> {
-        const result = await triggerNativeInstall();
-
-        if (result === 'unavailable') {
-          showPWAInstallHelp();
-        }
-
-        return result;
-      },
-      showInstallHelp: showPWAInstallHelp,
+      installNative: triggerNativeInstall,
     }),
     [isStandalone, canNativeInstall, platform]
   );
