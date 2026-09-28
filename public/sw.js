@@ -1,4 +1,4 @@
-const SW_VERSION = 'mk-library-pwa-v3';
+const SW_VERSION = 'mk-library-pwa-v4';
 
 self.addEventListener('install', (event) => {
   console.log('[Service Worker] Installed:', SW_VERSION);
