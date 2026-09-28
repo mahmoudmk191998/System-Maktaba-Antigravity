@@ -33,6 +33,7 @@ interface JournalDetailsDrawerProps {
   entry: JournalEntry | null;
   tenantId: string;
   userId: string;
+  canReverse?: boolean;
   onReversalSuccess: () => void;
 }
 
@@ -42,6 +43,7 @@ export function JournalDetailsDrawer({
   entry,
   tenantId,
   userId,
+  canReverse = false,
   onReversalSuccess,
 }: JournalDetailsDrawerProps) {
   const { toast } = useToast();
@@ -52,6 +54,10 @@ export function JournalDetailsDrawer({
   if (!entry) return null;
 
   const handleReverse = async () => {
+    if (!canReverse) {
+      toast({ title: 'غير مصرح', description: 'ليس لديك صلاحية عكس القيود المحاسبية', variant: 'destructive' });
+      return;
+    }
     if (!reversalReason.trim()) {
       toast({ title: 'تنبيه', description: 'يرجى كتابة سبب عكس القيد المحاسبي', variant: 'destructive' });
       return;
@@ -199,7 +205,7 @@ export function JournalDetailsDrawer({
             إغلاق
           </Button>
 
-          {!isReversed && (
+          {!isReversed && canReverse && (
             <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
               <AlertDialogTrigger asChild>
                 <Button variant="destructive" className="gap-1 text-xs">
