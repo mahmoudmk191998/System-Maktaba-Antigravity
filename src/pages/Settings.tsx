@@ -5,6 +5,7 @@ import { useAppStore } from '@/lib/store';
 import { useSettings, useUnits } from '@/hooks/useDatabase';
 import { useAuth } from '@/hooks/useAuth';
 import { useTheme } from '@/hooks/useTheme';
+import { useUserPermissions } from '@/hooks/usePermissions';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
@@ -68,6 +69,10 @@ export default function Settings() {
 
   const { user } = useAuth();
   const { theme, setTheme } = useTheme();
+  const { hasPermission } = useUserPermissions();
+  const canManageSettings = hasPermission('settings.manage');
+  const canResetData = hasPermission('settings.data_reset');
+  const canManageUnits = hasPermission('units.manage');
   const { updateTenantProfile, updateBranchProfile, wipeAllTenantData } = useSettings(currentTenant?.id || null);
   const { units, add: addUnit, remove: removeUnit, seedStandardUnits } = useUnits(currentTenant?.id || null);
 
@@ -116,6 +121,10 @@ export default function Settings() {
 
   const handleSave = async () => {
     if (isSaving) return;
+    if (!canManageSettings) {
+      toast.error('ليس لديك صلاحية تعديل إعدادات النظام');
+      return;
+    }
 
     if (!tenantName.trim()) {
       toast.error('يرجى إدخال اسم المؤسسة');
@@ -222,6 +231,10 @@ export default function Settings() {
   };
 
   const handleWipeData = async () => {
+    if (!canResetData) {
+      toast.error('ليس لديك صلاحية مسح وإعادة تهيئة بيانات المؤسسة');
+      return;
+    }
     if (wipeConfirmInput.trim() !== 'مسح' && wipeConfirmInput.trim() !== 'تأكيد' && wipeConfirmInput.trim().toUpperCase() !== 'CONFIRM') {
       toast.error('يرجى كتابة كلمة "مسح" في الحقل لتأكيد العملية');
       return;
@@ -301,6 +314,10 @@ export default function Settings() {
   };
 
   const handleResetOrderCounter = async () => {
+    if (!canManageSettings) {
+      toast.error('ليس لديك صلاحية تعديل إعدادات العدادات');
+      return;
+    }
     if (!currentBranch?.id) return;
     if (window.confirm('هل أنت متأكد من رغبتك في تصفير عداد أرقام الطلبات؟ هذا يعني أن الطلب القادم سيبدأ من رقم 1. يرجى توخي الحذر لتجنب تكرار أرقام الطلبات لنفس اليوم.')) {
       setIsResettingCounter(true);
@@ -1189,10 +1206,13 @@ export default function Settings() {
                 <CardDescription>إدارة وحدات القياس المستخدمة في المخزون والوصفات</CardDescription>
               </div>
               <div className="flex flex-wrap gap-2 w-full sm:w-auto">
-                <Button variant="outline" size="sm" onClick={async () => await seedStandardUnits()}>
+                <Button variant="outline" size="sm" disabled={!canManageUnits} onClick={async () => {
+                    if (!canManageUnits) return;
+                    await seedStandardUnits();
+                  }}>
                   استعادة الوحدات الافتراضية
                 </Button>
-                <Button size="sm" onClick={() => setNewUnitMode(true)}>
+                <Button size="sm" disabled={!canManageUnits} onClick={() => canManageUnits && setNewUnitMode(true)}>
                   إضافة وحدة
                 </Button>
               </div>
@@ -1283,7 +1303,7 @@ export default function Settings() {
 
         {/* Save Button */}
         <div className="flex justify-end pt-4 border-t">
-          <Button onClick={handleSave} disabled={isSaving} className="gap-2 w-full sm:w-auto sm:min-w-[160px]">
+          <Button onClick={handleSave} disabled={isSaving || !canManageSettings} title={!canManageSettings ? 'وضع عرض فقط — لا تملك settings.manage' : undefined} className="gap-2 w-full sm:w-auto sm:min-w-[160px]">
             {isSaving ? (
               <>
                 <Loader2 className="w-4 h-4 animate-spin" />
