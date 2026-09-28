@@ -1,12 +1,11 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { MainLayout } from '@/components/layout';
 import { cn } from '@/lib/utils';
-import { db, firebaseConfig } from '@/lib/firebase';
+import { db } from '@/lib/firebase';
 import { collection, query, where, getDocs, doc, deleteDoc, addDoc, updateDoc, setDoc, writeBatch } from 'firebase/firestore';
-import { initializeApp } from 'firebase/app';
-import { getAuth, createUserWithEmailAndPassword, updateProfile } from 'firebase/auth';
 import { useTenantBranch } from '@/hooks/useDatabase';
 import { useAuth } from '@/hooks/useAuth';
+import { useUserPermissions } from '@/hooks/usePermissions';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
@@ -33,6 +32,12 @@ import {
   isAdminOrOwnerRole,
 } from '@/lib/permissionsModel';
 import { notifySecurityRoleChanged } from '@/services/notifications.service';
+import {
+  createGoogleStaffInvitation,
+  createPasswordStaffAccount,
+  persistExactUserAccess,
+  sanitizePermissionList,
+} from '@/services/security/userProvisioning.service';
 
 interface UserEntry {
   id: string;
@@ -62,6 +67,7 @@ const iconMap: Record<string, any> = {
 
 export default function Permissions() {
   const { user } = useAuth();
+  const { isOwner: currentActorIsOwner } = useUserPermissions();
   const { tenantId, branchId } = useTenantBranch();
   const [users, setUsers] = useState<UserEntry[]>([]);
   const [branches, setBranches] = useState<BranchItem[]>([]);
@@ -92,9 +98,15 @@ export default function Permissions() {
     if (!tenantId) return;
     const fetchBranches = async () => {
       try {
-        const bSnap = await getDocs(query(collection(db, 'branches'), where('tenant_id', '==', tenantId)));
-        const branchList = bSnap.docs.map((d) => ({ id: d.id, name: d.data().name || 'فرع بدون اسم' }));
-        setBranches(branchList);
+        const [snakeSnap, camelSnap] = await Promise.all([
+          getDocs(query(collection(db, 'branches'), where('tenant_id', '==', tenantId))),
+          getDocs(query(collection(db, 'branches'), where('tenantId', '==', tenantId))),
+        ]);
+        const branchMap = new Map<string, BranchItem>();
+        [...snakeSnap.docs, ...camelSnap.docs].forEach((d) => {
+          branchMap.set(d.id, { id: d.id, name: d.data().name || 'فرع بدون اسم' });
+        });
+        setBranches(Array.from(branchMap.values()));
       } catch (err) {
         console.warn('Error fetching branches for permissions:', err);
       }
@@ -107,9 +119,15 @@ export default function Permissions() {
     if (!tenantId) return;
     setLoading(true);
     try {
-      const profilesQ = query(collection(db, 'profiles'), where('tenant_id', '==', tenantId));
-      const profilesSnap = await getDocs(profilesQ);
-      const profiles = profilesSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      const [profilesSnakeSnap, profilesCamelSnap] = await Promise.all([
+        getDocs(query(collection(db, 'profiles'), where('tenant_id', '==', tenantId))),
+        getDocs(query(collection(db, 'profiles'), where('tenantId', '==', tenantId))),
+      ]);
+      const profileMap = new Map<string, any>();
+      [...profilesSnakeSnap.docs, ...profilesCamelSnap.docs].forEach((d) => {
+        profileMap.set(d.id, { id: d.id, ...d.data() });
+      });
+      const profiles = Array.from(profileMap.values());
 
       if (profiles.length === 0) {
         setUsers([]);
@@ -137,9 +155,11 @@ export default function Permissions() {
           full_name: (p as any).full_name || (p as any).email?.split('@')[0] || 'مستخدم',
           email: (p as any).email || '',
           role,
-          permissions: perms.map((x: any) => x.permission),
+          permissions: Array.isArray((p as any).permissions)
+            ? (p as any).permissions
+            : perms.map((x: any) => x.permission),
           status: userStatus,
-          branch_id: (p as any).branch_id || null,
+          branch_id: (p as any).branchId ?? (p as any).branch_id ?? null,
         });
       }
 
@@ -176,9 +196,9 @@ export default function Permissions() {
 
   // Toggle individual permission
   const togglePermission = (permId: string) => {
-    // Safety check: Cannot remove permissions.manage from self
-    if (isSelectedCurrentUser && permId === 'permissions.manage' && editPermissions.includes(permId)) {
-      toast.error('لا يمكنك إزالة صلاحية إدارة الصلاحيات من حسابك الحالي لتجنب إغلاق النظام');
+    // Never allow an authenticated user to alter their own authorization set.
+    if (isSelectedCurrentUser) {
+      toast.error('لا يمكنك تعديل صلاحيات حسابك الحالي. استخدم حساب مالك/مدير آخر لإجراء هذا التغيير.');
       return;
     }
 
@@ -191,6 +211,10 @@ export default function Permissions() {
   const toggleCategory = (categoryId: string) => {
     const category = PERMISSION_CATEGORIES.find((c) => c.id === categoryId);
     if (!category) return;
+    if (isSelectedCurrentUser) {
+      toast.error('لا يمكنك تعديل صلاحيات حسابك الحالي.');
+      return;
+    }
     const catPerms = category.permissions.map((p) => p.id);
     const allEnabled = catPerms.every((p) => editPermissions.includes(p));
 
@@ -210,6 +234,10 @@ export default function Permissions() {
   // Reset a single category to role template defaults
   const resetCategoryToRoleDefault = (categoryId: string) => {
     if (!selectedUser) return;
+    if (isSelectedCurrentUser) {
+      toast.error('لا يمكنك تعديل صلاحيات حسابك الحالي.');
+      return;
+    }
     const category = PERMISSION_CATEGORIES.find((c) => c.id === categoryId);
     if (!category) return;
     const catPerms = category.permissions.map((p) => p.id);
@@ -227,6 +255,10 @@ export default function Permissions() {
   // Reset all permissions of selected user to their role template defaults
   const resetAllToRoleDefaults = () => {
     if (!selectedUser) return;
+    if (isSelectedCurrentUser) {
+      toast.error('لا يمكنك تعديل صلاحيات حسابك الحالي.');
+      return;
+    }
     const template = ROLE_TEMPLATES[selectedUser.role];
     if (template) {
       if (template.permissions.includes('*')) {
@@ -240,9 +272,18 @@ export default function Permissions() {
 
   // Apply Role Template directly
   const applyRoleTemplate = async (roleKey: string) => {
-    if (!selectedUser) return;
+    if (!selectedUser || !tenantId) return;
 
-    // Safety: check if demoting the last admin
+    if (isSelectedCurrentUser) {
+      toast.error('لا يمكنك تغيير دور حسابك الحالي.');
+      return;
+    }
+
+    if (isOwnerRole(roleKey) && !currentActorIsOwner) {
+      toast.error('تعيين دور المالك أو المدير الأعلى متاح للمالك فقط.');
+      return;
+    }
+
     if (
       isAdminOrOwnerRole(selectedUser.role) &&
       !isAdminOrOwnerRole(roleKey) &&
@@ -255,62 +296,37 @@ export default function Permissions() {
     const template = ROLE_TEMPLATES[roleKey];
     if (!template) return;
 
-    const newPerms = template.permissions.includes('*') ? [...ALL_PERMISSION_IDS] : [...template.permissions];
-    setEditPermissions(newPerms);
+    const newPerms = sanitizePermissionList(
+      roleKey,
+      template.permissions.includes('*') ? ['*'] : template.permissions
+    );
 
     setLoading(true);
     try {
-      // 1. Update user_roles collection
-      const rolesQ = query(collection(db, 'user_roles'), where('user_id', '==', selectedUser.id));
-      const rolesSnap = await getDocs(rolesQ);
-      for (const rDoc of rolesSnap.docs) {
-        await deleteDoc(rDoc.ref);
-      }
-      await addDoc(collection(db, 'user_roles'), {
-        user_id: selectedUser.id,
+      const persisted = await persistExactUserAccess({
+        targetUid: selectedUser.id,
+        tenantId,
         role: roleKey,
-        tenant_id: tenantId,
-        updated_at: new Date().toISOString(),
+        permissions: newPerms,
+        grantedBy: user?.uid || null,
       });
 
-      // 2. Update profiles collection
-      await updateDoc(doc(db, 'profiles', selectedUser.id), {
-        role: roleKey,
-        updated_at: new Date().toISOString(),
-      });
-
-      // 3. Update user_permissions collection using atomic batch
-      const permsQ = query(collection(db, 'user_permissions'), where('user_id', '==', selectedUser.id));
-      const permsSnap = await getDocs(permsQ);
-      const permBatch = writeBatch(db);
-      for (const pDoc of permsSnap.docs) {
-        permBatch.delete(pDoc.ref);
-      }
-      const nowStr = new Date().toISOString();
-      for (const p of newPerms) {
-        const pRef = doc(collection(db, 'user_permissions'));
-        permBatch.set(pRef, {
-          tenant_id: tenantId || null,
-          user_id: selectedUser.id,
-          permission: p,
-          granted_by: user?.uid || null,
-          created_at: nowStr,
+      try {
+        await addDoc(collection(db, 'audit_logs'), {
+          tenant_id: tenantId,
+          tenantId,
+          action: 'ROLE_CHANGED',
+          target_id: selectedUser.id,
+          target_name: selectedUser.full_name,
+          user: user?.email || 'المدير',
+          details: `تغيير دور المستخدم ${selectedUser.full_name} إلى ${template.label}`,
+          old_role: selectedUser.role,
+          new_role: roleKey,
+          created_at: new Date().toISOString(),
         });
+      } catch (auditErr) {
+        console.warn('Role audit log failed non-fatally:', auditErr);
       }
-      await permBatch.commit();
-
-      // 4. Record Audit Log
-      await addDoc(collection(db, 'audit_logs'), {
-        tenant_id: tenantId,
-        action: 'ROLE_CHANGED',
-        target_id: selectedUser.id,
-        target_name: selectedUser.full_name,
-        user: user?.email || 'المدير',
-        details: `تغيير دور المستخدم ${selectedUser.full_name} إلى ${template.label}`,
-        old_role: selectedUser.role,
-        new_role: roleKey,
-        created_at: new Date().toISOString(),
-      });
 
       notifySecurityRoleChanged(
         user?.displayName || user?.email || 'المدير',
@@ -318,12 +334,13 @@ export default function Permissions() {
         template.label
       ).catch(() => {});
 
-      toast.success(`تم تعيين دور "${template.label}" وحفظ الصلاحيات بنجاح`);
-      setSelectedUser((prev) => (prev ? { ...prev, role: roleKey, permissions: newPerms } : null));
+      setEditPermissions(persisted);
+      setSelectedUser((prev) => (prev ? { ...prev, role: roleKey, permissions: persisted } : null));
+      toast.success(`تم تعيين دور "${template.label}" بصلاحيات فعلية قابلة للتخصيص`);
       await fetchUsers();
     } catch (err: any) {
       console.error('Error applying role template:', err);
-      toast.error('حدث خطأ أثناء تطبيق قالب الدور');
+      toast.error(err?.message || 'حدث خطأ أثناء تطبيق قالب الدور');
     } finally {
       setLoading(false);
     }
@@ -383,7 +400,9 @@ export default function Permissions() {
     try {
       await updateDoc(doc(db, 'profiles', selectedUser.id), {
         branch_id: finalBranchId,
+        branchId: finalBranchId,
         updated_at: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
       });
       setSelectedUser((prev) => (prev ? { ...prev, branch_id: finalBranchId } : null));
       toast.success('تم تحديث فرع المستخدم بنجاح');
@@ -393,54 +412,44 @@ export default function Permissions() {
     }
   };
 
-  // Save manual permission changes
+  // Save exact manual permission changes
   const savePermissions = async () => {
-    if (!selectedUser) return;
+    if (!selectedUser || !tenantId) return;
+
+    if (isSelectedCurrentUser) {
+      toast.error('لا يمكنك تعديل صلاحيات حسابك الحالي.');
+      return;
+    }
 
     setLoading(true);
     try {
-      // 1. Delete existing user_permissions and add new ones in an atomic batch
-      const permsQ = query(collection(db, 'user_permissions'), where('user_id', '==', selectedUser.id));
-      const permsSnap = await getDocs(permsQ);
-      
-      const batch = writeBatch(db);
-      for (const pDoc of permsSnap.docs) {
-        batch.delete(pDoc.ref);
-      }
+      const exactPermissions = sanitizePermissionList(selectedUser.role, editPermissions);
+      const persisted = await persistExactUserAccess({
+        targetUid: selectedUser.id,
+        tenantId,
+        role: selectedUser.role,
+        permissions: exactPermissions,
+        grantedBy: user?.uid || null,
+      });
 
-      const now = new Date().toISOString();
-      for (const p of editPermissions) {
-        const pRef = doc(collection(db, 'user_permissions'));
-        batch.set(pRef, {
-          tenant_id: tenantId || null,
-          user_id: selectedUser.id,
-          permission: p,
-          granted_by: user?.uid || null,
-          created_at: now,
+      try {
+        await addDoc(collection(db, 'audit_logs'), {
+          tenant_id: tenantId,
+          tenantId,
+          action: 'PERMISSIONS_UPDATED',
+          target_id: selectedUser.id,
+          target_name: selectedUser.full_name,
+          user: user?.email || 'المدير',
+          details: `تحديث الصلاحيات الدقيقة للمستخدم ${selectedUser.full_name} (${persisted.length} صلاحية)`,
+          created_at: new Date().toISOString(),
         });
+      } catch (auditErr) {
+        console.warn('Audit log write failed non-fatally:', auditErr);
       }
 
-      await batch.commit();
-
-      // 2. Audit log
-      if (tenantId) {
-        try {
-          await addDoc(collection(db, 'audit_logs'), {
-            tenant_id: tenantId,
-            action: 'PERMISSIONS_UPDATED',
-            target_id: selectedUser.id,
-            target_name: selectedUser.full_name,
-            user: user?.email || 'المدير',
-            details: `تحديث الصلاحيات للمستخدم ${selectedUser.full_name} (${editPermissions.length} صلاحية)`,
-            created_at: now,
-          });
-        } catch (auditErr) {
-          console.warn('Audit log write failed non-fatally:', auditErr);
-        }
-      }
-
-      toast.success(`تم حفظ ${editPermissions.length} صلاحية للمستخدم بنجاح`);
-      setSelectedUser((prev) => (prev ? { ...prev, permissions: editPermissions } : null));
+      setEditPermissions(persisted);
+      setSelectedUser((prev) => (prev ? { ...prev, permissions: persisted } : null));
+      toast.success(`تم حفظ ${persisted.length} صلاحية فعلية للمستخدم`);
       await fetchUsers();
     } catch (err: any) {
       console.error('Error saving permissions:', err);
@@ -450,16 +459,19 @@ export default function Permissions() {
     }
   };
 
-  // Add new user handler
+  // Add new user / create secure Google invitation
   const handleAddUser = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!tenantId) return;
 
-    if (!newUserForm.name.trim()) {
+    const name = newUserForm.name.trim();
+    const email = newUserForm.email.trim().toLowerCase();
+
+    if (!name) {
       toast.error('يرجى إدخال اسم الموظف');
       return;
     }
-    if (!newUserForm.email.trim()) {
+    if (!email) {
       toast.error('يرجى إدخال البريد الإلكتروني');
       return;
     }
@@ -467,128 +479,132 @@ export default function Permissions() {
       toast.error('يجب أن تكون كلمة المرور 6 أحرف أو أكثر');
       return;
     }
+    if (isOwnerRole(newUserForm.role) && !currentActorIsOwner) {
+      toast.error('إنشاء حساب مالك / مدير أعلى متاح للمالك فقط.');
+      return;
+    }
 
     setAddingUser(true);
     try {
-      let createdUid = '';
+      const branchVal = newUserForm.branchId === 'all' ? null : newUserForm.branchId;
+      const initialPerms = sanitizePermissionList(newUserForm.role);
 
       if (useGoogleAuth) {
-        createdUid = `user_${Date.now()}`;
+        await createGoogleStaffInvitation({
+          name,
+          email,
+          tenantId,
+          branchId: branchVal,
+          role: newUserForm.role,
+          permissions: initialPerms,
+          grantedBy: user?.uid || null,
+        });
+
+        toast.success('تم إنشاء دعوة Google حقيقية. عند دخول الموظف بنفس Gmail سيتم ربط Firebase UID الحقيقي وتفعيل الحساب تلقائياً.');
       } else {
-        const secondaryApp = initializeApp(firebaseConfig, `user-create-${Date.now()}`);
-        const secondaryAuth = getAuth(secondaryApp);
-        const cred = await createUserWithEmailAndPassword(secondaryAuth, newUserForm.email, newUserForm.password);
-        createdUid = cred.user.uid;
-        await updateProfile(cred.user, { displayName: newUserForm.name });
+        await createPasswordStaffAccount({
+          name,
+          email,
+          password: newUserForm.password,
+          tenantId,
+          branchId: branchVal,
+          role: newUserForm.role,
+          permissions: initialPerms,
+          grantedBy: user?.uid || null,
+        });
+
+        toast.success('تم إنشاء حساب Firebase وتطبيق الدور والصلاحيات بنجاح');
       }
 
-      // Create profile document
-      const branchVal = newUserForm.branchId === 'all' ? null : newUserForm.branchId;
-      await setDoc(doc(db, 'profiles', createdUid), {
-        full_name: newUserForm.name,
-        email: newUserForm.email,
-        tenant_id: tenantId,
-        branch_id: branchVal,
-        role: newUserForm.role,
-        status: 'active',
-        created_at: new Date().toISOString(),
-      });
-
-      // Add user_roles
-      await addDoc(collection(db, 'user_roles'), {
-        user_id: createdUid,
-        role: newUserForm.role,
-        tenant_id: tenantId,
-        created_at: new Date().toISOString(),
-      });
-
-      // Apply initial role permissions
-      const initialTemplate = ROLE_TEMPLATES[newUserForm.role];
-      const initialPerms = initialTemplate
-        ? initialTemplate.permissions.includes('*')
-          ? ALL_PERMISSION_IDS
-          : initialTemplate.permissions
-        : [];
-
-      for (const p of initialPerms) {
-        await addDoc(collection(db, 'user_permissions'), {
-          user_id: createdUid,
-          permission: p,
-          granted_by: user?.uid,
+      try {
+        await addDoc(collection(db, 'audit_logs'), {
+          tenant_id: tenantId,
+          tenantId,
+          action: useGoogleAuth ? 'GOOGLE_USER_INVITED' : 'USER_CREATED',
+          target_name: name,
+          target_email: email,
+          user: user?.email || 'المدير',
+          details: useGoogleAuth
+            ? `دعوة Google للموظف ${name} بدور ${getRoleLabel(newUserForm.role)}`
+            : `إنشاء مستخدم ${name} بدور ${getRoleLabel(newUserForm.role)}`,
           created_at: new Date().toISOString(),
         });
+      } catch (auditErr) {
+        console.warn('User provisioning audit failed non-fatally:', auditErr);
       }
 
-      // Log to audit
-      await addDoc(collection(db, 'audit_logs'), {
-        tenant_id: tenantId,
-        action: 'USER_CREATED',
-        target_id: createdUid,
-        target_name: newUserForm.name,
-        user: user?.email || 'المدير',
-        details: `إضافة مستخدم جديد: ${newUserForm.name} بدور: ${getRoleLabel(newUserForm.role)}`,
-        created_at: new Date().toISOString(),
-      });
-
-      toast.success('تمت إضافة المستخدم بنجاح');
       setShowAddUser(false);
+      setUseGoogleAuth(false);
       setNewUserForm({ name: '', email: '', password: '', role: 'cashier', branchId: 'all' });
       await fetchUsers();
     } catch (err: any) {
-      console.error('Error creating user:', err);
-      toast.error('حدث خطأ أثناء إنشاء المستخدم: ' + (err.message || ''));
+      console.error('Error provisioning user:', err);
+      toast.error('حدث خطأ أثناء تجهيز الحساب: ' + (err?.message || ''));
     } finally {
       setAddingUser(false);
     }
   };
 
-  // Delete User Handler
+  // Revoke user access while preserving identity/history.
+  // Client Firebase SDK cannot delete another user's Authentication account.
   const handleDeleteUser = async () => {
-    if (!selectedUser) return;
+    if (!selectedUser || !tenantId) return;
 
     if (isSelectedCurrentUser) {
-      toast.error('لا يمكنك حذف حسابك الشخصي الذي تستخدمه حالياً.');
+      toast.error('لا يمكنك سحب الوصول من حسابك الحالي.');
       return;
     }
 
     if (isAdminOrOwnerRole(selectedUser.role) && activeAdminCount <= 1) {
-      toast.error('لا يمكن حذف هذا المستخدم لأنه المدير الوحيد في المنشأة.');
+      toast.error('لا يمكن سحب الوصول من هذا المستخدم لأنه المدير الوحيد في المنشأة.');
       return;
     }
 
     setDeletingUser(true);
     try {
-      // 1. Delete roles
-      const rolesQ = query(collection(db, 'user_roles'), where('user_id', '==', selectedUser.id));
-      const rolesSnap = await getDocs(rolesQ);
-      for (const d of rolesSnap.docs) await deleteDoc(d.ref);
+      const [rolesSnap, permsSnap] = await Promise.all([
+        getDocs(query(collection(db, 'user_roles'), where('user_id', '==', selectedUser.id))),
+        getDocs(query(collection(db, 'user_permissions'), where('user_id', '==', selectedUser.id))),
+      ]);
 
-      // 2. Delete permissions
-      const permsQ = query(collection(db, 'user_permissions'), where('user_id', '==', selectedUser.id));
-      const permsSnap = await getDocs(permsQ);
-      for (const d of permsSnap.docs) await deleteDoc(d.ref);
+      const batch = writeBatch(db);
+      rolesSnap.docs.forEach((d) => batch.delete(d.ref));
+      permsSnap.docs.forEach((d) => batch.delete(d.ref));
+      batch.set(
+        doc(db, 'profiles', selectedUser.id),
+        {
+          status: 'disabled',
+          permissions: [],
+          access_revoked_at: new Date().toISOString(),
+          access_revoked_by: user?.uid || null,
+          updated_at: new Date().toISOString(),
+        },
+        { merge: true }
+      );
+      await batch.commit();
 
-      // 3. Delete profile
-      await deleteDoc(doc(db, 'profiles', selectedUser.id));
+      try {
+        await addDoc(collection(db, 'audit_logs'), {
+          tenant_id: tenantId,
+          tenantId,
+          action: 'USER_ACCESS_REVOKED',
+          target_id: selectedUser.id,
+          target_name: selectedUser.full_name,
+          user: user?.email || 'المدير',
+          details: `سحب صلاحيات ووصول المستخدم: ${selectedUser.full_name} (${selectedUser.email})`,
+          created_at: new Date().toISOString(),
+        });
+      } catch (auditErr) {
+        console.warn('User revoke audit failed non-fatally:', auditErr);
+      }
 
-      // 4. Audit log
-      await addDoc(collection(db, 'audit_logs'), {
-        tenant_id: tenantId,
-        action: 'USER_DELETED',
-        target_id: selectedUser.id,
-        target_name: selectedUser.full_name,
-        user: user?.email || 'المدير',
-        details: `حذف المستخدم: ${selectedUser.full_name} (${selectedUser.email})`,
-        created_at: new Date().toISOString(),
-      });
-
-      toast.success('تم حذف المستخدم بنجاح');
+      toast.success('تم سحب وصول المستخدم وتعطيل حسابه داخل النظام مع الاحتفاظ بالسجل التاريخي');
       setShowDeleteConfirm(false);
       setSelectedUser(null);
       await fetchUsers();
     } catch (err: any) {
-      console.error('Error deleting user:', err);
-      toast.error('حدث خطأ أثناء حذف المستخدم');
+      console.error('Error revoking user access:', err);
+      toast.error(err?.message || 'حدث خطأ أثناء سحب وصول المستخدم');
     } finally {
       setDeletingUser(false);
     }
@@ -766,6 +782,7 @@ export default function Permissions() {
                   <div className="flex items-center gap-2 flex-wrap">
                     <Button
                       onClick={savePermissions}
+                      disabled={isSelectedCurrentUser}
                       className="h-11 rounded-2xl gap-2 font-bold px-6 shadow-lg shadow-primary/25"
                     >
                       <Save className="w-4 h-4" />
@@ -778,7 +795,7 @@ export default function Permissions() {
                         size="icon"
                         className="h-11 w-11 rounded-2xl text-destructive border-border/60 hover:border-destructive/40 hover:bg-destructive/10"
                         onClick={() => setShowDeleteConfirm(true)}
-                        title="حذف المستخدم"
+                        title="سحب وصول المستخدم"
                       >
                         <Trash2 className="w-4 h-4" />
                       </Button>
@@ -791,12 +808,14 @@ export default function Permissions() {
                   {/* Role Selector */}
                   <div className="space-y-1.5 bg-background/50 p-3 rounded-2xl border border-border/40">
                     <Label className="text-xs text-muted-foreground font-bold">الدور الوظيفي (Role)</Label>
-                    <Select value={selectedUser.role} onValueChange={applyRoleTemplate}>
+                    <Select value={selectedUser.role} onValueChange={applyRoleTemplate} disabled={isSelectedCurrentUser}>
                       <SelectTrigger className="h-9 rounded-xl text-xs font-bold border-border/60">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent className="rounded-xl">
-                        {Object.values(ROLE_TEMPLATES).map((tmpl) => (
+                        {Object.values(ROLE_TEMPLATES)
+                          .filter((tmpl) => currentActorIsOwner || !isOwnerRole(tmpl.key))
+                          .map((tmpl) => (
                           <SelectItem key={tmpl.key} value={tmpl.key} className="text-xs font-bold cursor-pointer">
                             {tmpl.label}
                           </SelectItem>
@@ -843,6 +862,7 @@ export default function Permissions() {
                     <Button
                       variant="outline"
                       onClick={resetAllToRoleDefaults}
+                      disabled={isSelectedCurrentUser}
                       className="w-full h-9 rounded-xl text-xs font-bold gap-1.5 border-border/60 hover:bg-primary/5 hover:text-primary"
                     >
                       <RotateCcw className="w-3.5 h-3.5" />
@@ -1010,7 +1030,7 @@ export default function Permissions() {
                 type="email"
                 value={newUserForm.email}
                 onChange={(e) => setNewUserForm((f) => ({ ...f, email: e.target.value }))}
-                placeholder="user@restaurant.com"
+                placeholder="employee@gmail.com"
                 className="rounded-xl h-10"
                 required
                 dir="ltr"
@@ -1020,7 +1040,7 @@ export default function Permissions() {
             <div className="flex items-center justify-between p-3 border rounded-2xl bg-muted/20">
               <div className="space-y-0.5">
                 <Label className="text-xs font-bold">تسجيل الدخول عبر Google</Label>
-                <p className="text-[10px] text-muted-foreground">السماح بالدخول بحساب Google دون كلمة مرور</p>
+                <p className="text-[10px] text-muted-foreground">سيتم إنشاء دعوة آمنة؛ أول دخول بنفس Gmail يربط UID الحقيقي تلقائياً</p>
               </div>
               <Switch checked={useGoogleAuth} onCheckedChange={setUseGoogleAuth} />
             </div>
@@ -1051,7 +1071,9 @@ export default function Permissions() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent className="rounded-xl">
-                    {Object.values(ROLE_TEMPLATES).map((tmpl) => (
+                    {Object.values(ROLE_TEMPLATES)
+                      .filter((tmpl) => currentActorIsOwner || !isOwnerRole(tmpl.key))
+                      .map((tmpl) => (
                       <SelectItem key={tmpl.key} value={tmpl.key} className="text-xs font-bold">
                         {tmpl.label}
                       </SelectItem>
@@ -1108,16 +1130,16 @@ export default function Permissions() {
           <DialogHeader>
             <DialogTitle className="text-lg font-bold text-destructive flex items-center gap-2">
               <AlertTriangle className="w-5 h-5" />
-              تأكيد حذف المستخدم
+              تأكيد سحب وصول المستخدم
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-3 py-2 text-sm text-muted-foreground leading-relaxed">
             <p>
-              هل أنت متأكد من رغبتك في حذف حساب المستخدم{' '}
+              هل أنت متأكد من رغبتك في سحب وصول المستخدم{' '}
               <strong className="text-foreground">{selectedUser?.full_name}</strong> نهائياً؟
             </p>
             <p className="text-xs text-destructive/90 bg-destructive/10 p-2.5 rounded-xl border border-destructive/20">
-              سيتم سحب جميع الصلاحيات والأدوار فوراً وحذف ملف الدخول.
+              سيتم تعطيل الحساب داخل النظام وسحب جميع الأدوار والصلاحيات مع الاحتفاظ بالسجل التاريخي. حساب Firebase Authentication نفسه لا يُحذف من المتصفح.
             </p>
           </div>
           <div className="flex items-center justify-end gap-2 pt-2">
@@ -1134,7 +1156,7 @@ export default function Permissions() {
               onClick={handleDeleteUser}
               className="rounded-xl text-xs font-bold h-10 gap-2"
             >
-              {deletingUser ? 'جاري الحذف...' : 'تأكيد الحذف النهائي'}
+              {deletingUser ? 'جاري الحذف...' : 'سحب الوصول وتعطيل الحساب'}
             </Button>
           </div>
         </DialogContent>
