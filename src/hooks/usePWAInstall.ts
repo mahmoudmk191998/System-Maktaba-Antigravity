@@ -15,6 +15,25 @@ function emitChange() {
   subscribers.forEach((listener) => listener());
 }
 
+function getWindowPrompt(): BeforeInstallPromptEvent | null {
+  if (typeof window === 'undefined') return null;
+  return ((window as any).__MK_PWA_INSTALL_PROMPT__ as BeforeInstallPromptEvent | null) || null;
+}
+
+function setWindowPrompt(prompt: BeforeInstallPromptEvent | null) {
+  if (typeof window === 'undefined') return;
+  (window as any).__MK_PWA_INSTALL_PROMPT__ = prompt;
+  (window as any).__MK_PWA_INSTALLABLE__ = !!prompt;
+}
+
+function syncPromptFromWindow() {
+  const captured = getWindowPrompt();
+  if (captured !== deferredPrompt) {
+    deferredPrompt = captured;
+    emitChange();
+  }
+}
+
 export function isRunningStandalone(): boolean {
   if (typeof window === 'undefined') return false;
   return (
@@ -35,21 +54,27 @@ function ensurePWAInstallListeners() {
   if (initialized || typeof window === 'undefined') return;
   initialized = true;
 
+  // Pull in an event captured by index.html before the React bundle executed.
+  syncPromptFromWindow();
+
+  // Safety listener for browsers that emit after React is running.
   window.addEventListener('beforeinstallprompt', (event) => {
     event.preventDefault();
     deferredPrompt = event as BeforeInstallPromptEvent;
+    setWindowPrompt(deferredPrompt);
     emitChange();
   });
 
-  window.addEventListener('appinstalled', () => {
+  window.addEventListener('mk:pwa-install-ready', syncPromptFromWindow);
+
+  const clearInstallPrompt = () => {
     deferredPrompt = null;
-    try {
-      localStorage.removeItem('pwa-prompt-dismissed');
-    } catch {
-      // Non-critical preference cleanup.
-    }
+    setWindowPrompt(null);
     emitChange();
-  });
+  };
+
+  window.addEventListener('appinstalled', clearInstallPrompt);
+  window.addEventListener('mk:pwa-install-consumed', clearInstallPrompt);
 
   const media = window.matchMedia('(display-mode: standalone)');
   const handleDisplayModeChange = () => emitChange();
@@ -57,33 +82,39 @@ function ensurePWAInstallListeners() {
   if (typeof media.addEventListener === 'function') {
     media.addEventListener('change', handleDisplayModeChange);
   } else {
-    // Safari legacy fallback.
     (media as any).addListener?.(handleDisplayModeChange);
   }
 }
 
-// Register as soon as this module is imported so Chrome cannot fire
-// beforeinstallprompt before a route/layout component is mounted.
+// Register immediately at module evaluation time.
 ensurePWAInstallListeners();
 
 export async function triggerNativeInstall(): Promise<InstallOutcome> {
   if (isRunningStandalone()) return 'installed';
 
-  const promptEvent = deferredPrompt;
-  if (!promptEvent) return 'unavailable';
+  // Re-sync in case index.html captured the event before this module existed.
+  syncPromptFromWindow();
+
+  const promptEvent = deferredPrompt || getWindowPrompt();
+  if (!promptEvent) {
+    return 'unavailable';
+  }
 
   try {
+    // Must run from the user's click handler; this opens Chrome/Edge native UI.
     await promptEvent.prompt();
     const choice = await promptEvent.userChoice;
 
-    // beforeinstallprompt events are single-use.
+    // Chromium install events are single-use, regardless of accepted/dismissed.
     deferredPrompt = null;
+    setWindowPrompt(null);
     emitChange();
 
     return choice.outcome;
   } catch (error) {
     console.warn('[PWA] Native install prompt failed:', error);
     deferredPrompt = null;
+    setWindowPrompt(null);
     emitChange();
     return 'unavailable';
   }
@@ -93,15 +124,26 @@ export function usePWAInstall() {
   const [, forceRender] = useState(0);
 
   useEffect(() => {
+    syncPromptFromWindow();
+
     const subscriber = () => forceRender((value) => value + 1);
     subscribers.add(subscriber);
+
+    const onReady = () => {
+      syncPromptFromWindow();
+      forceRender((value) => value + 1);
+    };
+
+    window.addEventListener('mk:pwa-install-ready', onReady);
+
     return () => {
       subscribers.delete(subscriber);
+      window.removeEventListener('mk:pwa-install-ready', onReady);
     };
   }, []);
 
   const isStandalone = isRunningStandalone();
-  const canNativeInstall = !!deferredPrompt;
+  const canNativeInstall = !!(deferredPrompt || getWindowPrompt());
   const platform = getInstallPlatform();
 
   return useMemo(
