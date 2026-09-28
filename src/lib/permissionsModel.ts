@@ -240,10 +240,12 @@ export const PERMISSION_CATEGORIES: PermissionCategory[] = [
     permissions: [
       { id: 'settings.view', label: 'عرض إعدادات الفرع والضريبة والطابعات' },
       { id: 'settings.manage', label: 'تعديل الإعدادات الأساسية والمتقدمة' },
+      { id: 'settings.data_reset', label: 'مسح وإعادة تهيئة جميع بيانات التشغيل للمؤسسة' },
       { id: 'permissions.manage', label: 'إدارة المستخدمين والأدوار وتعيين الصلاحيات' },
       { id: 'maintenance.view', label: 'عرض سجل الصيانة والأصول' },
       { id: 'maintenance.manage', label: 'إدارة طلبات الصيانة ومتابعة المعدات' },
-      { id: 'integrations.view', label: 'عرض وإدارة منصات التكاملات والـ API' },
+      { id: 'integrations.view', label: 'عرض منصات التكاملات والـ API' },
+      { id: 'integrations.manage', label: 'إنشاء وتعديل وإدارة إعدادات التكاملات والـ API' },
       { id: 'audit.view', label: 'استعراض سجل التدقيق الأمني للعمليات' },
       { id: 'notifications.view', label: 'عرض سجل وإشعارات النظام الموجهة للمستخدم' },
     ],
