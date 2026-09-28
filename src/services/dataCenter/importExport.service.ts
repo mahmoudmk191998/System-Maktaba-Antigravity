@@ -409,3 +409,130 @@ export function generateBulkPricePreview(
 
   return previews;
 }
+
+
+function csvEscape(value: unknown): string {
+  const text = value == null ? '' : String(value);
+  if (/[",\n\r]/.test(text)) {
+    return `"${text.replace(/"/g, '""')}"`;
+  }
+  return text;
+}
+
+function rowsToCsv(headers: string[], rows: Array<Record<string, unknown>>): string {
+  const lines = [
+    headers.map(csvEscape).join(','),
+    ...rows.map((row) => headers.map((header) => csvEscape(row[header])).join(',')),
+  ];
+  return '\uFEFF' + lines.join('\r\n');
+}
+
+async function getTenantCollectionDocs(
+  collectionName: string,
+  tenantId: string
+): Promise<Array<{ id: string; data: Record<string, any> }>> {
+  const byId = new Map<string, { id: string; data: Record<string, any> }>();
+
+  for (const tenantField of ['tenantId', 'tenant_id'] as const) {
+    const snapshot = await getDocs(
+      query(collection(db, collectionName), where(tenantField, '==', tenantId))
+    );
+    snapshot.docs.forEach((item) => {
+      byId.set(item.id, { id: item.id, data: item.data() });
+    });
+  }
+
+  return Array.from(byId.values());
+}
+
+export async function exportProductsCsv(tenantId: string): Promise<string> {
+  const docs = await getTenantCollectionDocs('products', tenantId);
+  const headers = [
+    'id',
+    'name',
+    'sku',
+    'barcode',
+    'category',
+    'brand',
+    'costPrice',
+    'retailPrice',
+    'wholesalePrice',
+    'minimumStock',
+    'active',
+  ];
+
+  return rowsToCsv(
+    headers,
+    docs.map(({ id, data }) => ({
+      id,
+      name: data.name || '',
+      sku: data.sku || '',
+      barcode: data.barcode || '',
+      category: data.category || data.categoryName || '',
+      brand: data.brand || data.brandName || '',
+      costPrice: data.costPrice ?? 0,
+      retailPrice: data.retailPrice ?? 0,
+      wholesalePrice: data.wholesalePrice ?? '',
+      minimumStock: data.minimumStock ?? '',
+      active: data.active !== false,
+    }))
+  );
+}
+
+export async function exportCustomersCsv(tenantId: string): Promise<string> {
+  const docs = await getTenantCollectionDocs('customers', tenantId);
+  const headers = [
+    'id',
+    'name',
+    'phone',
+    'email',
+    'customerType',
+    'currentBalance',
+    'creditLimit',
+    'creditEnabled',
+    'active',
+  ];
+
+  return rowsToCsv(
+    headers,
+    docs.map(({ id, data }) => ({
+      id,
+      name: data.name || '',
+      phone: data.phone || '',
+      email: data.email || '',
+      customerType: data.customerType || '',
+      currentBalance: data.currentBalance ?? 0,
+      creditLimit: data.creditLimit ?? 0,
+      creditEnabled: data.creditEnabled === true,
+      active: data.active !== false,
+    }))
+  );
+}
+
+export async function exportSuppliersCsv(tenantId: string): Promise<string> {
+  const docs = await getTenantCollectionDocs('suppliers', tenantId);
+  const headers = [
+    'id',
+    'name',
+    'phone',
+    'email',
+    'supplierType',
+    'currentBalance',
+    'paymentTermsDays',
+    'active',
+  ];
+
+  return rowsToCsv(
+    headers,
+    docs.map(({ id, data }) => ({
+      id,
+      name: data.name || '',
+      phone: data.phone || '',
+      email: data.email || '',
+      supplierType: data.supplierType || '',
+      currentBalance: data.currentBalance ?? 0,
+      paymentTermsDays: data.paymentTermsDays ?? '',
+      active: data.active !== false,
+    }))
+  );
+}
