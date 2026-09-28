@@ -20,6 +20,7 @@ import {
 } from 'firebase/firestore';
 import type { Product, Customer, Supplier } from '@/types/retail.types';
 import { applyStockMovement } from '../inventory/retailInventory.service';
+import { downloadCsvFile, generateCsvString } from '../analytics/exportReports.service';
 
 export interface ProductImportRow {
   name: string;
@@ -408,4 +409,78 @@ export function generateBulkPricePreview(
   }
 
   return previews;
+}
+
+
+/**
+ * Real tenant-scoped CSV exports used by Data Center.
+ * Both camelCase and legacy snake_case tenant fields are supported and deduped.
+ */
+async function fetchTenantCollectionRows(
+  collectionName: string,
+  tenantId: string
+): Promise<Array<Record<string, any>>> {
+  const rows = new Map<string, Record<string, any>>();
+
+  for (const tenantField of ['tenantId', 'tenant_id'] as const) {
+    const snap = await getDocs(
+      query(collection(db, collectionName), where(tenantField, '==', tenantId))
+    );
+    snap.forEach((d) => rows.set(d.id, { id: d.id, ...d.data() }));
+  }
+
+  return Array.from(rows.values());
+}
+
+export async function exportProductsDataCsv(tenantId: string): Promise<number> {
+  const rows = await fetchTenantCollectionRows('products', tenantId);
+  const csv = generateCsvString(rows, [
+    { headerAr: 'المعرف', headerEn: 'ID', field: 'id' },
+    { headerAr: 'اسم الصنف', headerEn: 'Name', field: (r: any) => r.name || r.nameAr || '' },
+    { headerAr: 'SKU', headerEn: 'SKU', field: (r: any) => r.sku || '' },
+    { headerAr: 'الباركود', headerEn: 'Barcode', field: (r: any) => r.barcode || '' },
+    { headerAr: 'التصنيف', headerEn: 'Category', field: (r: any) => r.categoryName || r.category || r.categoryId || '' },
+    { headerAr: 'العلامة/الناشر', headerEn: 'Brand/Publisher', field: (r: any) => r.brandName || r.brand || r.publisher || '' },
+    { headerAr: 'سعر التكلفة', headerEn: 'Cost Price', field: (r: any) => r.costPrice ?? r.purchasePrice ?? 0, isCostOrMarginSensitive: true },
+    { headerAr: 'سعر البيع', headerEn: 'Retail Price', field: (r: any) => r.retailPrice ?? r.sellingPrice ?? 0 },
+    { headerAr: 'سعر الجملة', headerEn: 'Wholesale Price', field: (r: any) => r.wholesalePrice ?? '' },
+    { headerAr: 'الحالة', headerEn: 'Status', field: (r: any) => r.archived || r.isArchived ? 'مؤرشف' : 'نشط' },
+  ], true, 'ar');
+  downloadCsvFile(`products_${new Date().toISOString().slice(0, 10)}`, csv);
+  return rows.length;
+}
+
+export async function exportCustomersDataCsv(tenantId: string): Promise<number> {
+  const rows = await fetchTenantCollectionRows('customers', tenantId);
+  const csv = generateCsvString(rows, [
+    { headerAr: 'المعرف', headerEn: 'ID', field: 'id' },
+    { headerAr: 'كود العميل', headerEn: 'Code', field: (r: any) => r.code || '' },
+    { headerAr: 'اسم العميل', headerEn: 'Name', field: (r: any) => r.name || '' },
+    { headerAr: 'الهاتف', headerEn: 'Phone', field: (r: any) => r.phone || '' },
+    { headerAr: 'البريد الإلكتروني', headerEn: 'Email', field: (r: any) => r.email || '' },
+    { headerAr: 'نوع العميل', headerEn: 'Customer Type', field: (r: any) => r.customerType || '' },
+    { headerAr: 'الرصيد الحالي', headerEn: 'Current Balance', field: (r: any) => r.currentBalance ?? 0 },
+    { headerAr: 'الحد الائتماني', headerEn: 'Credit Limit', field: (r: any) => r.creditLimit ?? 0 },
+    { headerAr: 'حالة الائتمان', headerEn: 'Credit Status', field: (r: any) => r.creditStatus || '' },
+    { headerAr: 'الحالة', headerEn: 'Status', field: (r: any) => r.archived || r.isActive === false ? 'مؤرشف' : 'نشط' },
+  ], true, 'ar');
+  downloadCsvFile(`customers_${new Date().toISOString().slice(0, 10)}`, csv);
+  return rows.length;
+}
+
+export async function exportSuppliersDataCsv(tenantId: string): Promise<number> {
+  const rows = await fetchTenantCollectionRows('suppliers', tenantId);
+  const csv = generateCsvString(rows, [
+    { headerAr: 'المعرف', headerEn: 'ID', field: 'id' },
+    { headerAr: 'كود المورد', headerEn: 'Code', field: (r: any) => r.code || '' },
+    { headerAr: 'اسم المورد/دار النشر', headerEn: 'Name', field: (r: any) => r.name || '' },
+    { headerAr: 'الهاتف', headerEn: 'Phone', field: (r: any) => r.phone || '' },
+    { headerAr: 'جهة الاتصال', headerEn: 'Contact Person', field: (r: any) => r.contactPerson || '' },
+    { headerAr: 'نوع المورد', headerEn: 'Supplier Type', field: (r: any) => r.supplierType || '' },
+    { headerAr: 'الرصيد الحالي', headerEn: 'Current Balance', field: (r: any) => r.currentBalance ?? 0 },
+    { headerAr: 'أيام السداد', headerEn: 'Payment Terms Days', field: (r: any) => r.paymentTermsDays ?? '' },
+    { headerAr: 'الحالة', headerEn: 'Status', field: (r: any) => r.archived ? 'مؤرشف' : 'نشط' },
+  ], true, 'ar');
+  downloadCsvFile(`suppliers_${new Date().toISOString().slice(0, 10)}`, csv);
+  return rows.length;
 }
