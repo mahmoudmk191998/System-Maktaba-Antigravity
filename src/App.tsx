@@ -62,7 +62,7 @@ const queryClient = new QueryClient({
 
 function ProtectedRoute({ children, requiredPerms }: { children: React.ReactNode; requiredPerms?: string[] }) {
   const { user, loading: authLoading } = useAuth();
-  const { hasAnyPermission, isAdmin, loading: permLoading, hasAnyRole, isDisabled } = useUserPermissions();
+  const { hasAnyPermission, loading: permLoading, hasAnyRole, isDisabled, isOwner } = useUserPermissions();
 
   if (authLoading || permLoading) {
     return <BrandLoader message="جاري التحقق من الجلسة والصلاحيات..." />;
@@ -85,7 +85,7 @@ function ProtectedRoute({ children, requiredPerms }: { children: React.ReactNode
   }
 
   // User has no role at all - show access denied
-  if (!hasAnyRole && !isAdmin) {
+  if (!hasAnyRole && !isOwner) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center p-4" dir="rtl">
         <div className="text-center space-y-4 max-w-md bg-card p-6 sm:p-8 rounded-2xl border border-border shadow-xl">
@@ -98,7 +98,7 @@ function ProtectedRoute({ children, requiredPerms }: { children: React.ReactNode
   }
 
   // Check specific permissions
-  if (requiredPerms && !isAdmin && !hasAnyPermission(requiredPerms)) {
+  if (requiredPerms && !hasAnyPermission(requiredPerms)) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center p-4" dir="rtl">
         <div className="text-center space-y-4 max-w-md bg-card p-6 sm:p-8 rounded-2xl border border-border shadow-xl">
@@ -133,20 +133,20 @@ function AppRoutes() {
         <Route path="/attendance" element={<AttendancePublic />} />
         <Route path="/" element={<ProtectedRoute requiredPerms={['dashboard.view']}><Dashboard /></ProtectedRoute>} />
         <Route path="/pos" element={<ProtectedRoute requiredPerms={['pos.view']}><POS /></ProtectedRoute>} />
-        <Route path="/orders-history" element={<ProtectedRoute requiredPerms={['pos.view', 'sales.view']}><OrdersHistory /></ProtectedRoute>} />
+        <Route path="/orders-history" element={<ProtectedRoute requiredPerms={['sales.view', 'orders.view']}><OrdersHistory /></ProtectedRoute>} />
         <Route path="/orders" element={<Navigate to="/orders-history" replace />} />
-        <Route path="/returns" element={<ProtectedRoute requiredPerms={['returns.view', 'sales.view', 'pos.view']}><SalesReturns /></ProtectedRoute>} />
-        <Route path="/sales" element={<ProtectedRoute requiredPerms={['pos.view', 'sales.view']}><OrdersHistory /></ProtectedRoute>} />
+        <Route path="/returns" element={<ProtectedRoute requiredPerms={['returns.view']}><SalesReturns /></ProtectedRoute>} />
+        <Route path="/sales" element={<ProtectedRoute requiredPerms={['sales.view', 'orders.view']}><OrdersHistory /></ProtectedRoute>} />
         <Route path="/kitchen" element={<Navigate to="/" replace />} />
         <Route path="/tables" element={<Navigate to="/inventory" replace />} />
-        <Route path="/products" element={<ProtectedRoute requiredPerms={['products.view', 'menu.view']}><Products /></ProtectedRoute>} />
+        <Route path="/products" element={<ProtectedRoute requiredPerms={['products.view']}><Products /></ProtectedRoute>} />
         <Route path="/menu" element={<Navigate to="/products" replace />} />
         <Route path="/inventory" element={<ProtectedRoute requiredPerms={['inventory.view']}><Inventory /></ProtectedRoute>} />
-        <Route path="/purchasing" element={<ProtectedRoute requiredPerms={['purchasing.view']}><Purchasing /></ProtectedRoute>} />
+        <Route path="/purchasing" element={<ProtectedRoute requiredPerms={['purchases.view', 'purchasing.view']}><Purchasing /></ProtectedRoute>} />
         <Route path="/production" element={<Navigate to="/inventory" replace />} />
         <Route path="/delivery" element={<Navigate to="/pos" replace />} />
         <Route path="/customers" element={<ProtectedRoute requiredPerms={['customers.view']}><Customers /></ProtectedRoute>} />
-        <Route path="/receivables" element={<ProtectedRoute requiredPerms={['customers.view']}><Receivables /></ProtectedRoute>} />
+        <Route path="/receivables" element={<ProtectedRoute requiredPerms={['receivables.view']}><Receivables /></ProtectedRoute>} />
         <Route path="/promotions" element={<ProtectedRoute requiredPerms={['promotions.view']}><Promotions /></ProtectedRoute>} />
         <Route path="/hr" element={<ProtectedRoute requiredPerms={['hr.view_employees']}><HR /></ProtectedRoute>} />
         <Route path="/reports" element={<ProtectedRoute requiredPerms={['reports.view']}><Reports /></ProtectedRoute>} />
@@ -163,13 +163,13 @@ function AppRoutes() {
         <Route path="/shifts" element={<ProtectedRoute requiredPerms={['hr.manage_shifts']}><Shifts /></ProtectedRoute>} />
         <Route path="/maintenance" element={<ProtectedRoute requiredPerms={['maintenance.view']}><Maintenance /></ProtectedRoute>} />
         <Route path="/accounting" element={<ProtectedRoute requiredPerms={['accounting.view']}><Accounting /></ProtectedRoute>} />
-        <Route path="/executive" element={<ProtectedRoute requiredPerms={['financial_dashboard.view', 'reports.view', 'accounting.view']}><ExecutiveDashboard /></ProtectedRoute>} />
-        <Route path="/backup" element={<ProtectedRoute requiredPerms={['backup.view', 'settings.manage']}><Backup /></ProtectedRoute>} />
-        <Route path="/approvals" element={<ProtectedRoute requiredPerms={['approvals.view', 'governance.view']}><Approvals /></ProtectedRoute>} />
-        <Route path="/datacenter" element={<ProtectedRoute requiredPerms={['datacenter.view', 'settings.manage']}><DataCenter /></ProtectedRoute>} />
-        <Route path="/system-health" element={<ProtectedRoute requiredPerms={['system_health.view', 'settings.manage', 'accounting.view']}><SystemHealth /></ProtectedRoute>} />
+        <Route path="/executive" element={<ProtectedRoute requiredPerms={['financial_dashboard.view']}><ExecutiveDashboard /></ProtectedRoute>} />
+        <Route path="/backup" element={<ProtectedRoute requiredPerms={['backup.view']}><Backup /></ProtectedRoute>} />
+        <Route path="/approvals" element={<ProtectedRoute requiredPerms={['approvals.view']}><Approvals /></ProtectedRoute>} />
+        <Route path="/datacenter" element={<ProtectedRoute requiredPerms={['datacenter.view']}><DataCenter /></ProtectedRoute>} />
+        <Route path="/system-health" element={<ProtectedRoute requiredPerms={['system_health.view']}><SystemHealth /></ProtectedRoute>} />
         <Route path="/callcenter" element={<Navigate to="/pos" replace />} />
-        <Route path="/notifications" element={<ProtectedRoute><NotificationsHistory /></ProtectedRoute>} />
+        <Route path="/notifications" element={<ProtectedRoute requiredPerms={['notifications.view']}><NotificationsHistory /></ProtectedRoute>} />
         <Route path="/payroll" element={<Navigate to="/hr?tab=reports" replace />} />
         <Route path="/advances" element={<Navigate to="/hr?tab=reports&section=advances" replace />} />
         <Route path="*" element={<NotFound />} />
