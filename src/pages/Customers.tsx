@@ -82,10 +82,10 @@ export default function Customers() {
   const [isPriceListModalOpen, setIsPriceListModalOpen] = useState(false);
 
   // Permissions
-  const canCreateCustomer = hasPermission('customers.create') || hasPermission('customers.manage');
-  const canEditCustomer = hasPermission('customers.edit') || hasPermission('customers.manage');
-  const canReceivePayment = hasPermission('customers.payment.create') || hasPermission('customers.manage');
-  const canManagePriceLists = hasPermission('price_lists.manage') || hasPermission('customers.manage');
+  const canCreateCustomer = hasPermission('customers.create');
+  const canEditCustomer = hasPermission('customers.edit');
+  const canReceivePayment = hasPermission('customers.payment.create');
+  const canManagePriceLists = hasPermission('price_lists.manage');
 
   // Filtered Customers
   const filteredCustomers = useMemo(() => {
@@ -149,11 +149,13 @@ export default function Customers() {
   }, [customers]);
 
   const handleOpenAdd = () => {
+    if (!canCreateCustomer) return;
     setEditingCustomer(null);
     setIsCustomerModalOpen(true);
   };
 
   const handleOpenEdit = (c: Customer) => {
+    if (!canEditCustomer) return;
     setEditingCustomer(c);
     setIsCustomerModalOpen(true);
   };
@@ -164,6 +166,7 @@ export default function Customers() {
   };
 
   const handleOpenPayment = (c: Customer) => {
+    if (!canReceivePayment) return;
     setPaymentCustomer(c);
     setIsPaymentModalOpen(true);
   };
