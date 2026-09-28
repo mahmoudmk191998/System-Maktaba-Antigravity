@@ -86,7 +86,7 @@ export function MobileBottomNav() {
 
   // Filter allowed modules
   const allowedModules = useMemo(() => {
-    return allAppModules.filter(m => isAdmin || hasAnyPermission(m.perms));
+    return allAppModules.filter(m => hasAnyPermission(m.perms));
   }, [isAdmin, hasAnyPermission]);
 
   // Filter by search inside More Sheet
