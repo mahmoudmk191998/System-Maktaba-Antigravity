@@ -100,6 +100,7 @@ export default function POSPage() {
   const canOverridePrice = isAdmin || hasPermission('sales.override_price') || hasPermission('pos.override_price');
   const canDiscount = isAdmin || hasPermission('sales.discount') || hasPermission('pos.apply_discount');
   const canManageRegister = isAdmin || hasPermission('cash_register.open') || hasPermission('pos.open_drawer');
+  const canSellBelowMinimum = isAdmin || hasPermission('sales.sell_below_minimum');
 
   // Register Shift Hook
   const {
@@ -606,7 +607,7 @@ export default function POSPage() {
       taxIncluded: totals.taxIncluded,
       serviceChargeIncluded: totals.serviceChargeIncluded,
       clientCheckoutId,
-      allowBelowMinimum: isAdmin,
+      allowBelowMinimum: canSellBelowMinimum,
     });
 
     if (saleResult.success && saleResult.sale) {
