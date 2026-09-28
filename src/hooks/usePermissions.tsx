@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { db } from '@/lib/firebase';
 import { collection, query, where, onSnapshot, doc } from 'firebase/firestore';
 import { useAuth } from './useAuth';
-import { isOwnerRole, isAdminOrOwnerRole } from '@/lib/permissionsModel';
+import { ALL_PERMISSION_IDS, calculateEffectivePermissions, isOwnerRole } from '@/lib/permissionsModel';
 
 export interface PermissionsHookResult {
   permissions: string[];
@@ -40,6 +40,8 @@ export function useUserPermissions(): PermissionsHookResult {
     let currentRoles: string[] = [];
     let currentPerms: string[] = [];
     let currentStatus: 'active' | 'disabled' = 'active';
+    let currentPermissionMode: 'legacy' | 'explicit' = 'legacy';
+    let currentProfileRole: string | null = null;
 
     let rolesLoaded = false;
     let permsLoaded = false;
@@ -56,13 +58,34 @@ export function useUserPermissions(): PermissionsHookResult {
         return;
       }
 
-      setRoles(currentRoles);
+      const uniqueRoles = Array.from(new Set(
+        currentRoles.length > 0
+          ? currentRoles
+          : currentProfileRole
+            ? [currentProfileRole]
+            : []
+      ));
+      setRoles(uniqueRoles);
 
-      const hasAdminOrOwner = currentRoles.some((r) => isAdminOrOwnerRole(r));
-      if (hasAdminOrOwner) {
-        setPermissions(['*']); // wildcard = all permissions
+      // Only sovereign owner roles are unconditional wildcard accounts.
+      // Admin/manager/cashier/etc. always honor the exact stored permission set,
+      // which makes combinations such as "edit without delete" real.
+      if (uniqueRoles.some((r) => isOwnerRole(r))) {
+        setPermissions(['*']);
       } else {
-        setPermissions(currentPerms);
+        const validExplicitPermissions = Array.from(
+          new Set(currentPerms.filter((p) => ALL_PERMISSION_IDS.includes(p)))
+        );
+
+        if (currentPermissionMode === 'explicit' || validExplicitPermissions.length > 0) {
+          setPermissions(validExplicitPermissions);
+        } else {
+          // Backward compatibility for old accounts created before explicit
+          // permission snapshots existed.
+          const fallbackRole = uniqueRoles[0] || 'viewer';
+          const fallback = calculateEffectivePermissions(fallbackRole);
+          setPermissions(fallback.includes('*') ? ALL_PERMISSION_IDS : fallback);
+        }
       }
 
       setLoading(false);
@@ -76,6 +99,8 @@ export function useUserPermissions(): PermissionsHookResult {
         if (snapshot.exists()) {
           const data = snapshot.data();
           currentStatus = data.status === 'disabled' ? 'disabled' : 'active';
+          currentPermissionMode = data.permission_mode === 'explicit' ? 'explicit' : 'legacy';
+          currentProfileRole = data.role || null;
           setUserStatus(currentStatus);
         }
         profileLoaded = true;
@@ -147,7 +172,9 @@ export function useUserPermissions(): PermissionsHookResult {
     [permissions, userStatus]
   );
 
-  const isAdmin = userStatus !== 'disabled' && roles.some((r) => isAdminOrOwnerRole(r));
+  // "isAdmin" intentionally means unrestricted sovereign access in UI guards.
+  // Regular Admin role accounts are permission-driven and can be customized.
+  const isAdmin = userStatus !== 'disabled' && permissions.includes('*');
   const isOwner = userStatus !== 'disabled' && roles.some((r) => isOwnerRole(r));
   const isDisabled = userStatus === 'disabled';
   const hasAnyRole = userStatus !== 'disabled' && roles.length > 0;
