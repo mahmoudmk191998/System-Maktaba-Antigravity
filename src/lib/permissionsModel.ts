@@ -82,6 +82,7 @@ export const PERMISSION_CATEGORIES: PermissionCategory[] = [
     iconName: 'Users',
     permissions: [
       { id: 'customers.view', label: 'استعراض بيانات العملاء وأرصدتهم' },
+      { id: 'customers.manage', label: 'إدارة بيانات العملاء التشغيلية (صلاحية شاملة للقسم)' },
       { id: 'customers.create', label: 'إضافة عملاء جدد وتحديد نوعهم' },
       { id: 'customers.edit', label: 'تعديل بيانات العملاء والتصنيف' },
       { id: 'customers.delete', label: 'حذف العملاء غير المرتبطين بعمليات' },
@@ -234,24 +235,6 @@ export const PERMISSION_CATEGORIES: PermissionCategory[] = [
     ],
   },
   {
-    id: 'operations_legacy',
-    label: 'العمليات والخدمات العامة',
-    iconName: 'CalendarDays',
-    permissions: [
-      { id: 'tables.view', label: 'عرض شاشة الصالة (توافق سابق)' },
-      { id: 'tables.manage', label: 'إدارة الحجوزات (توافق سابق)' },
-      { id: 'callcenter.view', label: 'مركز الاتصال (توافق سابق)' },
-      { id: 'delivery.view', label: 'شاشة التوصيل (توافق سابق)' },
-      { id: 'delivery.manage', label: 'إدارة التوصيل (توافق سابق)' },
-      { id: 'kitchen.view', label: 'عرض المطبخ (توافق سابق)' },
-      { id: 'kitchen.manage_orders', label: 'إدارة طلبات المطبخ (توافق سابق)' },
-      { id: 'production.view', label: 'عرض الإنتاج (توافق سابق)' },
-      { id: 'production.manage', label: 'إدارة الإنتاج (توافق سابق)' },
-      { id: 'menu.view', label: 'عرض القائمة القديمة (توافق سابق)' },
-      { id: 'menu.manage', label: 'إدارة القائمة القديمة (توافق سابق)' },
-    ],
-  },
-  {
     id: 'settings',
     label: 'النظام والأمان والإدارة العليا',
     iconName: 'Settings',
@@ -263,6 +246,7 @@ export const PERMISSION_CATEGORIES: PermissionCategory[] = [
       { id: 'maintenance.manage', label: 'إدارة طلبات الصيانة ومتابعة المعدات' },
       { id: 'integrations.view', label: 'عرض وإدارة منصات التكاملات والـ API' },
       { id: 'audit.view', label: 'استعراض سجل التدقيق الأمني للعمليات' },
+      { id: 'notifications.view', label: 'عرض مركز الإشعارات والتنبيهات' },
     ],
   },
   {
@@ -355,9 +339,7 @@ export const ROLE_TEMPLATES: Record<string, RoleTemplate> = {
       'analytics.view', 'analytics.export', 'analytics.view_costs', 'analytics.demand_reorder', 'analytics.partner_intelligence',
       'maintenance.view', 'maintenance.manage',
       'governance.view', 'approvals.view', 'approvals.action', 'datacenter.view', 'datacenter.export', 'system_health.view', 'attachments.manage',
-      // Legacy compatibility
-      'kitchen.view', 'kitchen.manage_orders', 'production.view', 'production.manage', 'menu.view', 'menu.manage', 'tables.view', 'tables.manage', 'callcenter.view', 'delivery.view', 'delivery.manage',
-    ],
+],
   },
   cashier: {
     key: 'cashier',
@@ -375,9 +357,7 @@ export const ROLE_TEMPLATES: Record<string, RoleTemplate> = {
       'customers.view', 'customers.manage', 'customer.create_from_pos', 'customers.create', 'customers.payment.create',
       'price_lists.view',
       'promotions.view',
-      // Legacy compatibility
-      'tables.view', 'callcenter.view', 'delivery.view',
-    ],
+],
   },
   sales_staff: {
     key: 'sales_staff',
@@ -469,18 +449,6 @@ export const ROLE_TEMPLATES: Record<string, RoleTemplate> = {
       'reports.view',
     ],
   },
-  kitchen: {
-    key: 'kitchen',
-    label: 'المطبخ والإنتاج (Kitchen - Legacy)',
-    description: 'شاشة المطبخ والإنتاج السابقة (قيد الإحلال التدريجي)',
-    isSystem: true,
-    permissions: [
-      'kitchen.view', 'kitchen.manage_orders',
-      'production.view', 'production.manage',
-      'menu.view',
-      'inventory.waste',
-    ],
-  },
   viewer: {
     key: 'viewer',
     label: 'مشاهد فقط (Viewer / Read-Only)',
@@ -493,9 +461,7 @@ export const ROLE_TEMPLATES: Record<string, RoleTemplate> = {
       'sales.view',
       'inventory.view',
       'reports.view',
-      // Legacy compatibility
-      'menu.view', 'tables.view',
-    ],
+],
   },
 };
 
@@ -528,11 +494,9 @@ export function calculateEffectivePermissions(
     }
   }
 
-  // If role is admin and no explicit revokes, grant wildcard
-  if (roleKey === 'admin' && (!customOverrides?.revoked || customOverrides.revoked.length === 0)) {
-    return ['*'];
-  }
-
+  // Admin is intentionally NOT a wildcard role. Its default template contains
+  // every registered permission explicitly, so individual permissions can be
+  // removed (e.g. edit without delete) and the removal is respected everywhere.
   return Array.from(basePerms);
 }
 
