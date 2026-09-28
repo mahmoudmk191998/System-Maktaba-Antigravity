@@ -69,6 +69,7 @@ export const PERMISSION_CATEGORIES: PermissionCategory[] = [
       { id: 'sales.wholesale', label: 'إصدار فواتير بيع بسعر الجملة' },
       { id: 'sales.sell_below_minimum', label: 'تجاوز والبيع تحت الحد الأدنى للسعر' },
       { id: 'sales.reprint_receipt', label: 'إعادة طباعة إيصالات المبيعات الحرارية' },
+      { id: 'sales.delete', label: 'حذف فاتورة مبيعات نهائياً من السجل' },
       { id: 'cash_register.open', label: 'فتح وردية وتسجيل عهدة الكاشير' },
       { id: 'cash_register.close', label: 'إغلاق وردية الكاشير واعتماد جرد الدرج' },
       { id: 'customer.create_from_pos', label: 'إضافة عميل جديد مباشرة من نقطة البيع' },
