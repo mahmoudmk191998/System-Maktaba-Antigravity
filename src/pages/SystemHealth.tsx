@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { MainLayout } from '@/components/layout';
 import { useTenantBranch } from '@/hooks/useDatabase';
 import { useAuth } from '@/hooks/useAuth';
+import { useUserPermissions } from '@/hooks/usePermissions';
 import {
   Activity,
   CheckCircle2,
@@ -32,6 +33,8 @@ import {
 
 export default function SystemHealth() {
   const { tenantId } = useTenantBranch();
+  const { hasPermission } = useUserPermissions();
+  const canRepair = hasPermission('system_health.repair');
   const { user } = useAuth();
 
   const [loading, setLoading] = useState<boolean>(true);
@@ -74,6 +77,10 @@ export default function SystemHealth() {
   }, [tenantId]);
 
   const handleRetryOutboxEvent = async (eventId: string) => {
+    if (!canRepair) {
+      toast.error('ليس لديك صلاحية تنفيذ عمليات إصلاح النظام أو إعادة المحاولة');
+      return;
+    }
     if (!tenantId || !user) return;
     setRetryingEventId(eventId);
     try {
