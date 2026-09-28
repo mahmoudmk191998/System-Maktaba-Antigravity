@@ -15,6 +15,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Label } from '@/components/ui/label';
 import { useIntegrations, useTenantBranch } from '@/hooks/useDatabase';
 import { useToast } from '@/hooks/use-toast';
+import { useUserPermissions } from '@/hooks/usePermissions';
 import { apiClientsService, ApiClientItem } from '@/services/apiClients';
 
 const DEFAULT_INTEGRATIONS = [
@@ -36,6 +37,8 @@ export default function Integrations() {
   const [searchQuery, setSearchQuery] = useState('');
   const [hardwareDevices, setHardwareDevices] = useState<{name: string, type: string, status: string}[]>([]);
   const { tenantId } = useTenantBranch();
+  const { hasPermission } = useUserPermissions();
+  const canManageIntegrations = hasPermission('integrations.manage');
   const { integrations: dbIntegrations, updateIntegration, addIntegration } = useIntegrations(tenantId);
   const { toast } = useToast();
 
@@ -86,6 +89,10 @@ export default function Integrations() {
   }, [loadApiClients]);
 
   const scanForHardware = async () => {
+    if (!canManageIntegrations) {
+      toast({ title: 'غير مصرح', description: 'ليس لديك صلاحية إدارة التكاملات ومفاتيح API', variant: 'destructive' });
+      return;
+    }
     try {
       if (!('usb' in navigator)) {
         toast({ title: 'غير مدعوم', description: 'متصفحك لا يدعم اكتشاف أجهزة USB المباشر', variant: 'destructive' });
@@ -116,6 +123,10 @@ export default function Integrations() {
   };
 
   const toggleIntegration = async (integration: any, connect: boolean) => {
+    if (!canManageIntegrations) {
+      toast({ title: 'غير مصرح', description: 'ليس لديك صلاحية إدارة التكاملات ومفاتيح API', variant: 'destructive' });
+      return;
+    }
     const newStatus = connect ? 'connected' : 'disconnected';
     if (integration.dbId) {
       await updateIntegration(integration.dbId, { status: newStatus });
@@ -125,6 +136,10 @@ export default function Integrations() {
   };
 
   const handleCreateClient = async () => {
+    if (!canManageIntegrations) {
+      toast({ title: 'غير مصرح', description: 'ليس لديك صلاحية إدارة التكاملات ومفاتيح API', variant: 'destructive' });
+      return;
+    }
     if (!newClientName) return;
     setIsSubmittingCreate(true);
 
@@ -171,6 +186,10 @@ export default function Integrations() {
   };
 
   const handleRotateSecret = async (clientId: string) => {
+    if (!canManageIntegrations) {
+      toast({ title: 'غير مصرح', description: 'ليس لديك صلاحية إدارة التكاملات ومفاتيح API', variant: 'destructive' });
+      return;
+    }
     setActionLoadingId(clientId);
     try {
       const result = await apiClientsService.rotateSecret(clientId, tenantId);
@@ -194,6 +213,10 @@ export default function Integrations() {
   };
 
   const handleToggleStatus = async (client: ApiClientItem) => {
+    if (!canManageIntegrations) {
+      toast({ title: 'غير مصرح', description: 'ليس لديك صلاحية إدارة التكاملات ومفاتيح API', variant: 'destructive' });
+      return;
+    }
     setActionLoadingId(client.client_id);
     try {
       if (client.status === 'active') {
@@ -218,6 +241,10 @@ export default function Integrations() {
   };
 
   const handleRevokeClient = async (clientId: string) => {
+    if (!canManageIntegrations) {
+      toast({ title: 'غير مصرح', description: 'ليس لديك صلاحية إدارة التكاملات ومفاتيح API', variant: 'destructive' });
+      return;
+    }
     setActionLoadingId(clientId);
     try {
       const updated = await apiClientsService.revokeClient(clientId, tenantId);
@@ -261,10 +288,10 @@ export default function Integrations() {
             <RefreshCw className={cn('w-3.5 h-3.5', loadingClients && 'animate-spin')} />
             <span>تحديث</span>
           </Button>
-          <Button onClick={() => setIsCreateModalOpen(true)} className="gap-2 text-xs md:text-sm">
+          {canManageIntegrations && <Button onClick={() => setIsCreateModalOpen(true)} className="gap-2 text-xs md:text-sm">
             <Key className="w-4 h-4" />
             <span>إنشاء مفتاح API جديد</span>
-          </Button>
+          </Button>}
         </div>
       }
     >
@@ -272,7 +299,7 @@ export default function Integrations() {
         <Card><CardContent className="p-3 md:p-4 text-center"><p className="text-2xl md:text-3xl font-bold text-primary">{integrations.length}</p><p className="text-xs md:text-sm text-muted-foreground">إجمالي التكاملات</p></CardContent></Card>
         <Card><CardContent className="p-3 md:p-4 text-center"><p className="text-2xl md:text-3xl font-bold text-success">{connectedCount}</p><p className="text-xs md:text-sm text-muted-foreground">متصل</p></CardContent></Card>
         <Card><CardContent className="p-3 md:p-4 text-center"><p className="text-2xl md:text-3xl font-bold text-warning">{apiClients.length}</p><p className="text-xs md:text-sm text-muted-foreground">مفاتيح API مسجلة</p></CardContent></Card>
-        <Card><CardContent className="p-3 md:p-4 text-center"><p className="text-2xl md:text-3xl font-bold text-info">3</p><p className="text-xs md:text-sm text-muted-foreground">Webhooks نشطة</p></CardContent></Card>
+        <Card><CardContent className="p-3 md:p-4 text-center"><p className="text-2xl md:text-3xl font-bold text-info">{hardwareDevices.length}</p><p className="text-xs md:text-sm text-muted-foreground">أجهزة متصلة فعلياً</p></CardContent></Card>
       </div>
 
       <Tabs defaultValue="apikeys" className="space-y-6">
@@ -291,13 +318,15 @@ export default function Integrations() {
                 مفاتيح ربط التطبيقات الخارجية (REST API Clients)
               </h3>
               <p className="text-xs md:text-sm text-muted-foreground mt-1">
-                تتيح لمواقع المطاعم وتطبيقات التوصيل الوصول الآمن إلى المنيو وإنشاء الطلبات وتتبعها عبر بروتوكول HTTPS المشفر.
+                تتيح لمتجر المكتبة والتطبيقات الخارجية الوصول الآمن إلى المنتجات والمبيعات والفروع عبر بروتوكول HTTPS المشفر.
               </p>
             </div>
-            <Button onClick={() => setIsCreateModalOpen(true)} className="gap-2 text-xs md:text-sm">
-              <Plus className="w-4 h-4" />
-              <span>مفتاح جديد</span>
-            </Button>
+            {canManageIntegrations && (
+              <Button onClick={() => setIsCreateModalOpen(true)} className="gap-2 text-xs md:text-sm">
+                <Plus className="w-4 h-4" />
+                <span>مفتاح جديد</span>
+              </Button>
+            )}
           </div>
 
           {loadingClients ? (
@@ -420,7 +449,7 @@ export default function Integrations() {
                         <div className="flex items-center justify-between mb-1"><h4 className="font-bold text-sm md:text-base">{integration.name}</h4><Badge className={cn('text-[10px] md:text-xs', status.color)}><StatusIcon className="w-3 h-3 ml-1" />{status.label}</Badge></div>
                         <p className="text-xs text-muted-foreground mb-3">{integration.description}</p>
                         <div className="flex items-center gap-2">
-                          {integration.status === 'connected' ? <><Button variant="outline" size="sm" className="gap-1 text-xs"><Settings className="w-4 h-4" />إعدادات</Button><Switch checked={true} onCheckedChange={(v) => toggleIntegration(integration, v)} /></> : <Button onClick={() => toggleIntegration(integration, true)} size="sm" className="gap-1 text-xs"><Plus className="w-4 h-4" />ربط</Button>}
+                          {integration.status === 'connected' ? <><Button variant="outline" size="sm" className="gap-1 text-xs"><Settings className="w-4 h-4" />إعدادات</Button><Switch checked={true} onCheckedChange={(v) => canManageIntegrations && toggleIntegration(integration, v)} /></> : <Button onClick={() => toggleIntegration(integration, true)} size="sm" className="gap-1 text-xs"><Plus className="w-4 h-4" />ربط</Button>}
                         </div>
                       </div>
                     </div>
@@ -478,7 +507,7 @@ export default function Integrations() {
       </Tabs>
 
       {/* Modal 1: Create API Client Modal */}
-      <Dialog open={isCreateModalOpen} onOpenChange={setIsCreateModalOpen}>
+      <Dialog open={canManageIntegrations && isCreateModalOpen} onOpenChange={setIsCreateModalOpen}>
         <DialogContent className="sm:max-w-[500px]">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
