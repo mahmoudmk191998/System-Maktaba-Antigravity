@@ -3,7 +3,7 @@ import { MainLayout } from '@/components/layout';
 import { cn } from '@/lib/utils';
 import { db, firebaseConfig } from '@/lib/firebase';
 import { collection, query, where, getDocs, doc, deleteDoc, addDoc, updateDoc, setDoc, writeBatch } from 'firebase/firestore';
-import { initializeApp } from 'firebase/app';
+import { initializeApp, deleteApp } from 'firebase/app';
 import { getAuth, createUserWithEmailAndPassword, updateProfile } from 'firebase/auth';
 import { useTenantBranch } from '@/hooks/useDatabase';
 import { useAuth } from '@/hooks/useAuth';
@@ -33,6 +33,10 @@ import {
   isAdminOrOwnerRole,
 } from '@/lib/permissionsModel';
 import { notifySecurityRoleChanged } from '@/services/notifications.service';
+import {
+  createGoogleUserInvitation,
+  replaceUserPermissions,
+} from '@/services/permissions/userAccess.service';
 
 interface UserEntry {
   id: string;
@@ -92,9 +96,14 @@ export default function Permissions() {
     if (!tenantId) return;
     const fetchBranches = async () => {
       try {
-        const bSnap = await getDocs(query(collection(db, 'branches'), where('tenant_id', '==', tenantId)));
-        const branchList = bSnap.docs.map((d) => ({ id: d.id, name: d.data().name || 'فرع بدون اسم' }));
-        setBranches(branchList);
+        const branchMap = new Map<string, BranchItem>();
+        for (const tenantField of ['tenant_id', 'tenantId'] as const) {
+          const bSnap = await getDocs(query(collection(db, 'branches'), where(tenantField, '==', tenantId)));
+          bSnap.docs.forEach((d) => {
+            branchMap.set(d.id, { id: d.id, name: d.data().name || 'فرع بدون اسم' });
+          });
+        }
+        setBranches(Array.from(branchMap.values()));
       } catch (err) {
         console.warn('Error fetching branches for permissions:', err);
       }
@@ -260,44 +269,36 @@ export default function Permissions() {
 
     setLoading(true);
     try {
-      // 1. Update user_roles collection
+      if (!tenantId) throw new Error('معرف المؤسسة غير متوفر');
+
+      // 1. Keep exactly one deterministic role document per Firebase UID.
       const rolesQ = query(collection(db, 'user_roles'), where('user_id', '==', selectedUser.id));
       const rolesSnap = await getDocs(rolesQ);
-      for (const rDoc of rolesSnap.docs) {
-        await deleteDoc(rDoc.ref);
-      }
-      await addDoc(collection(db, 'user_roles'), {
+      const roleBatch = writeBatch(db);
+      rolesSnap.docs.forEach((rDoc) => roleBatch.delete(rDoc.ref));
+      roleBatch.set(doc(db, 'user_roles', selectedUser.id), {
         user_id: selectedUser.id,
         role: roleKey,
         tenant_id: tenantId,
+        tenantId,
         updated_at: new Date().toISOString(),
       });
+      await roleBatch.commit();
 
-      // 2. Update profiles collection
-      await updateDoc(doc(db, 'profiles', selectedUser.id), {
+      // 2. Role and permission mode are synchronized on the profile.
+      await setDoc(doc(db, 'profiles', selectedUser.id), {
         role: roleKey,
+        permission_mode: 'explicit',
         updated_at: new Date().toISOString(),
-      });
+      }, { merge: true });
 
-      // 3. Update user_permissions collection using atomic batch
-      const permsQ = query(collection(db, 'user_permissions'), where('user_id', '==', selectedUser.id));
-      const permsSnap = await getDocs(permsQ);
-      const permBatch = writeBatch(db);
-      for (const pDoc of permsSnap.docs) {
-        permBatch.delete(pDoc.ref);
-      }
-      const nowStr = new Date().toISOString();
-      for (const p of newPerms) {
-        const pRef = doc(collection(db, 'user_permissions'));
-        permBatch.set(pRef, {
-          tenant_id: tenantId || null,
-          user_id: selectedUser.id,
-          permission: p,
-          granted_by: user?.uid || null,
-          created_at: nowStr,
-        });
-      }
-      await permBatch.commit();
+      // 3. Persist the exact role-template snapshot as deterministic permissions.
+      await replaceUserPermissions(
+        tenantId,
+        selectedUser.id,
+        newPerms,
+        user?.uid || null
+      );
 
       // 4. Record Audit Log
       await addDoc(collection(db, 'audit_logs'), {
@@ -395,32 +396,28 @@ export default function Permissions() {
 
   // Save manual permission changes
   const savePermissions = async () => {
-    if (!selectedUser) return;
+    if (!selectedUser || !tenantId) return;
+
+    if (isOwnerRole(selectedUser.role)) {
+      toast.info('حساب المالك/المدير الأعلى سيادي ويحتفظ بجميع الصلاحيات دائماً.');
+      return;
+    }
 
     setLoading(true);
     try {
-      // 1. Delete existing user_permissions and add new ones in an atomic batch
-      const permsQ = query(collection(db, 'user_permissions'), where('user_id', '==', selectedUser.id));
-      const permsSnap = await getDocs(permsQ);
-      
-      const batch = writeBatch(db);
-      for (const pDoc of permsSnap.docs) {
-        batch.delete(pDoc.ref);
-      }
+      const cleanPermissions = Array.from(
+        new Set(editPermissions.filter((permission) => ALL_PERMISSION_IDS.includes(permission)))
+      );
+
+      // Persist exactly what is selected: no implicit role additions.
+      await replaceUserPermissions(
+        tenantId,
+        selectedUser.id,
+        cleanPermissions,
+        user?.uid || null
+      );
 
       const now = new Date().toISOString();
-      for (const p of editPermissions) {
-        const pRef = doc(collection(db, 'user_permissions'));
-        batch.set(pRef, {
-          tenant_id: tenantId || null,
-          user_id: selectedUser.id,
-          permission: p,
-          granted_by: user?.uid || null,
-          created_at: now,
-        });
-      }
-
-      await batch.commit();
 
       // 2. Audit log
       if (tenantId) {
@@ -431,7 +428,7 @@ export default function Permissions() {
             target_id: selectedUser.id,
             target_name: selectedUser.full_name,
             user: user?.email || 'المدير',
-            details: `تحديث الصلاحيات للمستخدم ${selectedUser.full_name} (${editPermissions.length} صلاحية)`,
+            details: `تحديث الصلاحيات للمستخدم ${selectedUser.full_name} (${cleanPermissions.length} صلاحية)`,
             created_at: now,
           });
         } catch (auditErr) {
@@ -439,8 +436,8 @@ export default function Permissions() {
         }
       }
 
-      toast.success(`تم حفظ ${editPermissions.length} صلاحية للمستخدم بنجاح`);
-      setSelectedUser((prev) => (prev ? { ...prev, permissions: editPermissions } : null));
+      toast.success(`تم حفظ ${cleanPermissions.length} صلاحية للمستخدم بنجاح`);
+      setSelectedUser((prev) => (prev ? { ...prev, permissions: cleanPermissions } : null));
       await fetchUsers();
     } catch (err: any) {
       console.error('Error saving permissions:', err);
@@ -455,11 +452,14 @@ export default function Permissions() {
     e.preventDefault();
     if (!tenantId) return;
 
-    if (!newUserForm.name.trim()) {
+    const cleanName = newUserForm.name.trim();
+    const cleanEmail = newUserForm.email.trim().toLowerCase();
+
+    if (!cleanName) {
       toast.error('يرجى إدخال اسم الموظف');
       return;
     }
-    if (!newUserForm.email.trim()) {
+    if (!cleanEmail) {
       toast.error('يرجى إدخال البريد الإلكتروني');
       return;
     }
@@ -468,76 +468,111 @@ export default function Permissions() {
       return;
     }
 
+    const initialTemplate = ROLE_TEMPLATES[newUserForm.role];
+    const initialPerms = initialTemplate
+      ? initialTemplate.permissions.includes('*')
+        ? [...ALL_PERMISSION_IDS]
+        : [...initialTemplate.permissions]
+      : [];
+
+    const branchVal = newUserForm.branchId === 'all' ? null : newUserForm.branchId;
+
     setAddingUser(true);
+    let secondaryApp: ReturnType<typeof initializeApp> | null = null;
     try {
-      let createdUid = '';
-
       if (useGoogleAuth) {
-        createdUid = `user_${Date.now()}`;
-      } else {
-        const secondaryApp = initializeApp(firebaseConfig, `user-create-${Date.now()}`);
-        const secondaryAuth = getAuth(secondaryApp);
-        const cred = await createUserWithEmailAndPassword(secondaryAuth, newUserForm.email, newUserForm.password);
-        createdUid = cred.user.uid;
-        await updateProfile(cred.user, { displayName: newUserForm.name });
-      }
+        // Never manufacture a fake UID. Store a pending email invitation.
+        // On the employee's first Google sign-in, Firebase supplies the real UID
+        // and Auth.tsx claims this invitation into profile/role/permissions.
+        await createGoogleUserInvitation({
+          email: cleanEmail,
+          fullName: cleanName,
+          tenantId,
+          branchId: branchVal,
+          role: newUserForm.role,
+          permissions: initialPerms,
+          invitedBy: user?.uid || null,
+        });
 
-      // Create profile document
-      const branchVal = newUserForm.branchId === 'all' ? null : newUserForm.branchId;
-      await setDoc(doc(db, 'profiles', createdUid), {
-        full_name: newUserForm.name,
-        email: newUserForm.email,
-        tenant_id: tenantId,
-        branch_id: branchVal,
-        role: newUserForm.role,
-        status: 'active',
-        created_at: new Date().toISOString(),
-      });
-
-      // Add user_roles
-      await addDoc(collection(db, 'user_roles'), {
-        user_id: createdUid,
-        role: newUserForm.role,
-        tenant_id: tenantId,
-        created_at: new Date().toISOString(),
-      });
-
-      // Apply initial role permissions
-      const initialTemplate = ROLE_TEMPLATES[newUserForm.role];
-      const initialPerms = initialTemplate
-        ? initialTemplate.permissions.includes('*')
-          ? ALL_PERMISSION_IDS
-          : initialTemplate.permissions
-        : [];
-
-      for (const p of initialPerms) {
-        await addDoc(collection(db, 'user_permissions'), {
-          user_id: createdUid,
-          permission: p,
-          granted_by: user?.uid,
+        await addDoc(collection(db, 'audit_logs'), {
+          tenant_id: tenantId,
+          tenantId,
+          action: 'GOOGLE_USER_INVITED',
+          target_id: cleanEmail,
+          target_name: cleanName,
+          user: user?.email || 'المدير',
+          details: `دعوة مستخدم Google: ${cleanName} بدور: ${getRoleLabel(newUserForm.role)}`,
           created_at: new Date().toISOString(),
         });
+
+        toast.success('تم تجهيز حساب Google. على الموظف تسجيل الدخول بنفس Gmail مرة واحدة لتفعيل الحساب بالـ UID الحقيقي.');
+      } else {
+        secondaryApp = initializeApp(firebaseConfig, `user-create-${Date.now()}`);
+        const secondaryAuth = getAuth(secondaryApp);
+        const cred = await createUserWithEmailAndPassword(
+          secondaryAuth,
+          cleanEmail,
+          newUserForm.password
+        );
+        const createdUid = cred.user.uid;
+        await updateProfile(cred.user, { displayName: cleanName });
+
+        await setDoc(doc(db, 'profiles', createdUid), {
+          full_name: cleanName,
+          email: cleanEmail,
+          tenant_id: tenantId,
+          tenantId,
+          branch_id: branchVal,
+          branchId: branchVal,
+          role: newUserForm.role,
+          status: 'active',
+          permission_mode: 'explicit',
+          auth_provider: 'password',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        });
+
+        await setDoc(doc(db, 'user_roles', createdUid), {
+          user_id: createdUid,
+          role: newUserForm.role,
+          tenant_id: tenantId,
+          tenantId,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        });
+
+        await replaceUserPermissions(
+          tenantId,
+          createdUid,
+          initialPerms,
+          user?.uid || null
+        );
+
+        await addDoc(collection(db, 'audit_logs'), {
+          tenant_id: tenantId,
+          tenantId,
+          action: 'USER_CREATED',
+          target_id: createdUid,
+          target_name: cleanName,
+          user: user?.email || 'المدير',
+          details: `إضافة مستخدم جديد: ${cleanName} بدور: ${getRoleLabel(newUserForm.role)}`,
+          created_at: new Date().toISOString(),
+        });
+
+        toast.success('تم إنشاء حساب الموظف وربط صلاحياته بنجاح');
       }
 
-      // Log to audit
-      await addDoc(collection(db, 'audit_logs'), {
-        tenant_id: tenantId,
-        action: 'USER_CREATED',
-        target_id: createdUid,
-        target_name: newUserForm.name,
-        user: user?.email || 'المدير',
-        details: `إضافة مستخدم جديد: ${newUserForm.name} بدور: ${getRoleLabel(newUserForm.role)}`,
-        created_at: new Date().toISOString(),
-      });
-
-      toast.success('تمت إضافة المستخدم بنجاح');
       setShowAddUser(false);
       setNewUserForm({ name: '', email: '', password: '', role: 'cashier', branchId: 'all' });
+      setUseGoogleAuth(false);
       await fetchUsers();
     } catch (err: any) {
       console.error('Error creating user:', err);
       toast.error('حدث خطأ أثناء إنشاء المستخدم: ' + (err.message || ''));
     } finally {
+      if (secondaryApp) {
+        await deleteApp(secondaryApp).catch(() => {});
+      }
       setAddingUser(false);
     }
   };
@@ -932,11 +967,13 @@ export default function Permissions() {
                       {/* Permissions Grid */}
                       <div className="p-4 sm:p-5 grid grid-cols-1 md:grid-cols-2 gap-3">
                         {category.permissions.map((perm) => {
-                          const isChecked = editPermissions.includes(perm.id);
+                          const isChecked = isOwnerRole(selectedUser.role) || editPermissions.includes(perm.id);
                           return (
                             <div
                               key={perm.id}
-                              onClick={() => togglePermission(perm.id)}
+                              onClick={() => {
+                                if (!isOwnerRole(selectedUser.role)) togglePermission(perm.id);
+                              }}
                               className={cn(
                                 'flex items-center justify-between p-3 rounded-xl border transition-all cursor-pointer select-none',
                                 isChecked
@@ -954,6 +991,7 @@ export default function Permissions() {
                                 checked={isChecked}
                                 onCheckedChange={() => togglePermission(perm.id)}
                                 onClick={(e) => e.stopPropagation()}
+                                disabled={isOwnerRole(selectedUser.role)}
                                 className="scale-90"
                               />
                             </div>
@@ -1010,7 +1048,7 @@ export default function Permissions() {
                 type="email"
                 value={newUserForm.email}
                 onChange={(e) => setNewUserForm((f) => ({ ...f, email: e.target.value }))}
-                placeholder="user@restaurant.com"
+                placeholder="employee@gmail.com"
                 className="rounded-xl h-10"
                 required
                 dir="ltr"
@@ -1020,7 +1058,7 @@ export default function Permissions() {
             <div className="flex items-center justify-between p-3 border rounded-2xl bg-muted/20">
               <div className="space-y-0.5">
                 <Label className="text-xs font-bold">تسجيل الدخول عبر Google</Label>
-                <p className="text-[10px] text-muted-foreground">السماح بالدخول بحساب Google دون كلمة مرور</p>
+                <p className="text-[10px] text-muted-foreground">إنشاء دعوة Gmail حقيقية؛ يتم ربط الـ UID الفعلي عند أول تسجيل دخول عبر Google</p>
               </div>
               <Switch checked={useGoogleAuth} onCheckedChange={setUseGoogleAuth} />
             </div>
