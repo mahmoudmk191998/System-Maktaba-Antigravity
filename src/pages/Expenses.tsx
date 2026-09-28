@@ -26,6 +26,7 @@ import { AddExpenseDialog } from '@/components/expenses/AddExpenseDialog';
 import { getExpenses, updateExpense, deleteExpense } from '@/services/expenses';
 import { useTenantBranch, useHR } from '@/hooks/useDatabase';
 import { usePayroll } from '@/hooks/usePayroll';
+import { useUserPermissions } from '@/hooks/usePermissions';
 import { PayrollOverviewCards } from '@/components/payroll/PayrollOverviewCards';
 import { PayrollTable } from '@/components/payroll/PayrollTable';
 import type { Expense, ExpenseCategory } from '@/types/expenses';
@@ -45,6 +46,13 @@ const CATEGORIES: ExpenseCategory[] = ['رواتب', 'مشتريات', 'صيان
 
 export default function Expenses() {
   const { tenantId, branchId } = useTenantBranch();
+  const { hasPermission } = useUserPermissions();
+  const canManageExpenses = hasPermission('expenses.manage');
+  const canDeleteExpenses = hasPermission('expenses.delete');
+  const canExport = hasPermission('analytics.export') || hasPermission('reports.view');
+  const canPayPayroll = hasPermission('payroll.pay');
+  const canVoidPayroll = hasPermission('payroll.void');
+  const canManageAdvances = hasPermission('advances.manage');
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [loading, setLoading] = useState(true);
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
@@ -118,6 +126,10 @@ export default function Expenses() {
   }, [tenantId, branchId]); // Re-fetch on mount or tenant/branch change, filters apply in-memory
 
   const handleDelete = async (id: string) => {
+    if (!canDeleteExpenses) {
+      toast({ title: 'غير مصرح', description: 'ليس لديك صلاحية حذف المصروفات', variant: 'destructive' });
+      return;
+    }
     if (!window.confirm('هل أنت متأكد من حذف هذا المصروف؟')) return;
     try {
       await deleteExpense(id);
@@ -130,6 +142,10 @@ export default function Expenses() {
   };
 
   const handleBulkDelete = async () => {
+    if (!canDeleteExpenses) {
+      toast({ title: 'غير مصرح', description: 'ليس لديك صلاحية حذف المصروفات', variant: 'destructive' });
+      return;
+    }
     if (!window.confirm(`هل أنت متأكد من حذف ${selectedExpenses.length} مصروف؟`)) return;
     try {
       for (const id of selectedExpenses) {
@@ -145,6 +161,10 @@ export default function Expenses() {
 
   const handleUpdate = async () => {
     if (!editingExpense) return;
+    if (!canManageExpenses) {
+      toast({ title: 'غير مصرح', description: 'ليس لديك صلاحية تعديل المصروفات', variant: 'destructive' });
+      return;
+    }
     setIsSubmitting(true);
     try {
       await updateExpense(editingExpense.id, {
@@ -289,6 +309,10 @@ export default function Expenses() {
   }, [activeExpenses]);
 
   const handleExportCSV = () => {
+    if (!canExport) {
+      toast({ title: 'غير مصرح', description: 'ليس لديك صلاحية تصدير التقارير', variant: 'destructive' });
+      return;
+    }
     const headers = ['التاريخ', 'التصنيف', 'البيان', 'المبلغ'].join(',');
     const rows = filteredAndCategorizedExpenses.map(e => 
       `${e.date},${e.category},"${e.description.replace(/"/g, '""')}",${e.amount}`
@@ -346,17 +370,17 @@ export default function Expenses() {
             </div>
           )}
 
-          {selectedExpenses.length > 0 && (
+          {selectedExpenses.length > 0 && canDeleteExpenses && (
             <Button onClick={handleBulkDelete} variant="destructive" className="gap-2 shrink-0 hidden sm:flex">
               <Trash2 className="w-4 h-4" />
               حذف ({selectedExpenses.length})
             </Button>
           )}
-          <Button variant="outline" className="hidden sm:flex gap-2" onClick={handleExportCSV}>
+          <Button variant="outline" className="hidden sm:flex gap-2" onClick={handleExportCSV} disabled={!canExport}>
             <Download className="w-4 h-4" />
             تصدير
           </Button>
-          <Button onClick={() => setIsAddDialogOpen(true)} className="gap-2">
+          <Button onClick={() => canManageExpenses && setIsAddDialogOpen(true)} disabled={!canManageExpenses} className="gap-2">
             <Plus className="w-4 h-4" />
             إضافة مصروف
           </Button>
@@ -397,18 +421,35 @@ export default function Expenses() {
               currentPeriod={payrollPeriod}
               onPeriodChange={setPayrollPeriod}
               onDisbursePayment={async (data) => {
+                if (!canPayPayroll) {
+                  toast({ title: 'غير مصرح', description: 'ليس لديك صلاحية صرف الرواتب', variant: 'destructive' });
+                  return false;
+                }
                 const ok = await disburseSalaryPayment(data);
                 if (ok) fetchExpenses();
                 return ok;
               }}
               onVoidPayment={async (id, reason) => {
+                if (!canVoidPayroll) {
+                  toast({ title: 'غير مصرح', description: 'ليس لديك صلاحية إلغاء صرف الرواتب', variant: 'destructive' });
+                  return false;
+                }
                 const ok = await voidSalaryPayment(id, reason);
                 if (ok) fetchExpenses();
                 return ok;
               }}
-              onCreateAdvance={createAdvance}
-              onDeleteAdvance={deleteAdvance}
-              onCancelAdvance={cancelAdvance}
+              onCreateAdvance={async (...args) => {
+                if (!canManageAdvances) return false;
+                return createAdvance(...args);
+              }}
+              onDeleteAdvance={async (...args) => {
+                if (!canManageAdvances) return false;
+                return deleteAdvance(...args);
+              }}
+              onCancelAdvance={async (...args) => {
+                if (!canManageAdvances) return false;
+                return cancelAdvance(...args);
+              }}
               isSubmittingPayment={isSubmittingPayment}
             />
 
@@ -698,14 +739,14 @@ export default function Expenses() {
                           <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-primary" onClick={() => setViewingExpense(expense)}>
                             <Eye className="w-3.5 h-3.5" />
                           </Button>
-                          {!isVoided && (
+                          {!isVoided && canManageExpenses && (
                             <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-primary" onClick={() => setEditingExpense(expense)}>
                               <Edit className="w-3.5 h-3.5" />
                             </Button>
                           )}
-                          <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive" onClick={() => handleDelete(expense.id)}>
+                          {canDeleteExpenses && <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive" onClick={() => handleDelete(expense.id)}>
                             <Trash2 className="w-3.5 h-3.5" />
-                          </Button>
+                          </Button>}
                         </div>
                       </div>
                     </div>
