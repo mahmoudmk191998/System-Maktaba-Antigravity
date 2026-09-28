@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { MainLayout } from '@/components/layout';
 import { useTenantBranch } from '@/hooks/useDatabase';
 import { useAuth } from '@/hooks/useAuth';
+import { useUserPermissions } from '@/hooks/usePermissions';
 import {
   Activity,
   CheckCircle2,
@@ -33,6 +34,8 @@ import {
 export default function SystemHealth() {
   const { tenantId } = useTenantBranch();
   const { user } = useAuth();
+  const { hasPermission } = useUserPermissions();
+  const canRepair = hasPermission('system_health.repair');
 
   const [loading, setLoading] = useState<boolean>(true);
   const [report, setReport] = useState<SystemHealthReport | null>(null);
@@ -75,6 +78,10 @@ export default function SystemHealth() {
 
   const handleRetryOutboxEvent = async (eventId: string) => {
     if (!tenantId || !user) return;
+    if (!canRepair) {
+      toast.error('ليس لديك صلاحية تنفيذ إصلاحات سلامة النظام');
+      return;
+    }
     setRetryingEventId(eventId);
     try {
       const res = await retryDeadLetterEvent(
@@ -288,7 +295,7 @@ export default function SystemHealth() {
                               variant="outline"
                               size="sm"
                               onClick={() => handleRetryOutboxEvent(exc.id)}
-                              disabled={retryingEventId === exc.id}
+                              disabled={retryingEventId === exc.id || !canRepair}
                               className="text-xs h-7 gap-1"
                             >
                               <RefreshCw className={`w-3 h-3 ${retryingEventId === exc.id ? 'animate-spin' : ''}`} />
