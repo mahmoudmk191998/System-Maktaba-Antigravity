@@ -59,8 +59,20 @@ service cloud.firestore {
         exists(/databases/$(database)/documents/user_permissions/$(request.auth.uid + '___' + permissionId));
     }
 
+    function isLegacyAdminWithoutExplicitMode() {
+      return isAuthenticated() &&
+        getUserRole() == 'admin' &&
+        getUserProfile() != null &&
+        (!('permission_mode' in getUserProfile()) || getUserProfile().permission_mode != 'explicit');
+    }
+
     function canManagePermissions() {
-      return isSovereignOwner() || hasExplicitPermission('permissions.manage');
+      // Compatibility bridge: pre-audit Admin accounts may still have random-ID
+      // permission documents. They can migrate once; after permission_mode becomes
+      // explicit, permissions.manage must exist as the deterministic permission doc.
+      return isSovereignOwner() ||
+        hasExplicitPermission('permissions.manage') ||
+        isLegacyAdminWithoutExplicitMode();
     }
 
     function inviteForCurrentEmailExists() {
