@@ -29,5 +29,15 @@
   "description": "نظام احترافي لإدارة المكتبة والقرطاسية والمبيعات والمخزون",
   "lang": "ar",
   "dir": "rtl",
-  "scope": "/"
+  "scope": "/",
+  "prefer_related_applications": false,
+  "display_override": [
+    "standalone"
+  ],
+  "orientation": "any",
+  "categories": [
+    "business",
+    "productivity",
+    "finance"
+  ]
 }
