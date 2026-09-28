@@ -49,6 +49,7 @@ import {
   UsersRound,
 } from 'lucide-react';
 import { useSales } from '@/hooks/retail/useSales';
+import { useUserPermissions } from '@/hooks/usePermissions';
 import { useFormatters } from '@/lib/formatters';
 import { useToast } from '@/hooks/use-toast';
 import { SaleDetailsDrawer } from '@/components/retail/pos/SaleDetailsDrawer';
@@ -64,6 +65,9 @@ export default function OrdersHistory() {
   const { currentTenant } = useAppStore();
   const { number } = useFormatters();
   const { toast } = useToast();
+  const { hasPermission } = useUserPermissions();
+  const canRemoveInvoice = hasPermission('sales.cancel') || hasPermission('orders.manage');
+  const canReprintReceipt = hasPermission('sales.reprint_receipt');
 
   const [selectedCashierId, setSelectedCashierId] = useState('all');
   const [staffOptions, setStaffOptions] = useState<SalesStaffOption[]>([]);
@@ -183,6 +187,15 @@ export default function OrdersHistory() {
   // Handle invoice deletion
   const handleDeleteConfirm = async () => {
     if (!saleToDelete) return;
+    if (!canRemoveInvoice) {
+      toast({
+        title: 'غير مصرح',
+        description: 'ليس لديك صلاحية إلغاء/إدارة فواتير المبيعات.',
+        variant: 'destructive',
+      });
+      setSaleToDelete(null);
+      return;
+    }
     setIsDeleting(true);
     try {
       const res = await removeSale(saleToDelete.id);
@@ -552,8 +565,8 @@ export default function OrdersHistory() {
                               title="إعادة طباعة الإيصال الحراري"
                             >
                               <Printer className="w-4 h-4" />
-                            </Button>
-                            <Button
+                            </Button>}
+                            {canRemoveInvoice && (<Button
                               size="sm"
                               variant="ghost"
                               className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
@@ -561,7 +574,7 @@ export default function OrdersHistory() {
                               title="حذف الفاتورة نهائياً"
                             >
                               <Trash2 className="w-4 h-4" />
-                            </Button>
+                            </Button>)}
                           </div>
                         </TableCell>
                       </TableRow>
@@ -591,7 +604,7 @@ export default function OrdersHistory() {
 
       {/* Thermal Receipt Dialog for Reprint */}
       <ReceiptDialog
-        open={!!selectedSaleForReceipt}
+        open={canReprintReceipt && !!selectedSaleForReceipt}
         onOpenChange={(open) => !open && setSelectedSaleForReceipt(null)}
         sale={selectedSaleForReceipt}
       />
