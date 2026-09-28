@@ -54,11 +54,12 @@ export default function Purchasing() {
   const { number } = useFormatters();
   const currentBranch = useAppStore((state) => state.currentBranch);
   const currentUser = useAppStore((state) => state.currentUser);
-  const { hasPermission, isAdmin } = useUserPermissions();
+  const { hasPermission } = useUserPermissions();
 
-  const canApprove = isAdmin || hasPermission('purchases.approve');
-  const canReceive = isAdmin || hasPermission('purchases.receive');
-  const canCreate = isAdmin || hasPermission('purchases.create');
+  const canApprove = hasPermission('purchases.approve');
+  const canReceive = hasPermission('purchases.receive');
+  const canCreate = hasPermission('purchases.create');
+  const canCancel = hasPermission('purchases.cancel');
 
   const {
     purchaseOrders,
@@ -170,6 +171,10 @@ export default function Purchasing() {
   };
 
   const handleApprove = async (po: PurchaseOrder) => {
+    if (!canApprove) {
+      toast.error('ليس لديك صلاحية اعتماد أوامر الشراء');
+      return;
+    }
     try {
       await approvePO(po.id, currentUser?.name || 'المدير المسؤول');
       toast.success(`تم اعتماد أمر الشراء ${po.purchaseOrderNumber} بنجاح`);
@@ -179,6 +184,10 @@ export default function Purchasing() {
   };
 
   const handleCancel = async (po: PurchaseOrder) => {
+    if (!canCancel) {
+      toast.error('ليس لديك صلاحية إلغاء أوامر الشراء');
+      return;
+    }
     try {
       await cancelPO(po.id, currentUser?.name || 'المستخدم', 'إلغاء يدوي من القائمة');
       toast.success(`تم إلغاء أمر الشراء ${po.purchaseOrderNumber}`);
