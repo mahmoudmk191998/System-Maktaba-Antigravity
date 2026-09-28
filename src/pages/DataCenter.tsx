@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { MainLayout } from '@/components/layout';
 import { useTenantBranch } from '@/hooks/useDatabase';
 import { useAuth } from '@/hooks/useAuth';
+import { useUserPermissions } from '@/hooks/usePermissions';
 import { useFormatters } from '@/lib/formatters';
 import {
   FileSpreadsheet,
@@ -35,11 +36,17 @@ import {
   commitSupplierImport,
   ProductImportRow,
   ImportValidationResult,
+  exportProductsCsv,
+  exportCustomersCsv,
+  exportSuppliersCsv,
 } from '@/services/dataCenter/importExport.service';
 
 export default function DataCenter() {
   const { tenantId, branchId } = useTenantBranch();
   const { user } = useAuth();
+  const { hasPermission } = useUserPermissions();
+  const canImport = hasPermission('datacenter.import');
+  const canExport = hasPermission('datacenter.export');
   const { currency, number } = useFormatters();
 
   const [activeTab, setActiveTab] = useState<string>('products_import');
@@ -52,6 +59,10 @@ export default function DataCenter() {
 
   // Parse and Validate Products CSV
   const handleValidateProducts = async () => {
+    if (!canImport) {
+      toast.error('ليس لديك صلاحية استيراد البيانات');
+      return;
+    }
     if (!tenantId || !productCsvText.trim()) return;
     setIsValidating(true);
     try {
@@ -76,6 +87,10 @@ export default function DataCenter() {
 
   // Commit Products
   const handleCommitProducts = async () => {
+    if (!canImport) {
+      toast.error('ليس لديك صلاحية تنفيذ الاستيراد');
+      return;
+    }
     if (!tenantId || !branchId || !validationResult || !user) return;
     if (validationResult.validRows.length === 0) {
       toast.error('لا توجد صفوف صالحة للاستيراد');
@@ -98,6 +113,31 @@ export default function DataCenter() {
       toast.error(err.message || 'فشل استيراد المنتجات');
     } finally {
       setIsCommitting(false);
+    }
+  };
+
+  const downloadCsv = async (
+    fileName: string,
+    exporter: (tenantId: string) => Promise<string>
+  ) => {
+    if (!canExport || !tenantId) {
+      toast.error('ليس لديك صلاحية تصدير البيانات');
+      return;
+    }
+    try {
+      const csv = await exporter(tenantId);
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      toast.success('تم إعداد ملف CSV وتنزيله بنجاح');
+    } catch (error: any) {
+      toast.error(error?.message || 'فشل تصدير البيانات');
     }
   };
 
@@ -174,7 +214,7 @@ export default function DataCenter() {
                 <div className="flex items-center gap-3">
                   <Button
                     onClick={handleValidateProducts}
-                    disabled={isValidating || !productCsvText.trim()}
+                    disabled={isValidating || !productCsvText.trim() || !canImport}
                     className="bg-primary text-primary-foreground hover:bg-primary/90 text-xs gap-1.5"
                   >
                     <Eye className="w-3.5 h-3.5" />
@@ -184,7 +224,7 @@ export default function DataCenter() {
                   {validationResult && validationResult.validRows.length > 0 && (
                     <Button
                       onClick={handleCommitProducts}
-                      disabled={isCommitting}
+                      disabled={isCommitting || !canImport}
                       className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs gap-1.5"
                     >
                       <CheckCircle2 className="w-3.5 h-3.5" />
@@ -322,7 +362,8 @@ export default function DataCenter() {
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => toast.info('جاري إعداد ملف المنتجات للتنزيل')}
+                  disabled={!canExport}
+                  onClick={() => downloadCsv('products.csv', exportProductsCsv)}
                   className="text-xs mt-4 gap-1.5"
                 >
                   <Download className="w-3.5 h-3.5" />
@@ -343,7 +384,8 @@ export default function DataCenter() {
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => toast.info('جاري إعداد ملف العملاء للتنزيل')}
+                  disabled={!canExport}
+                  onClick={() => downloadCsv('customers.csv', exportCustomersCsv)}
                   className="text-xs mt-4 gap-1.5"
                 >
                   <Download className="w-3.5 h-3.5" />
@@ -364,7 +406,8 @@ export default function DataCenter() {
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => toast.info('جاري إعداد ملف الموردين للتنزيل')}
+                  disabled={!canExport}
+                  onClick={() => downloadCsv('suppliers.csv', exportSuppliersCsv)}
                   className="text-xs mt-4 gap-1.5"
                 >
                   <Download className="w-3.5 h-3.5" />
