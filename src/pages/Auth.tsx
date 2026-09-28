@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { auth as firebaseAuth } from '@/lib/firebase';
+import { auth as firebaseAuth, db } from '@/lib/firebase';
 import { 
   signInWithEmailAndPassword, 
   createUserWithEmailAndPassword, 
@@ -10,6 +10,8 @@ import {
   signInWithPopup, 
   getAdditionalUserInfo 
 } from 'firebase/auth';
+import { doc, getDoc } from 'firebase/firestore';
+import { claimGoogleInvitation } from '@/services/permissions/userAccess.service';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -92,19 +94,36 @@ export default function Auth() {
     setLoading(true);
     try {
       const provider = new GoogleAuthProvider();
+      provider.setCustomParameters({ prompt: 'select_account' });
+
       const result = await signInWithPopup(firebaseAuth, provider);
       const additionalInfo = getAdditionalUserInfo(result);
-      
-      if (additionalInfo?.isNewUser) {
-        await result.user.delete();
+
+      // A pending invitation created from Permissions is claimed using the REAL
+      // Firebase Auth UID returned by Google. No synthetic/fake UID is ever used.
+      const invitation = await claimGoogleInvitation(result.user);
+
+      const profileSnap = await getDoc(doc(db, 'profiles', result.user.uid));
+      const hasProfile = profileSnap.exists();
+
+      if (!invitation.claimed && !hasProfile) {
+        // Do not leave orphan Google Auth users that have no tenant/role access.
+        if (additionalInfo?.isNewUser) {
+          await result.user.delete().catch(() => {});
+        }
         await firebaseAuth.signOut();
-        toast.error('الحساب غير مسجل في بطاقات المكتبة. يرجى إنشاء حساب جديد أولاً.');
+        toast.error('هذا الـ Gmail غير مضاف من صفحة الصلاحيات. اطلب من المدير إضافته أولاً.');
         return;
       }
-      
-      toast.success('تم التحقق من بطاقة القارئ عبر حساب جوجل بنجاح');
+
+      toast.success(
+        invitation.claimed
+          ? 'تم تفعيل دعوة الموظف وربط حساب Google بالصلاحيات بنجاح'
+          : 'تم تسجيل الدخول بحساب Google بنجاح'
+      );
       navigate('/');
     } catch (error: any) {
+      console.error('Google login error:', error);
       toast.error(error.message || 'خطأ في تسجيل الدخول بحساب جوجل');
     } finally {
       setLoading(false);
@@ -112,23 +131,9 @@ export default function Auth() {
   };
 
   const handleGoogleSignup = async () => {
-    setLoading(true);
-    try {
-      const provider = new GoogleAuthProvider();
-      const result = await signInWithPopup(firebaseAuth, provider);
-      const additionalInfo = getAdditionalUserInfo(result);
-      
-      if (!additionalInfo?.isNewUser) {
-        toast.success('بطاقة هذا الحساب موجودة بالفعل. تم تسجيل الدخول.');
-      } else {
-        toast.success('تم إصدار بطاقة حساب جوجل بنجاح في سجلات المكتبة');
-      }
-      navigate('/');
-    } catch (error: any) {
-      toast.error(error.message || 'خطأ في إنشاء الحساب بحساب جوجل');
-    } finally {
-      setLoading(false);
-    }
+    // Google employee accounts are provisioned centrally from Permissions.
+    // Reuse the same secure claim flow instead of creating an unscoped account.
+    await handleGoogleLogin();
   };
 
   const handleSignup = async (e: React.FormEvent) => {
