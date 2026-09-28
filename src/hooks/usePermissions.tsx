@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { db } from '@/lib/firebase';
 import { collection, query, where, onSnapshot, doc } from 'firebase/firestore';
 import { useAuth } from './useAuth';
-import { isOwnerRole, isAdminOrOwnerRole } from '@/lib/permissionsModel';
+import { calculateEffectivePermissions, isOwnerRole, isAdminOrOwnerRole } from '@/lib/permissionsModel';
 
 export interface PermissionsHookResult {
   permissions: string[];
@@ -17,6 +17,7 @@ export interface PermissionsHookResult {
   isDisabled: boolean;
   hasAnyRole: boolean;
   userStatus: 'active' | 'disabled';
+  userRole: string | null;
   refresh: () => void;
 }
 
@@ -40,6 +41,7 @@ export function useUserPermissions(): PermissionsHookResult {
     let currentRoles: string[] = [];
     let currentPerms: string[] = [];
     let currentStatus: 'active' | 'disabled' = 'active';
+    let profilePermissionOverride: string[] | null = null;
 
     let rolesLoaded = false;
     let permsLoaded = false;
@@ -58,11 +60,25 @@ export function useUserPermissions(): PermissionsHookResult {
 
       setRoles(currentRoles);
 
-      const hasAdminOrOwner = currentRoles.some((r) => isAdminOrOwnerRole(r));
-      if (hasAdminOrOwner) {
-        setPermissions(['*']); // wildcard = all permissions
+      const primaryRole = currentRoles[0] || null;
+      const sovereign = currentRoles.some((r) => isOwnerRole(r));
+
+      if (sovereign) {
+        // Only Owner / Super Admin are sovereign wildcard identities.
+        setPermissions(['*']);
+      } else if (profilePermissionOverride !== null) {
+        // New RBAC model: profile.permissions is the exact effective list,
+        // including an intentionally empty array.
+        setPermissions(Array.from(new Set(profilePermissionOverride)));
+      } else if (currentPerms.length > 0) {
+        // Backward compatibility for existing accounts not migrated yet.
+        setPermissions(Array.from(new Set(currentPerms)));
+      } else if (primaryRole) {
+        // Legacy account with a role but no explicit permission records.
+        // Use template defaults until the Permissions page persists an exact list.
+        setPermissions(calculateEffectivePermissions(primaryRole));
       } else {
-        setPermissions(currentPerms);
+        setPermissions([]);
       }
 
       setLoading(false);
@@ -76,6 +92,9 @@ export function useUserPermissions(): PermissionsHookResult {
         if (snapshot.exists()) {
           const data = snapshot.data();
           currentStatus = data.status === 'disabled' ? 'disabled' : 'active';
+          profilePermissionOverride = Array.isArray(data.permissions)
+            ? data.permissions.filter((p: unknown): p is string => typeof p === 'string')
+            : null;
           setUserStatus(currentStatus);
         }
         profileLoaded = true;
@@ -151,6 +170,7 @@ export function useUserPermissions(): PermissionsHookResult {
   const isOwner = userStatus !== 'disabled' && roles.some((r) => isOwnerRole(r));
   const isDisabled = userStatus === 'disabled';
   const hasAnyRole = userStatus !== 'disabled' && roles.length > 0;
+  const userRole = roles[0] || null;
 
   const refresh = useCallback(() => { }, []);
 
@@ -167,6 +187,7 @@ export function useUserPermissions(): PermissionsHookResult {
     isDisabled,
     hasAnyRole,
     userStatus,
+    userRole,
     refresh,
   };
 }
