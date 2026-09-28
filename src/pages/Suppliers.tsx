@@ -62,10 +62,12 @@ const SUPPLIER_TYPES: { id: SupplierType; label: string }[] = [
 export default function Suppliers() {
   const { number } = useFormatters();
   const currentUser = useAppStore((state) => state.currentUser);
-  const { hasPermission, isAdmin } = useUserPermissions();
+  const { hasPermission } = useUserPermissions();
 
-  const canManage = isAdmin || hasPermission('suppliers.manage') || hasPermission('suppliers.create');
-  const canPay = isAdmin || hasPermission('suppliers.pay') || hasPermission('supplier_payments.create');
+  const canCreate = hasPermission('suppliers.create');
+  const canEdit = hasPermission('suppliers.edit');
+  const canArchive = hasPermission('suppliers.archive');
+  const canPay = hasPermission('suppliers.pay') || hasPermission('supplier_payments.create');
 
   const {
     suppliers,
@@ -149,11 +151,19 @@ export default function Suppliers() {
   };
 
   const handleOpenAdd = () => {
+    if (!canCreate) {
+      toast.error('ليس لديك صلاحية إضافة مورد');
+      return;
+    }
     resetForm();
     setIsAddModalOpen(true);
   };
 
   const handleOpenEdit = (supplier: Supplier) => {
+    if (!canEdit) {
+      toast.error('ليس لديك صلاحية تعديل المورد');
+      return;
+    }
     setEditingSupplier(supplier);
     setFormData({
       name: supplier.name,
@@ -175,6 +185,10 @@ export default function Suppliers() {
   };
 
   const handleSaveSupplier = async () => {
+    if (editingSupplier ? !canEdit : !canCreate) {
+      toast.error(editingSupplier ? 'ليس لديك صلاحية تعديل المورد' : 'ليس لديك صلاحية إضافة مورد');
+      return;
+    }
     if (!formData.name.trim() || !formData.phone.trim()) {
       toast.error('اسم المورد ورقم الهاتف حقول إلزامية');
       return;
@@ -202,6 +216,10 @@ export default function Suppliers() {
   };
 
   const handleArchive = async (supplier: Supplier) => {
+    if (!canArchive) {
+      toast.error('ليس لديك صلاحية أرشفة المورد');
+      return;
+    }
     if (confirm(`هل أنت متأكد من رغبتك في أرشفة المورد "${supplier.name}"؟ سيبقى ظاهراً في الفواتير القديمة ولن يمكن عمل أوامر شراء جديدة له.`)) {
       try {
         await archiveSupplierById(supplier.id, currentUser?.name || 'مدير النظام');
@@ -213,6 +231,10 @@ export default function Suppliers() {
   };
 
   const handleRestore = async (supplier: Supplier) => {
+    if (!canArchive) {
+      toast.error('ليس لديك صلاحية استعادة المورد');
+      return;
+    }
     if (confirm(`هل ترغب في استرجاع المورد "${supplier.name}" إلى قائمة الموردين النشطين؟`)) {
       try {
         await restoreSupplierById(supplier.id, currentUser?.name || 'مدير النظام');
@@ -274,7 +296,7 @@ export default function Suppliers() {
       title="الموردين ودور النشر (Suppliers & Publishers)"
       subtitle="سجل الموردين ودور النشر، كشوف الحسابات الجارية، وسندات صرف ودفعات الحساب"
       actions={
-        canManage && (
+        canCreate && (
           <Button onClick={handleOpenAdd} className="gap-2 font-bold text-xs sm:text-sm shadow-sm">
             <Plus className="w-4 h-4" />
             <span>إضافة مورد / دار نشر</span>
@@ -506,7 +528,7 @@ export default function Suppliers() {
                               )}
 
                               {/* Edit */}
-                              {canManage && (
+                              {canCreate && (
                                 <Button
                                   size="sm"
                                   variant="ghost"
@@ -519,7 +541,7 @@ export default function Suppliers() {
                               )}
 
                               {/* Archive */}
-                              {canManage && (
+                              {canCreate && (
                                 <Button
                                   size="sm"
                                   variant="ghost"
@@ -534,7 +556,7 @@ export default function Suppliers() {
                           )}
 
                           {/* Actions for Archived Suppliers */}
-                          {viewMode === 'archived' && canManage && (
+                          {viewMode === 'archived' && canArchive && (
                             <Button
                               size="sm"
                               className="h-7 px-2.5 text-xs gap-1.5 bg-primary hover:bg-primary/90 text-primary-foreground font-bold"
