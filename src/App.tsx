@@ -133,10 +133,10 @@ function AppRoutes() {
         <Route path="/attendance" element={<AttendancePublic />} />
         <Route path="/" element={<ProtectedRoute requiredPerms={['dashboard.view']}><Dashboard /></ProtectedRoute>} />
         <Route path="/pos" element={<ProtectedRoute requiredPerms={['pos.view']}><POS /></ProtectedRoute>} />
-        <Route path="/orders-history" element={<ProtectedRoute requiredPerms={['pos.view', 'sales.view']}><OrdersHistory /></ProtectedRoute>} />
+        <Route path="/orders-history" element={<ProtectedRoute requiredPerms={['orders.view', 'sales.view']}><OrdersHistory /></ProtectedRoute>} />
         <Route path="/orders" element={<Navigate to="/orders-history" replace />} />
-        <Route path="/returns" element={<ProtectedRoute requiredPerms={['returns.view', 'sales.view', 'pos.view']}><SalesReturns /></ProtectedRoute>} />
-        <Route path="/sales" element={<ProtectedRoute requiredPerms={['pos.view', 'sales.view']}><OrdersHistory /></ProtectedRoute>} />
+        <Route path="/returns" element={<ProtectedRoute requiredPerms={['returns.view']}><SalesReturns /></ProtectedRoute>} />
+        <Route path="/sales" element={<ProtectedRoute requiredPerms={['orders.view', 'sales.view']}><OrdersHistory /></ProtectedRoute>} />
         <Route path="/kitchen" element={<Navigate to="/" replace />} />
         <Route path="/tables" element={<Navigate to="/inventory" replace />} />
         <Route path="/products" element={<ProtectedRoute requiredPerms={['products.view', 'menu.view']}><Products /></ProtectedRoute>} />
@@ -165,9 +165,9 @@ function AppRoutes() {
         <Route path="/accounting" element={<ProtectedRoute requiredPerms={['accounting.view']}><Accounting /></ProtectedRoute>} />
         <Route path="/executive" element={<ProtectedRoute requiredPerms={['financial_dashboard.view', 'reports.view', 'accounting.view']}><ExecutiveDashboard /></ProtectedRoute>} />
         <Route path="/backup" element={<ProtectedRoute requiredPerms={['backup.view', 'settings.manage']}><Backup /></ProtectedRoute>} />
-        <Route path="/approvals" element={<ProtectedRoute requiredPerms={['approvals.view', 'governance.view']}><Approvals /></ProtectedRoute>} />
+        <Route path="/approvals" element={<ProtectedRoute requiredPerms={['approvals.view']}><Approvals /></ProtectedRoute>} />
         <Route path="/datacenter" element={<ProtectedRoute requiredPerms={['datacenter.view', 'settings.manage']}><DataCenter /></ProtectedRoute>} />
-        <Route path="/system-health" element={<ProtectedRoute requiredPerms={['system_health.view', 'settings.manage', 'accounting.view']}><SystemHealth /></ProtectedRoute>} />
+        <Route path="/system-health" element={<ProtectedRoute requiredPerms={['system_health.view', 'settings.manage']}><SystemHealth /></ProtectedRoute>} />
         <Route path="/callcenter" element={<Navigate to="/pos" replace />} />
         <Route path="/notifications" element={<ProtectedRoute><NotificationsHistory /></ProtectedRoute>} />
         <Route path="/payroll" element={<Navigate to="/hr?tab=reports" replace />} />
