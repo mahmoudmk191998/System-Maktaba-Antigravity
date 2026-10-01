@@ -1,0 +1,52 @@
+name: App Integrity CI
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - "src/**"
+      - "server/**"
+      - "firestore.rules"
+      - "firestore.indexes.json"
+      - "package.json"
+      - "package-lock.json"
+      - "vite.config.ts"
+      - ".github/workflows/app-ci.yml"
+  push:
+    branches: [master]
+    paths:
+      - "src/**"
+      - "server/**"
+      - "firestore.rules"
+      - "firestore.indexes.json"
+      - "package.json"
+      - "package-lock.json"
+      - "vite.config.ts"
+      - ".github/workflows/app-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run application tests
+        run: npm test
+
+      - name: Build production bundle
+        run: npm run build
