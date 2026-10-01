@@ -28,8 +28,8 @@ const navGroups = [
     title: 'المبيعات والعملاء',
     items: [
       { path: '/pos', label: 'نقاط البيع السريعة (POS)', icon: ShoppingCart, perms: ['pos.view'] },
-      { path: '/orders-history', label: 'سجل فواتير المبيعات', icon: Receipt, perms: ['pos.view', 'sales.view'] },
-      { path: '/returns', label: 'مرتجعات واستبدال المبيعات', icon: RotateCcw, perms: ['returns.view', 'sales.view', 'pos.view'] },
+      { path: '/orders-history', label: 'سجل فواتير المبيعات', icon: Receipt, perms: ['orders.view', 'sales.view'] },
+      { path: '/returns', label: 'مرتجعات واستبدال المبيعات', icon: RotateCcw, perms: ['returns.view'] },
       { path: '/customers', label: 'العملاء', icon: Users, perms: ['customers.view'] },
       { path: '/receivables', label: 'الآجل والمديونيات', icon: CreditCard, perms: ['customers.view'] },
       { path: '/promotions', label: 'العروض والخصومات', icon: Percent, perms: ['promotions.view'] },
@@ -60,9 +60,9 @@ const navGroups = [
   {
     title: 'الحوكمة وإدارة البيانات',
     items: [
-      { path: '/approvals', label: 'مركز الموافقات', icon: CheckSquare, perms: ['approvals.view', 'governance.view'] },
+      { path: '/approvals', label: 'مركز الموافقات', icon: CheckSquare, perms: ['approvals.view'] },
       { path: '/datacenter', label: 'مركز استيراد وتصدير البيانات', icon: FileSpreadsheet, perms: ['datacenter.view', 'settings.manage'] },
-      { path: '/system-health', label: 'فحص سلامة النظام والصيانة', icon: Activity, perms: ['system_health.view', 'settings.manage', 'accounting.view'] },
+      { path: '/system-health', label: 'فحص سلامة النظام والصيانة', icon: Activity, perms: ['system_health.view', 'settings.manage'] },
     ]
   },
   {
