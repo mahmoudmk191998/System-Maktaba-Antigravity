@@ -338,13 +338,20 @@ export default function Permissions() {
 
   // Reset a single category to role template defaults
   const resetCategoryToRoleDefault = (categoryId: string) => {
-    if (!selectedUser) return;
+    if (!selectedUser || !canManageSelectedAccess || selectedIsSovereign) {
+      toast.error('لا يمكنك استعادة افتراضيات هذا الحساب بصلاحيات أعلى من حسابك.');
+      return;
+    }
     const category = PERMISSION_CATEGORIES.find((c) => c.id === categoryId);
     if (!category) return;
     const catPerms = category.permissions.map((p) => p.id);
 
     const roleDefaults = ROLE_TEMPLATES[selectedUser.role]?.permissions || [];
-    const defaultsInThisCategory = catPerms.filter((p) => roleDefaults.includes('*') || roleDefaults.includes(p));
+    const defaultsInThisCategory = catPerms.filter(
+      (p) =>
+        (roleDefaults.includes('*') || roleDefaults.includes(p)) &&
+        (actorIsSovereign || actorHasWildcard || actorPermissions.includes(p))
+    );
 
     setEditPermissions((prev) => {
       const otherPerms = prev.filter((p) => !catPerms.includes(p));
@@ -355,16 +362,22 @@ export default function Permissions() {
 
   // Reset all permissions of selected user to their role template defaults
   const resetAllToRoleDefaults = () => {
-    if (!selectedUser) return;
-    const template = ROLE_TEMPLATES[selectedUser.role];
-    if (template) {
-      if (template.permissions.includes('*')) {
-        setEditPermissions([...ALL_PERMISSION_IDS]);
-      } else {
-        setEditPermissions([...template.permissions]);
-      }
-      toast.success(`تمت استعادة الصلاحيات الافتراضية لدور "${template.label}"`);
+    if (!selectedUser || !canManageSelectedAccess || selectedIsSovereign) {
+      toast.error('لا يمكنك استعادة افتراضيات هذا الحساب.');
+      return;
     }
+
+    const template = ROLE_TEMPLATES[selectedUser.role];
+    if (!template) return;
+
+    const desired = getRolePermissionIds(selectedUser.role);
+    if (!canDelegate(desired)) {
+      toast.error('افتراضي هذا الدور يحتوي على صلاحيات أعلى من حسابك.');
+      return;
+    }
+
+    setEditPermissions(desired);
+    toast.success(`تمت استعادة الصلاحيات الافتراضية لدور "${template.label}"`);
   };
 
   // Apply Role Template directly
@@ -634,13 +647,21 @@ export default function Permissions() {
       let targetId = email;
 
       if (useGoogleAuth) {
-        const existingProfile = await getDocs(query(
-          collection(db, 'profiles'),
-          where('tenant_id', '==', tenantId),
-          where('email', '==', email),
-          limit(1)
-        ));
-        if (!existingProfile.empty) {
+        const [existingProfileLegacy, existingProfileCanonical] = await Promise.all([
+          getDocs(query(
+            collection(db, 'profiles'),
+            where('tenant_id', '==', tenantId),
+            where('email', '==', email),
+            limit(1)
+          )),
+          getDocs(query(
+            collection(db, 'profiles'),
+            where('tenantId', '==', tenantId),
+            where('email', '==', email),
+            limit(1)
+          )),
+        ]);
+        if (!existingProfileLegacy.empty || !existingProfileCanonical.empty) {
           throw new Error('هذا البريد مرتبط بحساب موظف موجود بالفعل');
         }
 
@@ -1042,6 +1063,7 @@ export default function Permissions() {
                     <Button
                       variant="outline"
                       onClick={resetAllToRoleDefaults}
+                      disabled={!canManageSelectedAccess || selectedIsSovereign}
                       className="w-full h-9 rounded-xl text-xs font-bold gap-1.5 border-border/60 hover:bg-primary/5 hover:text-primary"
                     >
                       <RotateCcw className="w-3.5 h-3.5" />
@@ -1049,6 +1071,14 @@ export default function Permissions() {
                     </Button>
                   </div>
                 </div>
+
+                {(!canManageSelectedAccess || selectedIsSovereign) && (
+                  <div className="rounded-2xl border border-amber-500/25 bg-amber-500/10 px-4 py-3 text-xs text-amber-800 dark:text-amber-200">
+                    {selectedIsSovereign
+                      ? 'هذا حساب سيادي (مالك / مدير أعلى). صلاحياته كاملة وغير قابلة للتجزئة.'
+                      : 'هذا الحساب يملك صلاحيات أعلى من حسابك. يمكنك مراجعته فقط ولا يمكنك تعديل صلاحياته أو دوره.'}
+                  </div>
+                )}
 
                 {/* Permissions Instant Search Bar */}
                 <div className="relative mt-1">
@@ -1252,11 +1282,13 @@ export default function Permissions() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent className="rounded-xl">
-                    {Object.values(ROLE_TEMPLATES).map((tmpl) => (
-                      <SelectItem key={tmpl.key} value={tmpl.key} className="text-xs font-bold">
-                        {tmpl.label}
-                      </SelectItem>
-                    ))}
+                    {Object.values(ROLE_TEMPLATES)
+                      .filter((tmpl) => actorIsSovereign || actorHasWildcard || !isOwnerRole(tmpl.key))
+                      .map((tmpl) => (
+                        <SelectItem key={tmpl.key} value={tmpl.key} className="text-xs font-bold">
+                          {tmpl.label}
+                        </SelectItem>
+                      ))}
                   </SelectContent>
                 </Select>
               </div>
