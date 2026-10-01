@@ -66,6 +66,7 @@ import { getExpenses } from '@/services/expenses';
 import { fetchCategoriesFromDb } from '@/services/categories/categories.service';
 import { db } from '@/lib/firebase';
 import { collection, getDocs, query, where } from 'firebase/firestore';
+import { useUserPermissions } from '@/hooks/usePermissions';
 
 const CHART_PALETTE = ['#3b82f6', '#10b981', '#f59e0b', '#ec4899', '#8b5cf6', '#06b6d4', '#f97316', '#64748b'];
 
@@ -96,11 +97,16 @@ export default function Reports() {
   const tenantId = currentTenant?.id || hookTenantId || '';
   const branchId = currentBranch?.id || hookBranchId || '';
   const { currency, number } = useFormatters();
+  const { hasPermission, isAdmin } = useUserPermissions();
+  const canViewSalesReports = isAdmin || hasPermission('reports.sales');
+  const canViewInventoryReports = isAdmin || hasPermission('reports.inventory');
+  const canViewCosts = isAdmin || hasPermission('analytics.view_costs');
+  const canExportReports = isAdmin || hasPermission('analytics.export');
 
   // Primary UI state
   const [activeTab, setActiveTab] = useState<string>('overview');
   const [loading, setLoading] = useState<boolean>(true);
-  const [revealCosts, setRevealCosts] = useState<boolean>(true);
+  const [revealCosts, setRevealCosts] = useState<boolean>(false);
 
   // Filters (defaults to 'all' to immediately show entire sales invoice history)
   const [datePreset, setDatePreset] = useState<DatePreset>('all');
@@ -136,17 +142,19 @@ export default function Reports() {
       const bId = selectedBranch === 'all' ? undefined : selectedBranch;
 
       // 1. Fetch sales & returns with full tenant fallbacks
-      const salesPromise = fetchSalesPeriodData(tenantId, activeDateRange, bId, timeZone).catch(() => ({ sales: [], returns: [] }));
+      const salesPromise = canViewSalesReports
+        ? fetchSalesPeriodData(tenantId, activeDateRange, bId, timeZone).catch(() => ({ sales: [], returns: [] }))
+        : Promise.resolve({ sales: [], returns: [] });
 
       // 2. Fetch stock records & product catalog
-      const stockPromise = fetchTenantStockBalances(tenantId, bId).catch(() => []);
-      const catalogPromise = fetchProductsCatalog(tenantId).catch(() => new Map());
+      const stockPromise = canViewInventoryReports ? fetchTenantStockBalances(tenantId, bId).catch(() => []) : Promise.resolve([]);
+      const catalogPromise = canViewInventoryReports ? fetchProductsCatalog(tenantId).catch(() => new Map()) : Promise.resolve(new Map());
 
       // 3. Fetch categories
-      const categoriesPromise = fetchCategoriesFromDb(tenantId).catch(() => []);
+      const categoriesPromise = canViewInventoryReports ? fetchCategoriesFromDb(tenantId).catch(() => []) : Promise.resolve([]);
 
       // 4. Fetch expenses
-      const expensesPromise = getExpenses(tenantId).catch(() => []);
+      const expensesPromise = canViewCosts ? getExpenses(tenantId).catch(() => []) : Promise.resolve([]);
 
       // 5. Fetch registered branches
       const branchesPromise = (async () => {
@@ -202,7 +210,7 @@ export default function Reports() {
     } finally {
       setLoading(false);
     }
-  }, [tenantId, selectedBranch, activeDateRange, timeZone]);
+  }, [tenantId, selectedBranch, activeDateRange, timeZone, canViewSalesReports, canViewInventoryReports, canViewCosts]);
 
   useEffect(() => {
     loadReportsData();
@@ -437,6 +445,10 @@ export default function Reports() {
 
   // CSV Exporter
   const handleExportCsv = () => {
+    if (!canExportReports) {
+      toast.error('ليس لديك صلاحية تصدير التقارير');
+      return;
+    }
     try {
       const headers = ['الصنف', 'القسم', 'الكمية المباعة', 'إجمالي المبيعات', 'التكلفة', 'الربح', 'الهامش'];
       const rows = metrics.topProducts.map((p) => [
@@ -553,7 +565,8 @@ export default function Reports() {
             <Button
               variant="outline"
               size="sm"
-              onClick={() => setRevealCosts(!revealCosts)}
+              onClick={() => canViewCosts && setRevealCosts(!revealCosts)}
+              disabled={!canViewCosts}
               className="h-8 px-2.5 text-xs gap-1.5 border-border bg-background"
               title={revealCosts ? 'حجب التكاليف والأرباح' : 'إظهار التكاليف والأرباح'}
             >
@@ -577,6 +590,7 @@ export default function Reports() {
             <Button
               size="sm"
               onClick={handleExportCsv}
+              disabled={!canExportReports}
               className="h-8 px-3 text-xs gap-1.5 bg-primary text-primary-foreground hover:bg-primary/90"
             >
               <Download className="w-3.5 h-3.5" />

@@ -51,6 +51,7 @@ import { useProducts } from '@/hooks/retail/useProducts';
 import { useAppStore } from '@/lib/store';
 import { useFormatters } from '@/lib/formatters';
 import { ReturnReceiptDialog } from './ReturnReceiptDialog';
+import { useUserPermissions } from '@/hooks/usePermissions';
 
 interface ReturnModalProps {
   open: boolean;
@@ -84,6 +85,14 @@ export const ReturnModal: React.FC<ReturnModalProps> = ({
 
   const { processReturn, processExchange, loading } = useSaleReturns();
   const { products } = useProducts();
+  const { hasPermission, isAdmin } = useUserPermissions();
+  const canCreateReturn = isAdmin || hasPermission('returns.create');
+  const canRefund = isAdmin || hasPermission('returns.refund') || hasPermission('sales.refund') || hasPermission('pos.refund');
+  const canExchange = isAdmin || hasPermission('returns.exchange');
+  const canOverridePolicy = isAdmin || hasPermission('returns.override_policy');
+  const canAcceptDamaged = isAdmin || hasPermission('returns.damaged_accept');
+  const canCrossBranch = isAdmin || hasPermission('returns.cross_branch');
+  const canChooseRefundMethod = isAdmin || hasPermission('refunds.manual_method');
 
   // Mode: 'return' or 'exchange'
   const [mode, setMode] = useState<'return' | 'exchange'>('return');
@@ -379,6 +388,28 @@ export const ReturnModal: React.FC<ReturnModalProps> = ({
   const handleSubmit = async () => {
     if (!sale || !currentTenant?.id || !currentBranch?.id) return;
 
+    if (!canCreateReturn) {
+      toast.error('ليس لديك صلاحية إنشاء مرتجع');
+      return;
+    }
+    if (mode === 'exchange' && !canExchange) {
+      toast.error('ليس لديك صلاحية إجراء الاستبدال');
+      return;
+    }
+    if (mode === 'return' && returnTotals.totalRefund > 0 && !canRefund) {
+      toast.error('ليس لديك صلاحية اعتماد رد المبلغ للعميل');
+      return;
+    }
+    const saleBranchId = (sale as any).branchId || (sale as any).branch_id;
+    if (saleBranchId && saleBranchId !== currentBranch.id && !canCrossBranch) {
+      toast.error('ليس لديك صلاحية معالجة مرتجع تابع لفرع آخر');
+      return;
+    }
+    if (allowPolicyOverride && !canOverridePolicy) {
+      toast.error('ليس لديك صلاحية تجاوز سياسة المرتجعات');
+      return;
+    }
+
     if (returnTotals.count === 0) {
       toast.error('يرجى تحديد صنف واحد على الأقل للإرجاع');
       return;
@@ -399,6 +430,11 @@ export const ReturnModal: React.FC<ReturnModalProps> = ({
         restock: config.restock,
         reason: config.reason,
       }));
+
+    if (itemsToSubmit.some((item) => item.condition === 'damaged' || item.condition === 'defective') && !canAcceptDamaged) {
+      toast.error('ليس لديك صلاحية استلام مرتجعات تالفة');
+      return;
+    }
 
     const clientOpId = `op_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
 
@@ -531,7 +567,8 @@ export const ReturnModal: React.FC<ReturnModalProps> = ({
                   className={`h-7 px-3 text-xs gap-1.5 ${
                     mode === 'exchange' ? 'bg-blue-600 hover:bg-blue-700 text-white' : ''
                   }`}
-                  onClick={() => setMode('exchange')}
+                  onClick={() => canExchange && setMode('exchange')}
+                  disabled={!canExchange}
                 >
                   <RefreshCw className="w-3.5 h-3.5" />
                   استبدال بضاعة
@@ -556,7 +593,8 @@ export const ReturnModal: React.FC<ReturnModalProps> = ({
                   <Checkbox
                     id="overridePolicy"
                     checked={allowPolicyOverride}
-                    onCheckedChange={(c) => setAllowPolicyOverride(!!c)}
+                    onCheckedChange={(c) => canOverridePolicy && setAllowPolicyOverride(!!c)}
+                    disabled={!canOverridePolicy}
                   />
                   <Label htmlFor="overridePolicy" className="text-xs font-semibold cursor-pointer">
                     استثناء الإدارة (Override)
@@ -901,7 +939,7 @@ export const ReturnModal: React.FC<ReturnModalProps> = ({
                 {mode === 'return' ? (
                   <>
                     <Label className="text-xs font-bold block">وسيلة رد المبلغ للعميل:</Label>
-                    <Select value={refundMethod} onValueChange={(val: any) => setRefundMethod(val)}>
+                    <Select value={refundMethod} onValueChange={(val: any) => setRefundMethod(val)} disabled={!canChooseRefundMethod}>
                       <SelectTrigger className="h-9 text-xs">
                         <SelectValue />
                       </SelectTrigger>

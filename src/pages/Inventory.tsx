@@ -45,8 +45,19 @@ import { DamageLossModal } from '@/components/retail/DamageLossModal';
 import { StockMovementsDrawer } from '@/components/retail/StockMovementsDrawer';
 import type { StockBalance, StockMovement, BranchTransfer } from '@/types/retail.types';
 import { toast } from 'sonner';
+import { useUserPermissions } from '@/hooks/usePermissions';
 
 export default function Inventory() {
+  const { hasPermission } = useUserPermissions();
+  const canAdjust = hasPermission('inventory.adjust');
+  const canSetOpeningBalance = hasPermission('inventory.opening_balance');
+  const canCreateTransfer = hasPermission('transfers.create');
+  const canApproveTransfer = hasPermission('transfers.approve');
+  const canDispatchTransfer = hasPermission('transfers.dispatch');
+  const canReceiveTransfer = hasPermission('transfers.receive');
+  const canCount = hasPermission('inventory.count');
+  const canPostCount = hasPermission('inventory.count.post');
+  const canManageDamage = hasPermission('inventory.damage');
   const {
     balances,
     locations,
@@ -176,11 +187,19 @@ export default function Inventory() {
   }, [allStockRows, products, searchTerm, selectedCategory, filterLowStock, filterOutOfStock]);
 
   const handleOpenAdjustment = (balance: StockBalance) => {
+    if (!canAdjust) {
+      toast.error('ليس لديك صلاحية إجراء تسوية مخزنية');
+      return;
+    }
     setAdjustmentTarget(balance);
     setIsAdjustmentOpen(true);
   };
 
   const handleStartCount = async () => {
+    if (!canCount) {
+      toast.error('ليس لديك صلاحية بدء جلسة جرد');
+      return;
+    }
     if (!selectedLocationId) {
       toast.error('يرجى اختيار الفرع أو المخزن أولاً');
       return;
@@ -234,6 +253,7 @@ export default function Inventory() {
               size="sm"
               variant="outline"
               onClick={() => setIsOpeningBalanceOpen(true)}
+              disabled={!canSetOpeningBalance}
               className="gap-1.5 text-xs font-bold"
             >
               <Layers className="w-3.5 h-3.5" />
@@ -244,6 +264,7 @@ export default function Inventory() {
               size="sm"
               variant="outline"
               onClick={() => setIsTransferOpen(true)}
+              disabled={!canCreateTransfer}
               className="gap-1.5 text-xs font-bold"
             >
               <Truck className="w-3.5 h-3.5" />
@@ -254,6 +275,7 @@ export default function Inventory() {
               size="sm"
               variant="outline"
               onClick={() => setIsDamageOpen(true)}
+              disabled={!canManageDamage}
               className="gap-1.5 text-xs font-bold text-rose-600 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/20"
             >
               <AlertOctagon className="w-3.5 h-3.5" />
@@ -263,6 +285,7 @@ export default function Inventory() {
             <Button
               size="sm"
               onClick={handleStartCount}
+              disabled={!canCount}
               className="gap-1.5 text-xs font-bold bg-emerald-600 hover:bg-emerald-700"
             >
               <Barcode className="w-3.5 h-3.5" />
@@ -502,6 +525,7 @@ export default function Inventory() {
                                 size="sm"
                                 variant="outline"
                                 onClick={() => handleOpenAdjustment(b)}
+                                disabled={!canAdjust}
                                 className="h-7 px-2.5 text-xs font-bold gap-1"
                               >
                                 <Scale className="w-3 h-3" />
@@ -563,6 +587,7 @@ export default function Inventory() {
                             size="sm"
                             variant="outline"
                             onClick={() => handleOpenAdjustment(b)}
+                            disabled={!canAdjust}
                             className="h-8 text-xs font-bold gap-1 w-full"
                           >
                             <Scale className="w-3.5 h-3.5" />
@@ -724,7 +749,7 @@ export default function Inventory() {
                           </td>
                           <td className="p-3 text-center">
                             <div className="flex items-center justify-center gap-1.5">
-                              {t.status === 'requested' && (
+                              {t.status === 'requested' && canApproveTransfer && (
                                 <Button
                                   size="sm"
                                   variant="outline"
@@ -739,7 +764,7 @@ export default function Inventory() {
                                 </Button>
                               )}
 
-                              {(t.status === 'approved' || t.status === 'draft') && (
+                              {(t.status === 'approved' || t.status === 'draft') && canDispatchTransfer && (
                                 <Button
                                   size="sm"
                                   className="h-7 text-xs font-bold bg-indigo-600 hover:bg-indigo-700"
@@ -753,7 +778,7 @@ export default function Inventory() {
                                 </Button>
                               )}
 
-                              {t.status === 'in_transit' && (
+                              {t.status === 'in_transit' && canReceiveTransfer && (
                                 <Button
                                   size="sm"
                                   className="h-7 text-xs font-bold bg-emerald-600 hover:bg-emerald-700"
@@ -910,7 +935,7 @@ export default function Inventory() {
                           </td>
                           <td className="p-3 text-center">
                             <div className="flex items-center justify-center gap-1">
-                              {d.type === 'lost' && (
+                              {d.type === 'lost' && canManageDamage && (
                                 <Button
                                   size="sm"
                                   variant="ghost"
@@ -948,6 +973,7 @@ export default function Inventory() {
                                 variant="ghost"
                                 className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
                                 title="حذف السجل وإرجاع الكمية إلى المخزون"
+                                disabled={!canManageDamage}
                                 onClick={async () => {
                                   if (!confirm(`هل تريد بالتأكيد حذف هذا السجل وإعادة كمية (${d.quantity}) من صنف "${displayName}" إلى رصيد المخزون؟`)) return;
                                   const res = await deleteDamage(d.id, d.productId, d.variantId, d.quantity, d.unitCost);
@@ -980,6 +1006,7 @@ export default function Inventory() {
           balanceItem={adjustmentTarget}
           productName={products.find((p) => p.id === adjustmentTarget?.productId)?.name}
           onAdjust={async (...args) => {
+            if (!canAdjust) return { success: false, error: 'غير مصرح بالتسوية المخزنية' };
             const res = await adjustStock(...args);
             if (res.success) {
               await Promise.all([refreshMovements(), refreshDamage()]);
@@ -993,7 +1020,9 @@ export default function Inventory() {
           onOpenChange={setIsOpeningBalanceOpen}
           products={products}
           selectedLocationName={selectedLocObj?.name}
-          onSubmitBalance={addOpeningBalance}
+          onSubmitBalance={async (...args) => canSetOpeningBalance
+            ? addOpeningBalance(...args)
+            : { success: false, error: 'غير مصرح بتسجيل رصيد افتتاحي' }}
         />
 
         <TransferManageDialog
@@ -1002,16 +1031,24 @@ export default function Inventory() {
           locations={locations}
           currentLocationId={selectedLocationId}
           products={products}
-          onCreateTransfer={createTransfer}
+          onCreateTransfer={async (...args) => canCreateTransfer
+            ? createTransfer(...args)
+            : { success: false, error: 'غير مصرح بإنشاء مناقلة' }}
         />
 
         <InventoryCountModal
           open={isCountModalOpen}
           onOpenChange={setIsCountModalOpen}
           session={activeSession}
-          onScanBarcode={scanBarcode}
-          onUpdateQty={updateItemQty}
-          onPostSession={postSession}
+          onScanBarcode={async (...args) => canCount
+            ? scanBarcode(...args)
+            : { success: false, error: 'غير مصرح بإجراء الجرد' }}
+          onUpdateQty={async (...args) => canCount
+            ? updateItemQty(...args)
+            : { success: false, error: 'غير مصرح بتعديل الجرد' }}
+          onPostSession={async (...args) => canPostCount
+            ? postSession(...args)
+            : { success: false, error: 'غير مصرح بترحيل فروق الجرد' }}
         />
 
         <DamageLossModal
@@ -1019,7 +1056,9 @@ export default function Inventory() {
           onOpenChange={setIsDamageOpen}
           products={products}
           currentLocationId={selectedLocationId}
-          onRecordDamage={recordDamage}
+          onRecordDamage={async (...args) => canManageDamage
+            ? recordDamage(...args)
+            : { success: false, error: 'غير مصرح بتسجيل الهالك' }}
         />
       </div>
     </MainLayout>

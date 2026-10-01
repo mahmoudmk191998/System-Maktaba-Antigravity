@@ -5,6 +5,7 @@ import { useAppStore } from '@/lib/store';
 import { useSettings, useUnits } from '@/hooks/useDatabase';
 import { useAuth } from '@/hooks/useAuth';
 import { useTheme } from '@/hooks/useTheme';
+import { useUserPermissions } from '@/hooks/usePermissions';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
@@ -67,6 +68,10 @@ export default function Settings() {
   } = useAppStore();
 
   const { user } = useAuth();
+  const { hasPermission } = useUserPermissions();
+  const canManageSettings = hasPermission('settings.manage');
+  const canManageUnits = hasPermission('units.manage');
+  const canResetData = hasPermission('data.reset');
   const { theme, setTheme } = useTheme();
   const { updateTenantProfile, updateBranchProfile, wipeAllTenantData } = useSettings(currentTenant?.id || null);
   const { units, add: addUnit, remove: removeUnit, seedStandardUnits } = useUnits(currentTenant?.id || null);
@@ -116,6 +121,11 @@ export default function Settings() {
 
   const handleSave = async () => {
     if (isSaving) return;
+
+    if (!canManageSettings) {
+      toast.error('ليس لديك صلاحية تعديل الإعدادات');
+      return;
+    }
 
     if (!tenantName.trim()) {
       toast.error('يرجى إدخال اسم المؤسسة');
@@ -222,6 +232,11 @@ export default function Settings() {
   };
 
   const handleWipeData = async () => {
+    if (!canResetData) {
+      toast.error('ليس لديك صلاحية مسح بيانات المؤسسة');
+      return;
+    }
+
     if (wipeConfirmInput.trim() !== 'مسح' && wipeConfirmInput.trim() !== 'تأكيد' && wipeConfirmInput.trim().toUpperCase() !== 'CONFIRM') {
       toast.error('يرجى كتابة كلمة "مسح" في الحقل لتأكيد العملية');
       return;
@@ -301,6 +316,11 @@ export default function Settings() {
   };
 
   const handleResetOrderCounter = async () => {
+    if (!canManageSettings) {
+      toast.error('ليس لديك صلاحية تعديل إعدادات الفرع');
+      return;
+    }
+
     if (!currentBranch?.id) return;
     if (window.confirm('هل أنت متأكد من رغبتك في تصفير عداد أرقام الطلبات؟ هذا يعني أن الطلب القادم سيبدأ من رقم 1. يرجى توخي الحذر لتجنب تكرار أرقام الطلبات لنفس اليوم.')) {
       setIsResettingCounter(true);
@@ -597,7 +617,7 @@ export default function Settings() {
                     size="sm"
                     className="w-full border-destructive/50 text-destructive hover:bg-destructive/10"
                     onClick={handleResetOrderCounter}
-                    disabled={isResettingCounter}
+                    disabled={isResettingCounter || !canManageSettings}
                   >
                     {isResettingCounter ? 'جاري التصفير...' : 'إعادة ترقيم الطلبات للبدء من 1'}
                   </Button>
@@ -922,7 +942,7 @@ export default function Settings() {
                       setWipePercent(0);
                       setShowWipeModal(true);
                     }}
-                    disabled={isWiping}
+                    disabled={isWiping || !canResetData}
                   >
                     <Trash2 className="w-4 h-4" />
                     {isWiping ? 'جاري المسح وإعادة التهيئة...' : 'مسح البيانات وإعادة التهيئة'}
@@ -1003,7 +1023,7 @@ export default function Settings() {
                       <Button
                         variant="destructive"
                         onClick={handleWipeData}
-                        disabled={isWiping || wipeConfirmInput.trim() !== 'مسح'}
+                        disabled={isWiping || !canResetData || wipeConfirmInput.trim() !== 'مسح'}
                         className="gap-2"
                       >
                         {isWiping ? (
@@ -1189,10 +1209,10 @@ export default function Settings() {
                 <CardDescription>إدارة وحدات القياس المستخدمة في المخزون والوصفات</CardDescription>
               </div>
               <div className="flex flex-wrap gap-2 w-full sm:w-auto">
-                <Button variant="outline" size="sm" onClick={async () => await seedStandardUnits()}>
+                <Button variant="outline" size="sm" onClick={async () => await seedStandardUnits()} disabled={!canManageUnits}>
                   استعادة الوحدات الافتراضية
                 </Button>
-                <Button size="sm" onClick={() => setNewUnitMode(true)}>
+                <Button size="sm" onClick={() => setNewUnitMode(true)} disabled={!canManageUnits}>
                   إضافة وحدة
                 </Button>
               </div>
@@ -1222,7 +1242,7 @@ export default function Settings() {
                     </select>
                   </div>
                   <div className="flex items-center gap-2 pt-2 sm:pt-0">
-                    <Button className="flex-1 sm:flex-none" onClick={async () => {
+                    <Button className="flex-1 sm:flex-none" disabled={!canManageUnits} onClick={async () => {
                       if(!newUnit.name || !newUnit.abbreviation) return toast.error('يرجى تعبئة الحقول المطلوبة');
                       if(await addUnit(newUnit)) {
                         setNewUnitMode(false);
@@ -1259,7 +1279,7 @@ export default function Settings() {
                           </Badge>
                         </td>
                         <td className="p-3">
-                          <Button variant="ghost" size="sm" className="text-destructive h-8 px-2 w-full" onClick={() => {
+                          <Button variant="ghost" size="sm" className="text-destructive h-8 px-2 w-full" disabled={!canManageUnits} onClick={() => {
                             if(window.confirm('هل أنت متأكد من حذف هذه الوحدة؟')) removeUnit(unit.id);
                           }}>
                             حذف
@@ -1283,7 +1303,7 @@ export default function Settings() {
 
         {/* Save Button */}
         <div className="flex justify-end pt-4 border-t">
-          <Button onClick={handleSave} disabled={isSaving} className="gap-2 w-full sm:w-auto sm:min-w-[160px]">
+          <Button onClick={handleSave} disabled={isSaving || !canManageSettings} className="gap-2 w-full sm:w-auto sm:min-w-[160px]">
             {isSaving ? (
               <>
                 <Loader2 className="w-4 h-4 animate-spin" />

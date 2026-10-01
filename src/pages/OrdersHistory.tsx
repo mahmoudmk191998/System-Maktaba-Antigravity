@@ -59,11 +59,15 @@ import {
   fetchSalesStaffFromDb,
   type SalesStaffOption,
 } from '@/services/sales/sales.service';
+import { useUserPermissions } from '@/hooks/usePermissions';
 
 export default function OrdersHistory() {
   const { currentTenant } = useAppStore();
   const { number } = useFormatters();
   const { toast } = useToast();
+  const { hasPermission, isAdmin } = useUserPermissions();
+  const canCancelSale = isAdmin || hasPermission('sales.cancel') || hasPermission('pos.cancel_order');
+  const canReprint = isAdmin || hasPermission('sales.reprint_receipt');
 
   const [selectedCashierId, setSelectedCashierId] = useState('all');
   const [staffOptions, setStaffOptions] = useState<SalesStaffOption[]>([]);
@@ -183,6 +187,10 @@ export default function OrdersHistory() {
   // Handle invoice deletion
   const handleDeleteConfirm = async () => {
     if (!saleToDelete) return;
+    if (!canCancelSale) {
+      toast({ title: 'غير مصرح', description: 'ليس لديك صلاحية إلغاء فاتورة بيع', variant: 'destructive' });
+      return;
+    }
     setIsDeleting(true);
     try {
       const res = await removeSale(saleToDelete.id);
@@ -549,6 +557,7 @@ export default function OrdersHistory() {
                               variant="ghost"
                               className="h-8 w-8 p-0 text-muted-foreground hover:text-primary"
                               onClick={() => setSelectedSaleForReceipt(sale)}
+                              disabled={!canReprint}
                               title="إعادة طباعة الإيصال الحراري"
                             >
                               <Printer className="w-4 h-4" />
@@ -558,6 +567,7 @@ export default function OrdersHistory() {
                               variant="ghost"
                               className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
                               onClick={() => setSaleToDelete(sale)}
+                              disabled={!canCancelSale}
                               title="حذف الفاتورة نهائياً"
                             >
                               <Trash2 className="w-4 h-4" />

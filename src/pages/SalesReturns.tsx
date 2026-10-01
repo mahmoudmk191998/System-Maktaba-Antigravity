@@ -39,11 +39,15 @@ import {
 import type { SaleReturn } from '@/types/retail.types';
 import { ReturnReceiptDialog } from '@/components/retail/returns/ReturnReceiptDialog';
 import { useNavigate } from 'react-router-dom';
+import { useUserPermissions } from '@/hooks/usePermissions';
+import { toast } from 'sonner';
 
 export default function SalesReturns() {
   const { number } = useFormatters();
   const navigate = useNavigate();
   const currentBranch = useAppStore((state) => state.currentBranch);
+  const { hasPermission, isAdmin } = useUserPermissions();
+  const canReprint = isAdmin || hasPermission('sales.reprint_receipt');
 
   const { returns, loading, hasMore, loadMore, refresh } = useSaleReturns();
 
@@ -124,6 +128,10 @@ export default function SalesReturns() {
 
   const handleReprintReceipt = (ret: SaleReturn, e?: React.MouseEvent) => {
     e?.stopPropagation();
+    if (!canReprint) {
+      toast.error('ليس لديك صلاحية إعادة طباعة الإيصالات');
+      return;
+    }
     setReceiptReturn(ret);
     setReceiptOpen(true);
   };
