@@ -61,7 +61,8 @@ const WORKFLOW_LABELS: Record<ApprovalWorkflowType, string> = {
 export default function Approvals() {
   const { tenantId, branchId } = useTenantBranch();
   const { user } = useAuth();
-  const { userRole, isOwner, isAdmin } = useUserPermissions();
+  const { userRole, isOwner, isAdmin, hasPermission } = useUserPermissions();
+  const canActOnApprovals = isOwner || isAdmin || hasPermission('approvals.action');
   const { currency } = useFormatters();
 
   const [activeTab, setActiveTab] = useState<'pending_for_me' | 'my_requests' | 'approved' | 'rejected'>('pending_for_me');
@@ -131,6 +132,10 @@ export default function Approvals() {
 
   const handleAction = async (action: 'approve' | 'reject' | 'cancel') => {
     if (!tenantId || !selectedRequest || !user) return;
+    if (!canActOnApprovals) {
+      toast.error('لا تملك صلاحية تنفيذ إجراءات الاعتماد أو الرفض.');
+      return;
+    }
     setIsProcessing(true);
     try {
       await processApprovalAction({
@@ -407,7 +412,7 @@ export default function Approvals() {
                 </div>
 
                 {/* Action Comment Input (if pending) */}
-                {selectedRequest.status === 'pending' && (
+                {selectedRequest.status === 'pending' && canActOnApprovals && (
                   <div className="space-y-1.5 pt-2">
                     <label className="text-xs font-semibold text-foreground">ملاحظات الاعتماد أو الرفض:</label>
                     <Textarea
@@ -421,7 +426,7 @@ export default function Approvals() {
               </div>
 
               <DialogFooter className="gap-2 sm:gap-0">
-                {selectedRequest.status === 'pending' ? (
+                {selectedRequest.status === 'pending' && canActOnApprovals ? (
                   <div className="flex items-center gap-2 w-full justify-end">
                     <Button
                       variant="outline"
