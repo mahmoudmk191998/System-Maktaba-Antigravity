@@ -28,8 +28,8 @@ export interface NavModule {
 export const allAppModules: NavModule[] = [
   // المبيعات والعملاء
   { path: '/pos', label: 'نقاط البيع (POS)', icon: ShoppingCart, perms: ['pos.view'], category: 'المبيعات والعملاء' },
-  { path: '/orders-history', label: 'سجل فواتير المبيعات', icon: Receipt, perms: ['pos.view', 'sales.view'], category: 'المبيعات والعملاء' },
-  { path: '/returns', label: 'مرتجعات واستبدال المبيعات', icon: RotateCcw, perms: ['returns.view', 'sales.view', 'pos.view'], category: 'المبيعات والعملاء' },
+  { path: '/orders-history', label: 'سجل فواتير المبيعات', icon: Receipt, perms: ['orders.view', 'sales.view'], category: 'المبيعات والعملاء' },
+  { path: '/returns', label: 'مرتجعات واستبدال المبيعات', icon: RotateCcw, perms: ['returns.view'], category: 'المبيعات والعملاء' },
   { path: '/customers', label: 'العملاء والاشتراكات', icon: Users, perms: ['customers.view'], category: 'المبيعات والعملاء' },
   { path: '/receivables', label: 'الآجل والمديونيات', icon: CreditCard, perms: ['customers.view'], category: 'المبيعات والعملاء' },
   { path: '/promotions', label: 'العروض والخصومات', icon: Percent, perms: ['promotions.view'], category: 'المبيعات والعملاء' },
@@ -46,9 +46,9 @@ export const allAppModules: NavModule[] = [
   // الموارد البشرية والحوكمة
   { path: '/shifts', label: 'إدارة الورديات', icon: Clock, perms: ['hr.manage_shifts'], category: 'الموارد البشرية والحوكمة' },
   { path: '/hr', label: 'الموارد البشرية والموظفين', icon: UserCog, perms: ['hr.view_employees'], category: 'الموارد البشرية والحوكمة' },
-  { path: '/approvals', label: 'مركز الموافقات', icon: CheckSquare, perms: ['approvals.view', 'governance.view'], category: 'الموارد البشرية والحوكمة' },
+  { path: '/approvals', label: 'مركز الموافقات', icon: CheckSquare, perms: ['approvals.view'], category: 'الموارد البشرية والحوكمة' },
   { path: '/datacenter', label: 'مركز البيانات والاستيراد', icon: FileSpreadsheet, perms: ['datacenter.view', 'settings.manage'], category: 'الموارد البشرية والحوكمة' },
-  { path: '/system-health', label: 'سلامة النظام والصيانة', icon: Activity, perms: ['system_health.view', 'settings.manage', 'accounting.view'], category: 'الموارد البشرية والحوكمة' },
+  { path: '/system-health', label: 'سلامة النظام والصيانة', icon: Activity, perms: ['system_health.view', 'settings.manage'], category: 'الموارد البشرية والحوكمة' },
 
   // المالية والتقارير
   { path: '/executive', label: 'اللوحة المالية والإغلاق', icon: TrendingUp, perms: ['financial_dashboard.view', 'reports.view', 'accounting.view'], category: 'المالية والتقارير' },
