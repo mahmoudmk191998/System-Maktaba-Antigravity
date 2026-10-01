@@ -59,3 +59,30 @@ export function buildStaffInvitation(assignment: StaffAccessAssignment, invitedB
     auth_provider: 'google.com' as const,
   };
 }
+
+
+/**
+ * A permissions manager may only delegate authority they already possess.
+ * Sovereign owners are the only exception.
+ */
+export function canDelegatePermissionSet(
+  actorPermissions: readonly string[],
+  targetPermissions: readonly string[],
+  actorIsSovereign: boolean = false
+): boolean {
+  if (actorIsSovereign || actorPermissions.includes('*')) return true;
+
+  const actor = new Set(normalizePermissionIds(actorPermissions));
+  return normalizePermissionIds(targetPermissions).every((permission) => actor.has(permission));
+}
+
+export function canManageRoleAssignment(
+  actorPermissions: readonly string[],
+  targetRole: string,
+  targetPermissions: readonly string[],
+  actorIsSovereign: boolean = false
+): boolean {
+  if (actorIsSovereign || actorPermissions.includes('*')) return true;
+  if (targetRole === 'owner' || targetRole === 'super_admin') return false;
+  return canDelegatePermissionSet(actorPermissions, targetPermissions, false);
+}
