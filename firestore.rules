@@ -41,8 +41,9 @@ service cloud.firestore {
     function hasAnyPermission(requiredPermissions) {
       return isActive() && (
         isSovereign() ||
-        isLegacyProfile() ||
-        ('permissions' in userProfile() &&
+        ('permissions_version' in userProfile() &&
+          userProfile().permissions_version == 2 &&
+          'permissions' in userProfile() &&
           userProfile().permissions is list &&
           userProfile().permissions.hasAny(requiredPermissions))
       );
@@ -64,6 +65,21 @@ service cloud.firestore {
         : null;
     }
 
+    function userBranchId() {
+      return profileExists()
+        ? ('branchId' in userProfile()
+            ? userProfile().branchId
+            : ('branch_id' in userProfile() ? userProfile().branch_id : null))
+        : null;
+    }
+
+    function hasBranchAccess(data) {
+      return isSovereign() ||
+        userBranchId() == null ||
+        dataBranchId(data) == null ||
+        dataBranchId(data) == userBranchId();
+    }
+
     function hasTenantAccess(tenantId) {
       return isActive() && tenantId != null && (
         userRole() == 'super_admin' || userTenantId() == tenantId
@@ -77,11 +93,13 @@ service cloud.firestore {
     }
 
     function hasDataTenantAccess(data) {
-      return hasTenantAccess(dataTenantId(data)) || (
-        dataTenantId(data) == null &&
-        dataBranchId(data) != null &&
-        exists(/databases/$(database)/documents/branches/$(dataBranchId(data))) &&
-        hasTenantAccess(dataTenantId(get(/databases/$(database)/documents/branches/$(dataBranchId(data))).data))
+      return hasBranchAccess(data) && (
+        hasTenantAccess(dataTenantId(data)) || (
+          dataTenantId(data) == null &&
+          dataBranchId(data) != null &&
+          exists(/databases/$(database)/documents/branches/$(dataBranchId(data))) &&
+          hasTenantAccess(dataTenantId(get(/databases/$(database)/documents/branches/$(dataBranchId(data))).data))
+        )
       );
     }
 
@@ -115,6 +133,34 @@ service cloud.firestore {
         exists(/databases/$(database)/documents/branches/$(dataBranchId(data))) &&
         dataTenantId(get(/databases/$(database)/documents/branches/$(dataBranchId(data))).data) == dataTenantId(data)
       );
+    }
+
+    function isSovereignRoleValue(role) {
+      return role in ['owner', 'super_admin'];
+    }
+
+    // A non-sovereign permissions manager may never grant authority they do not
+    // personally possess, nor create/manage owner or super-admin identities.
+    function canDelegateStaffData(data) {
+      return isSovereign() || (
+        data != null &&
+        'role' in data &&
+        !isSovereignRoleValue(data.role) &&
+        'permissions_version' in data &&
+        data.permissions_version == 2 &&
+        'permissions' in data &&
+        data.permissions is list &&
+        'permissions' in userProfile() &&
+        userProfile().permissions is list &&
+        userProfile().permissions.hasAll(data.permissions)
+      );
+    }
+
+    function canManageTargetUser(userId) {
+      return hasPermission('permissions.manage') &&
+        exists(/databases/$(database)/documents/profiles/$(userId)) &&
+        hasTenantAccess(dataTenantId(get(/databases/$(database)/documents/profiles/$(userId)).data)) &&
+        canDelegateStaffData(get(/databases/$(database)/documents/profiles/$(userId)).data);
     }
 
     function invitedEmailMatches(email) {
@@ -176,8 +222,17 @@ service cloud.firestore {
     match /staff_invitations/{email} {
       allow read: if invitedEmailMatches(email) ||
         (hasPermission('permissions.manage') && validExisting());
-      allow create: if hasPermission('permissions.manage') && validCreate() && validStaffBranch(request.resource.data);
-      allow update: if (hasPermission('permissions.manage') && validUpdate() && validStaffBranch(request.resource.data)) || (
+      allow create: if hasPermission('permissions.manage') &&
+        validCreate() &&
+        validStaffBranch(request.resource.data) &&
+        canDelegateStaffData(request.resource.data);
+      allow update: if (
+        hasPermission('permissions.manage') &&
+        validUpdate() &&
+        validStaffBranch(request.resource.data) &&
+        canDelegateStaffData(resource.data) &&
+        canDelegateStaffData(request.resource.data)
+      ) || (
         invitedEmailMatches(email) &&
         request.resource.data.diff(resource.data).affectedKeys().hasOnly([
           'invitation_status', 'claimed_uid', 'claimed_at', 'updated_at'
@@ -185,32 +240,484 @@ service cloud.firestore {
         request.resource.data.invitation_status == 'claimed' &&
         request.resource.data.claimed_uid == request.auth.uid
       );
-      allow delete: if hasPermission('permissions.manage') && validExisting();
+      allow delete: if hasPermission('permissions.manage') &&
+        validExisting() &&
+        canDelegateStaffData(resource.data);
     }
 
     match /profiles/{profileId} {
       allow read: if (isAuthenticated() && request.auth.uid == profileId) ||
         (hasPermission('permissions.manage') && validExisting());
       allow create: if invitationAllowsProfile(profileId) ||
-        (hasPermission('permissions.manage') && validCreate() && validStaffBranch(request.resource.data)) ||
+        (hasPermission('permissions.manage') && validCreate() && validStaffBranch(request.resource.data) &&
+          canDelegateStaffData(request.resource.data)) ||
         (isAuthenticated() && request.auth.uid == profileId && !profileExists() &&
           request.resource.data.role == 'admin' &&
           request.resource.data.tenant_id == request.resource.data.tenantId &&
           validStaffBranch(request.resource.data) &&
           isBootstrapTenantOwner(request.resource.data.tenant_id));
-      allow update: if (hasPermission('permissions.manage') && validUpdate() && validStaffBranch(request.resource.data)) || (
+      allow update: if (
+        hasPermission('permissions.manage') &&
+        validUpdate() &&
+        validStaffBranch(request.resource.data) &&
+        canDelegateStaffData(resource.data) &&
+        canDelegateStaffData(request.resource.data)
+      ) || (
         isAuthenticated() && request.auth.uid == profileId &&
         request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-          'full_name', 'phone', 'avatar_url', 'branch_id', 'branchId', 'updated_at'
-        ]) && (
-          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['branch_id', 'branchId']) ||
-          (dataBranchId(request.resource.data) != null &&
-            exists(/databases/$(database)/documents/branches/$(dataBranchId(request.resource.data))) &&
-            hasTenantAccess(dataTenantId(get(/databases/$(database)/documents/branches/$(dataBranchId(request.resource.data))).data)))
-        )
+          'full_name', 'phone', 'avatar_url', 'updated_at'
+        ])
       );
-      allow delete: if hasPermission('permissions.manage') && validExisting() &&
-        profileId.matches('^user_[0-9]+$');
+      allow delete: if hasPermission('permissions.manage') &&
+        validExisting() &&
+        canDelegateStaffData(resource.data) &&
+        profileId.matches('^user_[0-9]+
+    }
+
+    match /user_roles/{roleId} {
+      allow read: if (isAuthenticated() && resource.data.user_id == request.auth.uid) ||
+        (hasPermission('permissions.manage') && targetUserInOwnTenant(resource.data.user_id));
+      allow create: if (
+        canManageTargetUser(request.resource.data.user_id) &&
+        request.resource.data.role == get(/databases/$(database)/documents/profiles/$(request.resource.data.user_id)).data.role
+      ) || (
+        isAuthenticated() && request.resource.data.user_id == request.auth.uid &&
+        request.resource.data.role == userRole() && request.resource.data.tenant_id == userTenantId()
+      );
+      allow update, delete: if canManageTargetUser(resource.data.user_id);
+    }
+
+    match /user_permissions/{permissionId} {
+      allow read: if (isAuthenticated() && resource.data.user_id == request.auth.uid) ||
+        (hasPermission('permissions.manage') && targetUserInOwnTenant(resource.data.user_id));
+      allow create: if (
+        canManageTargetUser(request.resource.data.user_id) &&
+        request.resource.data.permission in get(/databases/$(database)/documents/profiles/$(request.resource.data.user_id)).data.permissions
+      ) || (
+        isAuthenticated() && request.resource.data.user_id == request.auth.uid &&
+        request.resource.data.tenant_id == userTenantId() &&
+        request.resource.data.permission in userProfile().permissions
+      );
+      allow update, delete: if canManageTargetUser(resource.data.user_id);
+    }
+
+    match /tenants/{tenantId} {
+      allow read: if hasTenantAccess(tenantId) && hasAnyPermission(['dashboard.view', 'settings.view']);
+      allow create: if isAuthenticated() && !profileExists() &&
+        request.resource.data.owner_uid == request.auth.uid;
+      allow update: if hasTenantAccess(tenantId) && hasPermission('settings.manage');
+      allow delete: if hasTenantAccess(tenantId) && isSovereign();
+    }
+
+    match /branches/{branchId} {
+      allow read: if validExisting() && hasAnyPermission([
+        'dashboard.view', 'settings.view', 'permissions.manage', 'pos.view', 'inventory.view'
+      ]);
+      allow create: if (isAuthenticated() && !profileExists() &&
+          isBootstrapTenantOwner(dataTenantId(request.resource.data))) ||
+        (hasPermission('settings.manage') && validCreate());
+      allow update: if hasPermission('settings.manage') && validUpdate();
+      allow delete: if hasPermission('settings.manage') && validExisting();
+    }
+
+    match /{catalogCollection}/{catalogId} {
+      allow read: if catalogCollection in [
+          'products', 'product_variants', 'product_skus', 'product_barcodes',
+          'categories', 'product_categories', 'brands', 'product_brands',
+          'units', 'variant_attributes', 'menu_categories', 'menu_items', 'addons'
+        ] && validExisting() && hasAnyPermission([
+          'products.view', 'pos.view', 'inventory.view', 'purchasing.view', 'menu.view'
+        ]);
+      allow create: if catalogCollection in ['products', 'product_variants', 'product_skus', 'product_barcodes'] &&
+        validCreate() && hasPermission('products.create');
+      allow update: if catalogCollection in ['products', 'product_variants', 'product_skus', 'product_barcodes'] &&
+        validUpdate() && hasPermission('products.edit');
+      allow update: if catalogCollection == 'products' && validUpdate() &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['archived', 'active', 'updatedAt', 'updatedBy']) &&
+        hasPermission('products.archive');
+      allow update: if catalogCollection in ['product_skus', 'product_barcodes'] && validUpdate() &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['archived', 'updatedAt']) &&
+        hasPermission('products.archive');
+      allow delete: if catalogCollection in ['products', 'product_variants', 'product_skus', 'product_barcodes'] &&
+        validExisting() && hasPermission('products.delete');
+      allow create, update, delete: if catalogCollection in ['categories', 'product_categories'] &&
+        validWriteScope() && hasPermission('categories.manage');
+      allow create, update, delete: if catalogCollection in ['brands', 'product_brands'] &&
+        validWriteScope() && hasPermission('brands.manage');
+      allow create, update, delete: if catalogCollection in ['units', 'variant_attributes'] &&
+        validWriteScope() && hasPermission('units.manage');
+      allow create: if catalogCollection in ['menu_categories', 'menu_items', 'addons'] &&
+        validCreate() && hasAnyPermission(['menu.create', 'menu.manage']);
+      allow update: if catalogCollection in ['menu_categories', 'menu_items', 'addons'] &&
+        validUpdate() && hasAnyPermission(['menu.edit', 'menu.manage']);
+      allow update: if catalogCollection == 'menu_items' && validUpdate() &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['is_available']) &&
+        hasPermission('menu.toggle_availability');
+      allow delete: if catalogCollection in ['menu_categories', 'menu_items', 'addons'] &&
+        validExisting() && hasAnyPermission(['menu.delete', 'menu.manage']);
+    }
+
+    match /recipes/{recipeId} {
+      allow read: if validExisting() && hasAnyPermission(['recipes.view', 'products.view', 'pos.view', 'inventory.view']);
+      allow create, update, delete: if validWriteScope() && hasAnyPermission(['recipes.manage', 'products.edit']);
+    }
+
+    match /recipe_ingredients/{ingredientId} {
+      allow read: if hasAnyPermission(['recipes.view', 'products.view', 'pos.view', 'inventory.view']) &&
+        exists(/databases/$(database)/documents/recipes/$(resource.data.recipe_id)) &&
+        hasDataTenantAccess(get(/databases/$(database)/documents/recipes/$(resource.data.recipe_id)).data);
+      allow create: if hasAnyPermission(['recipes.manage', 'products.edit']) &&
+        exists(/databases/$(database)/documents/recipes/$(request.resource.data.recipe_id)) &&
+        hasDataTenantAccess(get(/databases/$(database)/documents/recipes/$(request.resource.data.recipe_id)).data);
+      allow update: if hasAnyPermission(['recipes.manage', 'products.edit']) &&
+        exists(/databases/$(database)/documents/recipes/$(resource.data.recipe_id)) &&
+        hasDataTenantAccess(get(/databases/$(database)/documents/recipes/$(resource.data.recipe_id)).data) &&
+        exists(/databases/$(database)/documents/recipes/$(request.resource.data.recipe_id)) &&
+        hasDataTenantAccess(get(/databases/$(database)/documents/recipes/$(request.resource.data.recipe_id)).data);
+      allow delete: if hasAnyPermission(['recipes.manage', 'products.edit']) &&
+        exists(/databases/$(database)/documents/recipes/$(resource.data.recipe_id)) &&
+        hasDataTenantAccess(get(/databases/$(database)/documents/recipes/$(resource.data.recipe_id)).data);
+    }
+
+    match /{salesCollection}/{salesId} {
+      allow read: if salesCollection in [
+          'sales', 'orders', 'payments', 'sale_payments', 'held_sales',
+          'sale_returns', 'sales_returns', 'sale_refunds', 'sale_exchanges',
+          'cashier_shifts', 'cash_register_shifts', 'cash_shifts', 'pos_shifts',
+          'cash_register_transactions'
+        ] && validExisting() && hasAnyPermission([
+          'pos.view', 'orders.view', 'sales.view', 'returns.view', 'cash_register.open'
+        ]);
+      allow create: if salesCollection in ['sales', 'orders', 'payments', 'held_sales'] &&
+        validCreate() && hasAnyPermission(['sales.create', 'pos.create_order']);
+      allow create: if salesCollection == 'sale_payments' && validCreate() &&
+        hasAnyPermission(['sales.create', 'pos.create_order']) && (
+          (!(request.resource.data.method in ['credit', 'customer_credit'])) ||
+          (request.resource.data.method == 'credit' && hasPermission('sales.credit')) ||
+          (request.resource.data.method == 'customer_credit' && hasPermission('sales.customer_credit'))
+        );
+      allow create: if salesCollection in ['sale_returns', 'sales_returns'] && validCreate() && hasPermission('returns.create');
+      allow create: if salesCollection == 'sale_refunds' && validCreate() && hasPermission('returns.refund');
+      allow create: if salesCollection == 'sale_exchanges' && validCreate() && hasPermission('returns.exchange');
+      allow create, update: if salesCollection in [
+          'cashier_shifts', 'cash_register_shifts', 'cash_shifts', 'pos_shifts', 'cash_register_transactions'
+        ] && validWriteScope() && hasAnyPermission([
+          'cash_register.open', 'cash_register.close', 'pos.open_drawer', 'pos.close_session'
+        ]);
+      allow update: if salesCollection in ['sales', 'orders', 'payments', 'sale_payments', 'held_sales'] &&
+        validUpdate() && hasAnyPermission(['pos.edit_order', 'orders.manage', 'sales.cancel']);
+      allow delete: if salesCollection in ['sales', 'orders', 'held_sales'] &&
+        validExisting() && hasAnyPermission(['pos.cancel_order', 'sales.cancel']);
+    }
+
+    match /order_items/{itemId} {
+      allow read: if hasAnyPermission(['pos.view', 'orders.view', 'sales.view']) &&
+        exists(/databases/$(database)/documents/orders/$(resource.data.order_id)) &&
+        hasDataTenantAccess(get(/databases/$(database)/documents/orders/$(resource.data.order_id)).data);
+      allow create: if hasAnyPermission(['sales.create', 'pos.create_order']) &&
+        exists(/databases/$(database)/documents/orders/$(request.resource.data.order_id)) &&
+        hasDataTenantAccess(get(/databases/$(database)/documents/orders/$(request.resource.data.order_id)).data);
+      allow update: if hasAnyPermission(['pos.edit_order', 'orders.manage']) &&
+        exists(/databases/$(database)/documents/orders/$(resource.data.order_id)) &&
+        hasDataTenantAccess(get(/databases/$(database)/documents/orders/$(resource.data.order_id)).data);
+      allow delete: if hasAnyPermission(['pos.cancel_order', 'sales.cancel']) &&
+        exists(/databases/$(database)/documents/orders/$(resource.data.order_id)) &&
+        hasDataTenantAccess(get(/databases/$(database)/documents/orders/$(resource.data.order_id)).data);
+    }
+
+    match /{salesChildCollection}/{itemId} {
+      allow read: if salesChildCollection in ['sale_items', 'sale_return_items', 'sales_return_items'] &&
+        validExisting() && hasAnyPermission(['sales.view', 'returns.view']);
+      allow create: if salesChildCollection == 'sale_items' && validCreate() && hasPermission('sales.create');
+      allow create: if salesChildCollection in ['sale_return_items', 'sales_return_items'] &&
+        validCreate() && hasPermission('returns.create');
+      allow update, delete: if false;
+    }
+
+    match /{inventoryCollection}/{inventoryId} {
+      allow read: if inventoryCollection in [
+          'inventory_items', 'branch_stock', 'stock_movements', 'branch_transfers',
+          'inventory_counts', 'damage_loss_records', 'inventory_locations'
+        ] && validExisting() && hasAnyPermission(['inventory.view', 'transfers.view']);
+      allow create: if inventoryCollection == 'inventory_items' && validCreate() && hasPermission('inventory.add');
+      allow update: if inventoryCollection == 'inventory_items' && validUpdate() && hasPermission('inventory.edit');
+      allow delete: if inventoryCollection == 'inventory_items' && validExisting() && hasPermission('inventory.delete');
+      allow create, update: if inventoryCollection == 'branch_stock' && validWriteScope() && hasAnyPermission([
+        'inventory.add', 'inventory.edit', 'inventory.adjust', 'inventory.opening_balance', 'inventory.count.post',
+        'sales.create', 'returns.create', 'purchases.receive'
+      ]);
+      allow create: if inventoryCollection == 'stock_movements' && validCreate() && hasAnyPermission([
+        'inventory.adjust', 'inventory.waste', 'inventory.damage', 'sales.create', 'returns.create', 'purchases.receive'
+      ]);
+      allow create: if inventoryCollection == 'branch_transfers' && validCreate() && hasPermission('transfers.create');
+      allow update: if inventoryCollection == 'branch_transfers' && validUpdate() && hasAnyPermission([
+        'transfers.approve', 'transfers.dispatch', 'transfers.receive'
+      ]);
+      allow create, update: if inventoryCollection == 'inventory_counts' && validWriteScope() &&
+        hasAnyPermission(['inventory.count', 'inventory.count.post']);
+      allow create, update: if inventoryCollection == 'damage_loss_records' && validWriteScope() &&
+        hasAnyPermission(['inventory.waste', 'inventory.damage']);
+      allow create, update, delete: if inventoryCollection == 'inventory_locations' &&
+        validWriteScope() && hasPermission('inventory.edit');
+    }
+
+    match /{purchaseCollection}/{purchaseId} {
+      allow read: if purchaseCollection in [
+          'suppliers', 'supplier_products', 'purchase_orders', 'goods_receipts',
+          'goods_received_notes', 'purchase_returns', 'supplier_ledger', 'supplier_payments'
+        ] && validExisting() && hasAnyPermission([
+          'suppliers.view', 'purchasing.view', 'purchases.view', 'purchase_returns.view', 'supplier_accounts.view'
+        ]);
+      allow create: if purchaseCollection == 'suppliers' && validCreate() && hasPermission('suppliers.create');
+      allow update: if purchaseCollection == 'suppliers' && validUpdate() && hasPermission('suppliers.edit');
+      allow delete: if purchaseCollection == 'suppliers' && validExisting() && hasPermission('suppliers.archive');
+      allow create, update, delete: if purchaseCollection == 'supplier_products' && validWriteScope() && hasPermission('suppliers.manage');
+      allow create: if purchaseCollection == 'purchase_orders' && validCreate() && hasPermission('purchases.create');
+      allow update: if purchaseCollection == 'purchase_orders' && validUpdate() && hasAnyPermission([
+        'purchases.edit', 'purchases.submit', 'purchases.approve', 'purchases.receive', 'purchases.cancel'
+      ]);
+      allow delete: if purchaseCollection == 'purchase_orders' && validExisting() && hasPermission('purchases.cancel');
+      allow create: if purchaseCollection in ['goods_receipts', 'goods_received_notes'] && validCreate() && hasPermission('purchases.receive');
+      allow create: if purchaseCollection == 'purchase_returns' && validCreate() && hasPermission('purchase_returns.create');
+      allow create: if purchaseCollection == 'supplier_ledger' && validCreate() &&
+        hasAnyPermission(['purchases.receive', 'purchase_returns.approve', 'suppliers.pay']);
+      allow create: if purchaseCollection == 'supplier_payments' && validCreate() &&
+        hasAnyPermission(['suppliers.pay', 'supplier_payments.create']);
+      allow update, delete: if false;
+    }
+
+    match /customers/{customerId} {
+      allow read: if validExisting() && hasPermission('customers.view');
+      allow create: if validCreate() && hasAnyPermission(['customers.create', 'customer.create_from_pos']);
+      allow update: if validUpdate() && hasAnyPermission(['customers.edit', 'customers.credit.manage', 'customers.adjust_balance']);
+      allow delete: if validExisting() && hasPermission('customers.delete');
+    }
+
+    match /{customerCollection}/{customerDocumentId} {
+      allow read: if customerCollection in [
+          'customer_ledger', 'customer_receivables', 'customer_payments',
+          'customer_payment_allocations', 'price_lists', 'price_list_items', 'customer_product_prices'
+        ] && validExisting() && hasAnyPermission([
+          'customers.accounts.view', 'receivables.view', 'price_lists.view'
+        ]);
+      allow create: if customerCollection in ['customer_payments', 'customer_payment_allocations', 'customer_ledger'] &&
+        validCreate() && hasPermission('customers.payment.create');
+      allow update: if customerCollection == 'customer_payments' && validUpdate() && hasPermission('customers.payment.reverse');
+      allow create, update: if customerCollection == 'customer_receivables' && validWriteScope() &&
+        hasAnyPermission(['sales.credit', 'receivables.manage', 'customers.payment.create']);
+      allow create, update, delete: if customerCollection in ['price_lists', 'price_list_items', 'customer_product_prices'] &&
+        validWriteScope() && hasPermission('price_lists.manage');
+      allow delete: if false;
+    }
+
+    match /employees/{employeeId} {
+      allow read: if validExisting() && hasPermission('hr.view_employees');
+      allow create, update, delete: if validWriteScope() && hasPermission('hr.manage_employees');
+    }
+
+    match /{hrCollection}/{hrId} {
+      allow read: if hrCollection in ['shifts', 'branch_shifts', 'hr_settings'] && validExisting() &&
+        hasAnyPermission(['hr.manage_shifts', 'attendance.view']);
+      allow create, update, delete: if hrCollection in ['shifts', 'branch_shifts', 'hr_settings'] &&
+        validWriteScope() && hasPermission('hr.manage_shifts');
+      allow read: if hrCollection == 'attendance' && validExisting() && hasPermission('attendance.view');
+      allow create: if hrCollection == 'attendance' && validCreate() && hasPermission('attendance.manage');
+      allow update: if hrCollection == 'attendance' && validUpdate() && hasPermission('attendance.correct');
+      allow delete: if hrCollection == 'attendance' && validExisting() && hasPermission('attendance.correct');
+      allow read: if hrCollection == 'employee_leaves' && validExisting() && hasPermission('leave.view');
+      allow create: if hrCollection == 'employee_leaves' && validCreate() && hasPermission('leave.create');
+      allow update: if hrCollection == 'employee_leaves' && validUpdate() && hasAnyPermission([
+        'leave.approve', 'leave.reject', 'leave.cancel', 'leave.manage_balance'
+      ]);
+      allow read: if hrCollection in ['payrolls', 'salary_payments'] && validExisting() && hasPermission('payroll.view');
+      allow create, update: if hrCollection in ['payrolls', 'salary_payments'] && validWriteScope() && hasPermission('payroll.pay');
+      allow delete: if hrCollection in ['payrolls', 'salary_payments'] && validExisting() && hasPermission('payroll.void');
+      allow read: if hrCollection in ['advances', 'advance_installments'] && validExisting() && hasPermission('advances.view');
+      allow create, update, delete: if hrCollection in ['advances', 'advance_installments'] &&
+        validWriteScope() && hasPermission('advances.manage');
+      allow read: if hrCollection == 'expenses' && validExisting() && hasPermission('expenses.view');
+      allow create, update: if hrCollection == 'expenses' && validWriteScope() && hasPermission('expenses.manage');
+      allow delete: if hrCollection == 'expenses' && validExisting() && hasPermission('expenses.delete');
+    }
+
+    match /{financeCollection}/{financeId} {
+      allow read: if financeCollection in [
+          'chart_of_accounts', 'account_code_index', 'journal_entries', 'journal_lines',
+          'fiscal_years', 'fiscal_periods', 'accounting_settings', 'accounting_events',
+          'accounting_records', 'financial_accounts', 'opening_balance_migrations', 'daily_closings'
+        ] && validExisting() && hasAnyPermission([
+          'accounting.view', 'financial_reports.view', 'treasury.view', 'daily_closing.view'
+        ]);
+      allow create, update, delete: if financeCollection in ['chart_of_accounts', 'account_code_index'] &&
+        validWriteScope() && hasPermission('accounting.manage_chart');
+      allow create: if financeCollection in ['journal_entries', 'journal_lines', 'accounting_events'] &&
+        validCreate() && hasPermission('accounting.create_entry');
+      allow update: if financeCollection in ['journal_entries', 'journal_lines'] &&
+        validUpdate() && hasPermission('accounting.reverse_entry');
+      allow create, update: if financeCollection in ['fiscal_years', 'fiscal_periods', 'accounting_settings'] &&
+        validWriteScope() && hasPermission('accounting.manage_periods');
+      allow create: if financeCollection == 'opening_balance_migrations' && validCreate() && hasPermission('accounting.opening_balances');
+      allow create: if financeCollection == 'daily_closings' && validCreate() && hasPermission('daily_closing.create');
+      allow update: if financeCollection == 'daily_closings' && validUpdate() && (
+        hasPermission('daily_closing.update') ||
+        (hasPermission('daily_closing.void') &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'status', 'voidReason', 'voidedAt', 'voidedBy'
+          ]))
+      );
+      allow delete: if financeCollection == 'daily_closings' && false;
+      allow create, update: if financeCollection in ['accounting_records', 'financial_accounts'] &&
+        validWriteScope() && hasAnyPermission(['accounting.create_entry', 'treasury.manage', 'bank_accounts.manage']);
+    }
+
+    match /{analyticsCollection}/{analyticsId} {
+      allow read: if analyticsCollection in [
+          'daily_analytics_metrics', 'stats_daily', 'stats_monthly',
+          'analytics_settings', 'reorder_settings', 'season_definitions'
+        ] && validExisting() && hasAnyPermission([
+          'analytics.view', 'analytics.export', 'analytics.view_costs', 'analytics.partner_intelligence',
+          'reports.view', 'reports.sales', 'reports.inventory', 'dashboard.view'
+        ]);
+      allow create, update: if analyticsCollection in ['daily_analytics_metrics', 'stats_daily', 'stats_monthly'] &&
+        validWriteScope() && hasAnyPermission([
+          'analytics.rebuild_aggregates', 'sales.create', 'returns.create', 'purchases.receive'
+        ]);
+      allow delete: if analyticsCollection in ['daily_analytics_metrics', 'stats_daily', 'stats_monthly'] &&
+        validExisting() && hasPermission('analytics.rebuild_aggregates');
+      allow create, update, delete: if analyticsCollection in ['analytics_settings', 'reorder_settings', 'season_definitions'] &&
+        validWriteScope() && hasPermission('analytics.demand_reorder');
+    }
+
+    match /{governanceCollection}/{governanceId} {
+      allow read: if governanceCollection in ['approval_requests', 'approval_steps', 'approval_settings'] &&
+        validExisting() && hasPermission('approvals.view');
+      allow create, update: if governanceCollection in ['approval_requests', 'approval_steps'] &&
+        validWriteScope() && hasPermission('approvals.action');
+      allow create, update, delete: if governanceCollection == 'approval_settings' &&
+        validWriteScope() && hasPermission('approvals.manage_policy');
+      allow read: if governanceCollection == 'attachments' && validExisting() && hasPermission('attachments.manage');
+      allow create, update, delete: if governanceCollection == 'attachments' &&
+        validWriteScope() && hasPermission('attachments.manage');
+      allow read: if governanceCollection == 'settings_audit_log' && validExisting() && hasPermission('settings_audit.view');
+      allow create: if governanceCollection == 'settings_audit_log' && validCreate() && hasPermission('settings.manage');
+      allow read: if governanceCollection == 'feature_flags' && validExisting() && hasAnyPermission(['settings.view', 'feature_flags.manage']);
+      allow create, update, delete: if governanceCollection == 'feature_flags' &&
+        validWriteScope() && hasPermission('feature_flags.manage');
+    }
+
+    match /backups/{backupId} {
+      allow read: if validExisting() && hasPermission('backup.view');
+      allow create: if validCreate() && hasPermission('backup.create');
+      allow delete: if validExisting() && hasPermission('backup.delete');
+      allow update: if false;
+    }
+
+    match /restore_jobs/{jobId} {
+      allow read: if validExisting() && hasPermission('backup.view');
+      allow create, update: if validWriteScope() && hasPermission('backup.restore');
+      allow delete: if false;
+    }
+
+    match /audit_logs/{logId} {
+      allow read: if validExisting() && hasPermission('audit.view');
+      allow create: if validCreate();
+      allow update, delete: if false;
+    }
+
+    match /notifications/{notificationId} {
+      allow read: if validExisting();
+      allow create: if validCreate() && hasAnyPermission([
+        'sales.create', 'inventory.adjust', 'purchases.create', 'attendance.manage',
+        'payroll.pay', 'advances.manage', 'expenses.manage', 'permissions.manage', 'settings.manage'
+      ]);
+      allow update, delete: if false;
+    }
+
+    match /notification_reads/{readId} {
+      allow read, create, update, delete: if isActive() && (
+        (resource != null && resource.data.userId == request.auth.uid) ||
+        (request.resource != null && request.resource.data.userId == request.auth.uid)
+      );
+    }
+
+    match /{legacyCollection}/{legacyId} {
+      allow read: if legacyCollection in [
+          'tables', 'reservations', 'delivery_zones', 'drivers', 'promotions', 'coupons',
+          'offers', 'call_center_orders', 'maintenance_records', 'production_batches', 'integrations'
+        ] && validExisting() && hasAnyPermission([
+          'tables.view', 'delivery.view', 'promotions.view', 'callcenter.view',
+          'maintenance.view', 'production.view', 'integrations.view'
+        ]);
+      allow create, update, delete: if legacyCollection in ['tables', 'reservations'] &&
+        validWriteScope() && hasPermission('tables.manage');
+      allow create, update, delete: if legacyCollection in ['delivery_zones', 'drivers', 'call_center_orders'] &&
+        validWriteScope() && hasPermission('delivery.manage');
+      allow create, update, delete: if legacyCollection in ['promotions', 'coupons', 'offers'] &&
+        validWriteScope() && hasPermission('promotions.manage');
+      allow create, update, delete: if legacyCollection == 'maintenance_records' &&
+        validWriteScope() && hasPermission('maintenance.manage');
+      allow create, update, delete: if legacyCollection == 'production_batches' &&
+        validWriteScope() && hasPermission('production.manage');
+      allow create, update, delete: if legacyCollection == 'integrations' &&
+        validWriteScope() && hasPermission('integrations.manage');
+    }
+
+    match /{controlCollection}/{controlId} {
+      allow read, create, update, delete: if (
+          (resource != null && validExisting()) ||
+          (request.resource != null && validCreate())
+        ) && (
+          (controlCollection in ['branch_counters', 'orderCounters'] &&
+            hasAnyPermission(['sales.create', 'pos.create_order', 'settings.manage'])) ||
+          (controlCollection == 'sequence_counters' && hasAnyPermission([
+            'sales.create', 'returns.create', 'purchases.create', 'purchases.receive',
+            'customers.create', 'customers.payment.create', 'suppliers.create', 'suppliers.pay',
+            'accounting.create_entry'
+          ])) ||
+          (controlCollection == 'sale_idempotency' && hasPermission('sales.create')) ||
+          (controlCollection == 'return_idempotency' && hasAnyPermission(['returns.create', 'returns.refund'])) ||
+          (controlCollection == 'purchase_idempotency' && hasAnyPermission([
+            'purchases.create', 'purchases.receive', 'purchase_returns.create', 'suppliers.pay'
+          ])) ||
+          (controlCollection == 'customer_idempotency' && hasPermission('customers.payment.create')) ||
+          (controlCollection == 'stock_idempotency' && hasAnyPermission(['inventory.adjust', 'purchases.receive'])) ||
+          (controlCollection == 'journal_idempotency' && hasPermission('accounting.create_entry')) ||
+          (controlCollection == 'system_migrations' &&
+            hasAnyPermission(['system_health.repair', 'analytics.rebuild_aggregates']))
+        );
+    }
+
+    // Explicit data-center permissions intentionally span tenant collections,
+    // but never cross the tenant boundary or expose server-only secrets.
+    match /{dataCollection}/{dataId} {
+      allow read: if !(dataCollection in [
+          'api_clients', 'api_client_audit_logs', 'api_usage_events',
+          'webhook_endpoints', 'webhook_events', 'webhook_delivery_attempts', 'webhook_dead_letters',
+          'idempotency_records'
+        ]) && validExisting() && (
+          hasPermission('backup.create') ||
+          (dataCollection in ['products', 'customers', 'suppliers'] && hasPermission('datacenter.export'))
+        );
+      allow create, update, delete: if !(dataCollection in [
+          'profiles', 'user_roles', 'user_permissions', 'staff_invitations',
+          'api_clients', 'api_client_audit_logs', 'api_usage_events',
+          'webhook_endpoints', 'webhook_events', 'webhook_delivery_attempts', 'webhook_dead_letters',
+          'idempotency_records'
+        ]) && validWriteScope() && (
+          hasAnyPermission(['backup.restore', 'data.reset']) ||
+          (dataCollection in [
+              'products', 'branch_stock', 'stock_movements',
+              'customers', 'customer_ledger', 'suppliers', 'supplier_ledger'
+            ] && hasPermission('datacenter.import'))
+        );
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
+);
     }
 
     match /user_roles/{roleId} {
