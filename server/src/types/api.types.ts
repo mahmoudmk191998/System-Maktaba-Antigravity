@@ -1,11 +1,9 @@
 import { Request } from 'express';
-import { ApiPermission } from './permissions.types.js';
-
 export interface RequestContext {
   clientId: string;
   tenantId: string;
   allowedBranchIds: string[];
-  permissions: ApiPermission[];
+  permissions: string[];
   rateLimitTier?: 'free' | 'standard' | 'premium';
 }
 

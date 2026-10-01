@@ -16,6 +16,7 @@ import { Label } from '@/components/ui/label';
 import { useIntegrations, useTenantBranch } from '@/hooks/useDatabase';
 import { useToast } from '@/hooks/use-toast';
 import { apiClientsService, ApiClientItem } from '@/services/apiClients';
+import { useUserPermissions } from '@/hooks/usePermissions';
 
 const DEFAULT_INTEGRATIONS = [
   { id: 'stripe', name: 'Stripe', category: 'payment', description: 'بوابة دفع إلكتروني', iconName: 'CreditCard', status: 'disconnected', color: 'bg-purple-500' },
@@ -38,6 +39,8 @@ export default function Integrations() {
   const { tenantId } = useTenantBranch();
   const { integrations: dbIntegrations, updateIntegration, addIntegration } = useIntegrations(tenantId);
   const { toast } = useToast();
+  const { hasPermission } = useUserPermissions();
+  const canManageIntegrations = hasPermission('integrations.manage');
 
   // API Clients State
   const [apiClients, setApiClients] = useState<ApiClientItem[]>([]);
@@ -51,6 +54,11 @@ export default function Integrations() {
   const [generatedSecretData, setGeneratedSecretData] = useState<{ clientId: string; secret: string } | null>(null);
 
   const loadApiClients = useCallback(async () => {
+    if (!canManageIntegrations) {
+      setApiClients([]);
+      setLoadingClients(false);
+      return;
+    }
     setLoadingClients(true);
     try {
       const clients = await apiClientsService.listClients(tenantId);
@@ -62,7 +70,7 @@ export default function Integrations() {
     } finally {
       setLoadingClients(false);
     }
-  }, [tenantId]);
+  }, [tenantId, canManageIntegrations]);
 
   const getConnectedHardware = async () => {
     if ('usb' in navigator) {
@@ -86,6 +94,10 @@ export default function Integrations() {
   }, [loadApiClients]);
 
   const scanForHardware = async () => {
+    if (!canManageIntegrations) {
+      toast({ title: 'غير مصرح', description: 'ليس لديك صلاحية إدارة التكاملات', variant: 'destructive' });
+      return;
+    }
     try {
       if (!('usb' in navigator)) {
         toast({ title: 'غير مدعوم', description: 'متصفحك لا يدعم اكتشاف أجهزة USB المباشر', variant: 'destructive' });
@@ -116,6 +128,10 @@ export default function Integrations() {
   };
 
   const toggleIntegration = async (integration: any, connect: boolean) => {
+    if (!canManageIntegrations) {
+      toast({ title: 'غير مصرح', description: 'ليس لديك صلاحية إدارة التكاملات', variant: 'destructive' });
+      return;
+    }
     const newStatus = connect ? 'connected' : 'disconnected';
     if (integration.dbId) {
       await updateIntegration(integration.dbId, { status: newStatus });
@@ -125,6 +141,7 @@ export default function Integrations() {
   };
 
   const handleCreateClient = async () => {
+    if (!canManageIntegrations) return;
     if (!newClientName) return;
     setIsSubmittingCreate(true);
 
@@ -171,6 +188,7 @@ export default function Integrations() {
   };
 
   const handleRotateSecret = async (clientId: string) => {
+    if (!canManageIntegrations) return;
     setActionLoadingId(clientId);
     try {
       const result = await apiClientsService.rotateSecret(clientId, tenantId);
@@ -194,6 +212,7 @@ export default function Integrations() {
   };
 
   const handleToggleStatus = async (client: ApiClientItem) => {
+    if (!canManageIntegrations) return;
     setActionLoadingId(client.client_id);
     try {
       if (client.status === 'active') {
@@ -218,6 +237,7 @@ export default function Integrations() {
   };
 
   const handleRevokeClient = async (clientId: string) => {
+    if (!canManageIntegrations) return;
     setActionLoadingId(clientId);
     try {
       const updated = await apiClientsService.revokeClient(clientId, tenantId);
@@ -257,11 +277,11 @@ export default function Integrations() {
     <MainLayout title="مركز التكاملات ومفاتيح الربط" subtitle="إدارة المنصات الخارجية ومفاتيح الـ REST API"
       actions={
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={loadApiClients} disabled={loadingClients} className="gap-1 text-xs">
+          <Button variant="outline" size="sm" onClick={loadApiClients} disabled={loadingClients || !canManageIntegrations} className="gap-1 text-xs">
             <RefreshCw className={cn('w-3.5 h-3.5', loadingClients && 'animate-spin')} />
             <span>تحديث</span>
           </Button>
-          <Button onClick={() => setIsCreateModalOpen(true)} className="gap-2 text-xs md:text-sm">
+          <Button onClick={() => setIsCreateModalOpen(true)} className="gap-2 text-xs md:text-sm" disabled={!canManageIntegrations}>
             <Key className="w-4 h-4" />
             <span>إنشاء مفتاح API جديد</span>
           </Button>
@@ -294,7 +314,7 @@ export default function Integrations() {
                 تتيح لمواقع المطاعم وتطبيقات التوصيل الوصول الآمن إلى المنيو وإنشاء الطلبات وتتبعها عبر بروتوكول HTTPS المشفر.
               </p>
             </div>
-            <Button onClick={() => setIsCreateModalOpen(true)} className="gap-2 text-xs md:text-sm">
+            <Button onClick={() => setIsCreateModalOpen(true)} className="gap-2 text-xs md:text-sm" disabled={!canManageIntegrations}>
               <Plus className="w-4 h-4" />
               <span>مفتاح جديد</span>
             </Button>
@@ -310,7 +330,7 @@ export default function Integrations() {
               <Key className="w-12 h-12 mx-auto mb-3 opacity-40 text-muted-foreground" />
               <h4 className="font-bold text-base text-foreground mb-1">لا توجد مفاتيح API مسجلة حالياً</h4>
               <p className="text-xs md:text-sm mb-4">قم بإنشاء مفتاح API لربط موقعك الخارجي أو متجر الكتب الإلكتروني بنظام المكتبة.</p>
-              <Button onClick={() => setIsCreateModalOpen(true)} size="sm" className="gap-2">
+              <Button onClick={() => setIsCreateModalOpen(true)} size="sm" className="gap-2" disabled={!canManageIntegrations}>
                 <Plus className="w-4 h-4" />
                 إنشاء أول مفتاح
               </Button>
@@ -364,7 +384,7 @@ export default function Integrations() {
                                 variant="outline"
                                 size="sm"
                                 className="gap-1 text-xs"
-                                disabled={isLoadingThis}
+                                disabled={isLoadingThis || !canManageIntegrations}
                                 onClick={() => handleRotateSecret(client.client_id)}
                               >
                                 <RotateCcw className={cn('w-3.5 h-3.5', isLoadingThis && 'animate-spin')} />
@@ -374,7 +394,7 @@ export default function Integrations() {
                                 variant={client.status === 'active' ? 'secondary' : 'default'}
                                 size="sm"
                                 className="gap-1 text-xs"
-                                disabled={isLoadingThis}
+                                disabled={isLoadingThis || !canManageIntegrations}
                                 onClick={() => handleToggleStatus(client)}
                               >
                                 <Power className="w-3.5 h-3.5" />
@@ -384,7 +404,7 @@ export default function Integrations() {
                                 variant="destructive"
                                 size="sm"
                                 className="gap-1 text-xs"
-                                disabled={isLoadingThis}
+                                disabled={isLoadingThis || !canManageIntegrations}
                                 onClick={() => handleRevokeClient(client.client_id)}
                               >
                                 <Trash2 className="w-3.5 h-3.5" />
@@ -420,7 +440,7 @@ export default function Integrations() {
                         <div className="flex items-center justify-between mb-1"><h4 className="font-bold text-sm md:text-base">{integration.name}</h4><Badge className={cn('text-[10px] md:text-xs', status.color)}><StatusIcon className="w-3 h-3 ml-1" />{status.label}</Badge></div>
                         <p className="text-xs text-muted-foreground mb-3">{integration.description}</p>
                         <div className="flex items-center gap-2">
-                          {integration.status === 'connected' ? <><Button variant="outline" size="sm" className="gap-1 text-xs"><Settings className="w-4 h-4" />إعدادات</Button><Switch checked={true} onCheckedChange={(v) => toggleIntegration(integration, v)} /></> : <Button onClick={() => toggleIntegration(integration, true)} size="sm" className="gap-1 text-xs"><Plus className="w-4 h-4" />ربط</Button>}
+                          {integration.status === 'connected' ? <><Button variant="outline" size="sm" className="gap-1 text-xs" disabled={!canManageIntegrations}><Settings className="w-4 h-4" />إعدادات</Button><Switch checked={true} disabled={!canManageIntegrations} onCheckedChange={(v) => toggleIntegration(integration, v)} /></> : <Button onClick={() => toggleIntegration(integration, true)} size="sm" className="gap-1 text-xs" disabled={!canManageIntegrations}><Plus className="w-4 h-4" />ربط</Button>}
                         </div>
                       </div>
                     </div>
@@ -438,7 +458,7 @@ export default function Integrations() {
                <h3 className="text-lg font-bold">الأجهزة المتصلة بالنظام</h3>
                <p className="text-sm text-muted-foreground">قم بإدارة طابعات الإيصالات وأدراج الكاشير المتصلة بجهازك محلياً</p>
              </div>
-             <Button onClick={scanForHardware} className="gap-2"><RefreshCw className="w-4 h-4" /> اكتشاف أجهزة USB</Button>
+             <Button onClick={scanForHardware} className="gap-2" disabled={!canManageIntegrations}><RefreshCw className="w-4 h-4" /> اكتشاف أجهزة USB</Button>
            </div>
            
            {hardwareDevices.length === 0 ? (
@@ -466,7 +486,7 @@ export default function Integrations() {
                  </Card>
                ))}
                
-               <Card className="border-dashed flex items-center justify-center min-h-[100px] cursor-pointer hover:bg-muted/50 transition-colors" onClick={scanForHardware}>
+               <Card className={cn('border-dashed flex items-center justify-center min-h-[100px] transition-colors', canManageIntegrations ? 'cursor-pointer hover:bg-muted/50' : 'opacity-60')} onClick={canManageIntegrations ? scanForHardware : undefined}>
                  <div className="text-center text-muted-foreground">
                    <Plus className="w-8 h-8 mx-auto mb-2 opacity-50" />
                    <p className="text-sm font-medium">إضافة جهاز آخر</p>
@@ -478,7 +498,7 @@ export default function Integrations() {
       </Tabs>
 
       {/* Modal 1: Create API Client Modal */}
-      <Dialog open={isCreateModalOpen} onOpenChange={setIsCreateModalOpen}>
+      <Dialog open={isCreateModalOpen && canManageIntegrations} onOpenChange={setIsCreateModalOpen}>
         <DialogContent className="sm:max-w-[500px]">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
@@ -525,7 +545,7 @@ export default function Integrations() {
             <Button variant="outline" onClick={() => setIsCreateModalOpen(false)} disabled={isSubmittingCreate}>
               إلغاء
             </Button>
-            <Button onClick={handleCreateClient} disabled={!newClientName || isSubmittingCreate} className="gap-2">
+            <Button onClick={handleCreateClient} disabled={!newClientName || isSubmittingCreate || !canManageIntegrations} className="gap-2">
               {isSubmittingCreate && <Loader2 className="w-4 h-4 animate-spin" />}
               <span>إنشاء المفتاح وحفظه</span>
             </Button>

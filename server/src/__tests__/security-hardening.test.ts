@@ -100,8 +100,10 @@ describe('Phase 5: Production Security Hardening & Audit Test Suite', () => {
     expect(rulesContent).toMatch(/match\s+\/webhook_endpoints\/\{endpointId\}\s*\{\s*allow\s+read,\s*write:\s*if\s+false;\s*\}/);
     expect(rulesContent).toMatch(/match\s+\/webhook_events\/\{eventId\}\s*\{\s*allow\s+read,\s*write:\s*if\s+false;\s*\}/);
     expect(rulesContent).toMatch(/match\s+\/webhook_delivery_attempts\/\{attemptId\}\s*\{\s*allow\s+read,\s*write:\s*if\s+false;\s*\}/);
-    // 5. branch_counters & idempotency_records
-    expect(rulesContent).toMatch(/match\s+\/branch_counters\/\{counterId\}\s*\{\s*allow\s+read,\s*write:\s*if\s+false;\s*\}/);
+    // 5. Browser-created counters remain tenant/permission scoped, while the
+    // API server's idempotency records are never exposed to browser clients.
+    expect(rulesContent).toContain("'branch_counters'");
+    expect(rulesContent).toMatch(/controlCollection[\s\S]*validExisting\(\)[\s\S]*validCreate\(\)[\s\S]*hasAnyPermission/);
     expect(rulesContent).toMatch(/match\s+\/idempotency_records\/\{recordId\}\s*\{\s*allow\s+read,\s*write:\s*if\s+false;\s*\}/);
   });
 

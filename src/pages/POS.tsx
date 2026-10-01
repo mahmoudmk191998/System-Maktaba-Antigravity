@@ -100,6 +100,10 @@ export default function POSPage() {
   const canOverridePrice = isAdmin || hasPermission('sales.override_price') || hasPermission('pos.override_price');
   const canDiscount = isAdmin || hasPermission('sales.discount') || hasPermission('pos.apply_discount');
   const canManageRegister = isAdmin || hasPermission('cash_register.open') || hasPermission('pos.open_drawer');
+  const canCreateSale = isAdmin || hasPermission('sales.create') || hasPermission('pos.create_order');
+  const canSellBelowMinimum = isAdmin || hasPermission('sales.sell_below_minimum');
+  const canSellOnCredit = isAdmin || hasPermission('sales.credit');
+  const canUseCustomerAdvance = isAdmin || hasPermission('sales.customer_credit');
 
   // Register Shift Hook
   const {
@@ -567,6 +571,10 @@ export default function POSPage() {
     payments: PaymentEntry[],
     clientCheckoutId: string
   ): Promise<Sale | null> => {
+    if (!canCreateSale) {
+      toast.error('ليس لديك صلاحية إنشاء عملية بيع');
+      return null;
+    }
     const saleResult = await completeSaleTransaction({
       tenantId,
       branchId,
@@ -606,7 +614,7 @@ export default function POSPage() {
       taxIncluded: totals.taxIncluded,
       serviceChargeIncluded: totals.serviceChargeIncluded,
       clientCheckoutId,
-      allowBelowMinimum: isAdmin,
+      allowBelowMinimum: canSellBelowMinimum,
     });
 
     if (saleResult.success && saleResult.sale) {
@@ -1749,6 +1757,8 @@ export default function POSPage() {
         onOpenChange={setPaymentModalOpen}
         grandTotal={totals.grandTotal}
         customer={selectedCustomer}
+        canSellOnCredit={canSellOnCredit}
+        canUseCustomerAdvance={canUseCustomerAdvance}
         onConfirmPayment={handleConfirmPayment}
       />
 

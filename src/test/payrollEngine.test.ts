@@ -625,12 +625,10 @@ describe('Payroll Engine Test Suite', () => {
 
       const checkPermission = (roles: string[], perms: string[]) => {
         const isAuthorized =
-          roles.includes('admin') ||
           roles.includes('super_admin') ||
           roles.includes('owner') ||
-          roles.includes('manager') ||
           perms.includes('*') ||
-          perms.includes('payroll.manage');
+          perms.includes('payroll.void');
         if (!isAuthorized) {
           throw new Error('غير مصرح لك بإجراء هذه العملية المالية');
         }
@@ -641,9 +639,9 @@ describe('Payroll Engine Test Suite', () => {
         'غير مصرح لك بإجراء هذه العملية المالية'
       );
 
-      // Verify authorized manager succeeds
-      expect(checkPermission(['manager'], [])).toBe(true);
-      expect(checkPermission(['admin'], [])).toBe(true);
+      // Verify only the explicit granular permission (or sovereign wildcard) succeeds.
+      expect(checkPermission(['accountant'], ['payroll.void'])).toBe(true);
+      expect(checkPermission(['owner'], [])).toBe(true);
     });
 
     // Test 7: Voided Salary Payment appears in Expenses and is excluded from active totals

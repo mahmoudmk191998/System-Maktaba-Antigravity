@@ -33,6 +33,7 @@ import {
   type AttendanceRecordData,
 } from '@/lib/payrollEngine';
 import { toast } from 'sonner';
+import { useUserPermissions } from '@/hooks/usePermissions';
 
 /**
  * Deeply strips undefined values from an object or array to prevent Firestore
@@ -52,6 +53,7 @@ function sanitizeForFirestore(obj: any): any {
 }
 
 export function usePayroll(tenantId: string | null, branchId?: string | null) {
+  const { hasPermission } = useUserPermissions();
   const [payrolls, setPayrolls] = useState<PayrollRecord[]>([]);
   const [salaryPayments, setSalaryPayments] = useState<SalaryPayment[]>([]);
   const [advances, setAdvances] = useState<Advance[]>([]);
@@ -338,26 +340,14 @@ export function usePayroll(tenantId: string | null, branchId?: string | null) {
   /**
    * Helper to verify if the user has permissions to void/cancel financial operations
    */
-  const checkFinancialPermission = (currentUser?: any): boolean => {
-    if (!currentUser) return true;
-    if (currentUser.isAdmin) return true;
-    if (currentUser.roles && Array.isArray(currentUser.roles)) {
-      if (currentUser.roles.some((r: string) => ['admin', 'super_admin', 'owner', 'manager'].includes(r))) {
+  const checkFinancialPermission = (requiredPermission: 'payroll.void' | 'advances.manage', currentUser?: any): boolean => {
+    if (currentUser?.permissions && Array.isArray(currentUser.permissions)) {
+      if (currentUser.permissions.includes('*') || currentUser.permissions.includes(requiredPermission)) {
         return true;
       }
-    }
-    if (currentUser.permissions && Array.isArray(currentUser.permissions)) {
-      if (currentUser.permissions.includes('*') || currentUser.permissions.includes('payroll.manage')) {
-        return true;
-      }
-    }
-    if (currentUser.role && ['admin', 'super_admin', 'owner', 'manager'].includes(currentUser.role)) {
-      return true;
-    }
-    if (currentUser.roles?.length || currentUser.role) {
       return false;
     }
-    return true;
+    return hasPermission(requiredPermission);
   };
 
   /**
@@ -376,7 +366,7 @@ export function usePayroll(tenantId: string | null, branchId?: string | null) {
     if (!tenantId) return false;
     if (isProcessingCancellation) return false;
 
-    if (!checkFinancialPermission(currentUser)) {
+    if (!checkFinancialPermission('payroll.void', currentUser)) {
       toast.error('غير مصرح لك بإجراء هذه العملية المالية');
       return false;
     }
@@ -646,7 +636,7 @@ export function usePayroll(tenantId: string | null, branchId?: string | null) {
     if (!tenantId) return false;
     if (isProcessingCancellation) return false;
 
-    if (!checkFinancialPermission(currentUser)) {
+    if (!checkFinancialPermission('advances.manage', currentUser)) {
       toast.error('غير مصرح لك بإجراء هذه العملية المالية');
       return false;
     }
@@ -779,7 +769,7 @@ export function usePayroll(tenantId: string | null, branchId?: string | null) {
     if (!tenantId) return { success: false, message: 'لم يتم تحديد المتجر/المكتبة' };
     if (isProcessingCancellation) return { success: false, message: 'جاري معالجة عملية أخرى، يرجى الانتظار' };
 
-    if (!checkFinancialPermission(currentUser)) {
+    if (!checkFinancialPermission('advances.manage', currentUser)) {
       toast.error('ليس لديك صلاحية لحذف السلف');
       return { success: false, message: 'ليس لديك صلاحية لحذف السلف' };
     }
@@ -894,7 +884,7 @@ export function usePayroll(tenantId: string | null, branchId?: string | null) {
     if (!tenantId) return false;
     if (isProcessingCancellation) return false;
 
-    if (!checkFinancialPermission(currentUser)) {
+    if (!checkFinancialPermission('advances.manage', currentUser)) {
       toast.error('غير مصرح لك بإجراء هذه العملية المالية');
       return false;
     }

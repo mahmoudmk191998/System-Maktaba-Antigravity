@@ -245,10 +245,10 @@ export async function getPublicAttendanceInfo(req: Request, res: Response, next:
         .where('status', '==', 'active')
         .get();
 
-      employees = empQuery.docs.map((doc) => {
-        const data = doc.data();
+      employees = empQuery.docs.map((employeeDoc: FirebaseFirestore.QueryDocumentSnapshot) => {
+        const data = employeeDoc.data();
         return {
-          id: doc.id,
+          id: employeeDoc.id,
           name: data.name || '',
           phone: data.phone || '',
           role: data.role || '',

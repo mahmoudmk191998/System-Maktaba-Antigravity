@@ -26,6 +26,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from 'sonner';
+import { collection, getDocs, query, where } from 'firebase/firestore';
+import { db } from '@/lib/firebase';
+import { useUserPermissions } from '@/hooks/usePermissions';
 
 import {
   parseCsvText,
@@ -41,18 +44,27 @@ export default function DataCenter() {
   const { tenantId, branchId } = useTenantBranch();
   const { user } = useAuth();
   const { currency, number } = useFormatters();
+  const { hasPermission, isAdmin } = useUserPermissions();
+  const canImport = isAdmin || hasPermission('datacenter.import');
+  const canExport = isAdmin || hasPermission('datacenter.export');
 
-  const [activeTab, setActiveTab] = useState<string>('products_import');
+  const [activeTab, setActiveTab] = useState<string>(canImport ? 'products_import' : 'export_center');
 
   // Product Import State
   const [productCsvText, setProductCsvText] = useState<string>('');
   const [validationResult, setValidationResult] = useState<ImportValidationResult<ProductImportRow> | null>(null);
   const [isValidating, setIsValidating] = useState<boolean>(false);
   const [isCommitting, setIsCommitting] = useState<boolean>(false);
+  const [partnerCsvText, setPartnerCsvText] = useState('');
+  const [partnerType, setPartnerType] = useState<'customers' | 'suppliers'>('customers');
 
   // Parse and Validate Products CSV
   const handleValidateProducts = async () => {
     if (!tenantId || !productCsvText.trim()) return;
+    if (!canImport) {
+      toast.error('ليس لديك صلاحية استيراد البيانات');
+      return;
+    }
     setIsValidating(true);
     try {
       const rawRows = parseCsvText(productCsvText);
@@ -77,6 +89,10 @@ export default function DataCenter() {
   // Commit Products
   const handleCommitProducts = async () => {
     if (!tenantId || !branchId || !validationResult || !user) return;
+    if (!canImport) {
+      toast.error('ليس لديك صلاحية استيراد البيانات');
+      return;
+    }
     if (validationResult.validRows.length === 0) {
       toast.error('لا توجد صفوف صالحة للاستيراد');
       return;
@@ -98,6 +114,83 @@ export default function DataCenter() {
       toast.error(err.message || 'فشل استيراد المنتجات');
     } finally {
       setIsCommitting(false);
+    }
+  };
+
+  const handleCommitPartners = async () => {
+    if (!tenantId || !user || !partnerCsvText.trim()) return;
+    if (!canImport) {
+      toast.error('ليس لديك صلاحية استيراد البيانات');
+      return;
+    }
+    const rows = parseCsvText(partnerCsvText);
+    if (rows.length === 0) {
+      toast.error('لا توجد صفوف بيانات صالحة');
+      return;
+    }
+
+    setIsCommitting(true);
+    try {
+      if (partnerType === 'customers') {
+        const result = await commitCustomerImport(tenantId, rows.map((row) => ({
+          name: row.name,
+          phone: row.phone,
+          customerType: row.customerType,
+          initialBalance: Number(row.initialBalance || 0),
+        })), user.uid);
+        toast.success(`تم استيراد ${result.importedCount} عميل و${result.ledgerEntriesCount} قيد افتتاحي`);
+      } else {
+        const result = await commitSupplierImport(tenantId, rows.map((row) => ({
+          name: row.name,
+          phone: row.phone,
+          supplierType: row.supplierType,
+          initialBalance: Number(row.initialBalance || 0),
+        })), user.uid);
+        toast.success(`تم استيراد ${result.importedCount} مورد و${result.ledgerEntriesCount} قيد افتتاحي`);
+      }
+      setPartnerCsvText('');
+    } catch (error: any) {
+      toast.error(error?.message || 'فشل استيراد جهات التعامل');
+    } finally {
+      setIsCommitting(false);
+    }
+  };
+
+  const handleExportCollection = async (collectionName: 'products' | 'customers' | 'suppliers') => {
+    if (!tenantId || !canExport) {
+      toast.error('ليس لديك صلاحية تصدير البيانات');
+      return;
+    }
+
+    try {
+      const [snakeSnapshot, camelSnapshot] = await Promise.all([
+        getDocs(query(collection(db, collectionName), where('tenant_id', '==', tenantId))),
+        getDocs(query(collection(db, collectionName), where('tenantId', '==', tenantId))),
+      ]);
+      const documents = new Map<string, Record<string, unknown>>();
+      [...snakeSnapshot.docs, ...camelSnapshot.docs].forEach((item) => documents.set(item.id, { id: item.id, ...item.data() }));
+      const rows = Array.from(documents.values());
+      if (rows.length === 0) {
+        toast.info('لا توجد بيانات للتصدير');
+        return;
+      }
+      const headers = Array.from(new Set(rows.flatMap((row) => Object.keys(row))));
+      const escapeCell = (value: unknown) => `"${String(
+        value !== null && typeof value === 'object' ? JSON.stringify(value) : (value ?? '')
+      ).replace(/"/g, '""')}"`;
+      const csv = '\uFEFF' + [
+        headers.map(escapeCell).join(','),
+        ...rows.map((row) => headers.map((header) => escapeCell(row[header])).join(',')),
+      ].join('\n');
+      const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${collectionName}-${new Date().toISOString().slice(0, 10)}.csv`;
+      link.click();
+      URL.revokeObjectURL(url);
+      toast.success(`تم تصدير ${rows.length} سجل بنجاح`);
+    } catch (error: any) {
+      toast.error(error?.message || 'فشل تصدير البيانات');
     }
   };
 
@@ -125,6 +218,7 @@ export default function DataCenter() {
             <TabsList className="bg-transparent flex flex-wrap gap-1">
               <TabsTrigger
                 value="products_import"
+                disabled={!canImport}
                 className="text-xs font-semibold py-2 px-3 gap-1.5 data-[state=active]:bg-emerald-600 data-[state=active]:text-white"
               >
                 <Upload className="w-3.5 h-3.5" />
@@ -132,6 +226,7 @@ export default function DataCenter() {
               </TabsTrigger>
               <TabsTrigger
                 value="partners_import"
+                disabled={!canImport}
                 className="text-xs font-semibold py-2 px-3 gap-1.5 data-[state=active]:bg-emerald-600 data-[state=active]:text-white"
               >
                 <Users className="w-3.5 h-3.5" />
@@ -139,6 +234,7 @@ export default function DataCenter() {
               </TabsTrigger>
               <TabsTrigger
                 value="export_center"
+                disabled={!canExport}
                 className="text-xs font-semibold py-2 px-3 gap-1.5 data-[state=active]:bg-emerald-600 data-[state=active]:text-white"
               >
                 <Download className="w-3.5 h-3.5" />
@@ -174,7 +270,7 @@ export default function DataCenter() {
                 <div className="flex items-center gap-3">
                   <Button
                     onClick={handleValidateProducts}
-                    disabled={isValidating || !productCsvText.trim()}
+                    disabled={!canImport || isValidating || !productCsvText.trim()}
                     className="bg-primary text-primary-foreground hover:bg-primary/90 text-xs gap-1.5"
                   >
                     <Eye className="w-3.5 h-3.5" />
@@ -184,7 +280,7 @@ export default function DataCenter() {
                   {validationResult && validationResult.validRows.length > 0 && (
                     <Button
                       onClick={handleCommitProducts}
-                      disabled={isCommitting}
+                      disabled={!canImport || isCommitting}
                       className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs gap-1.5"
                     >
                       <CheckCircle2 className="w-3.5 h-3.5" />
@@ -302,6 +398,37 @@ export default function DataCenter() {
                     name, phone, customerType, initialBalance
                   </code>
                 </div>
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={partnerType === 'customers' ? 'default' : 'outline'}
+                    onClick={() => setPartnerType('customers')}
+                  >عملاء</Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={partnerType === 'suppliers' ? 'default' : 'outline'}
+                    onClick={() => setPartnerType('suppliers')}
+                  >موردون</Button>
+                </div>
+                <Textarea
+                  value={partnerCsvText}
+                  onChange={(event) => setPartnerCsvText(event.target.value)}
+                  placeholder={partnerType === 'customers'
+                    ? 'name,phone,customerType,initialBalance'
+                    : 'name,phone,supplierType,initialBalance'}
+                  className="font-mono text-xs h-32"
+                  disabled={!canImport}
+                />
+                <Button
+                  onClick={handleCommitPartners}
+                  disabled={!canImport || isCommitting || !partnerCsvText.trim()}
+                  className="gap-2"
+                >
+                  <Upload className="w-4 h-4" />
+                  {isCommitting ? 'جارٍ الاستيراد...' : `استيراد ${partnerType === 'customers' ? 'العملاء' : 'الموردين'}`}
+                </Button>
               </CardContent>
             </Card>
           </TabsContent>
@@ -322,7 +449,8 @@ export default function DataCenter() {
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => toast.info('جاري إعداد ملف المنتجات للتنزيل')}
+                  onClick={() => handleExportCollection('products')}
+                  disabled={!canExport}
                   className="text-xs mt-4 gap-1.5"
                 >
                   <Download className="w-3.5 h-3.5" />
@@ -343,7 +471,8 @@ export default function DataCenter() {
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => toast.info('جاري إعداد ملف العملاء للتنزيل')}
+                  onClick={() => handleExportCollection('customers')}
+                  disabled={!canExport}
                   className="text-xs mt-4 gap-1.5"
                 >
                   <Download className="w-3.5 h-3.5" />
@@ -364,7 +493,8 @@ export default function DataCenter() {
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => toast.info('جاري إعداد ملف الموردين للتنزيل')}
+                  onClick={() => handleExportCollection('suppliers')}
+                  disabled={!canExport}
                   className="text-xs mt-4 gap-1.5"
                 >
                   <Download className="w-3.5 h-3.5" />

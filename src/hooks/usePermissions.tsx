@@ -2,7 +2,8 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { db } from '@/lib/firebase';
 import { collection, query, where, onSnapshot, doc } from 'firebase/firestore';
 import { useAuth } from './useAuth';
-import { isOwnerRole, isAdminOrOwnerRole } from '@/lib/permissionsModel';
+import { isOwnerRole } from '@/lib/permissionsModel';
+import { normalizePermissionIds, PERMISSIONS_SCHEMA_VERSION } from '@/lib/staffAccess';
 
 export interface PermissionsHookResult {
   permissions: string[];
@@ -39,6 +40,8 @@ export function useUserPermissions(): PermissionsHookResult {
     setLoading(true);
     let currentRoles: string[] = [];
     let currentPerms: string[] = [];
+    let profileRole: string | null = null;
+    let profilePerms: string[] | null = null;
     let currentStatus: 'active' | 'disabled' = 'active';
 
     let rolesLoaded = false;
@@ -56,13 +59,23 @@ export function useUserPermissions(): PermissionsHookResult {
         return;
       }
 
-      setRoles(currentRoles);
+      const effectiveRoles = Array.from(new Set([
+        ...currentRoles,
+        ...(profileRole ? [profileRole] : []),
+      ]));
+      setRoles(effectiveRoles);
 
-      const hasAdminOrOwner = currentRoles.some((r) => isAdminOrOwnerRole(r));
-      if (hasAdminOrOwner) {
-        setPermissions(['*']); // wildcard = all permissions
+      const hasSovereignRole = effectiveRoles.some((role) => isOwnerRole(role));
+      if (hasSovereignRole) {
+        setPermissions(['*']);
+      } else if (profilePerms !== null) {
+        // Versioned profile permissions are the single authorization source.
+        // This makes admin permissions revocable and keeps each action granular.
+        setPermissions(profilePerms);
       } else {
-        setPermissions(currentPerms);
+        // Backwards-compatible fallback until an existing account is migrated by
+        // the permissions page. New and edited accounts always use profilePerms.
+        setPermissions(normalizePermissionIds(currentPerms));
       }
 
       setLoading(false);
@@ -76,7 +89,14 @@ export function useUserPermissions(): PermissionsHookResult {
         if (snapshot.exists()) {
           const data = snapshot.data();
           currentStatus = data.status === 'disabled' ? 'disabled' : 'active';
+          profileRole = typeof data.role === 'string' ? data.role : null;
+          profilePerms = data.permissions_version === PERMISSIONS_SCHEMA_VERSION && Array.isArray(data.permissions)
+            ? normalizePermissionIds(data.permissions)
+            : null;
           setUserStatus(currentStatus);
+        } else {
+          profileRole = null;
+          profilePerms = null;
         }
         profileLoaded = true;
         updatePermissionsState();
@@ -147,7 +167,10 @@ export function useUserPermissions(): PermissionsHookResult {
     [permissions, userStatus]
   );
 
-  const isAdmin = userStatus !== 'disabled' && roles.some((r) => isAdminOrOwnerRole(r));
+  // isAdmin is intentionally tied to wildcard authority, not the role label.
+  // A normal admin receives every explicit permission by default, but individual
+  // permissions can still be revoked without being bypassed by UI shortcuts.
+  const isAdmin = userStatus !== 'disabled' && permissions.includes('*');
   const isOwner = userStatus !== 'disabled' && roles.some((r) => isOwnerRole(r));
   const isDisabled = userStatus === 'disabled';
   const hasAnyRole = userStatus !== 'disabled' && roles.length > 0;

@@ -81,7 +81,10 @@ export default function ExecutiveDashboard() {
   const tenantId = currentTenant?.id || hookTenantId || 'default';
   const branchId = currentBranch?.id || hookBranchId || 'all';
   const { user } = useAuth();
-  const { hasPermission, isAdmin, isOwner } = useUserPermissions();
+  const { hasPermission } = useUserPermissions();
+  const canViewDailyClosing = hasPermission('daily_closing.view');
+  const canCreateDailyClosing = hasPermission('daily_closing.create');
+  const canVoidDailyClosing = hasPermission('daily_closing.void');
   const { toast } = useToast();
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -200,11 +203,18 @@ export default function ExecutiveDashboard() {
   }, [loadFinancialMetrics]);
 
   useEffect(() => {
-    if (activeTab === 'closing') {
+    if (activeTab === 'closing' && canViewDailyClosing) {
       loadClosingPreview();
       loadClosingsHistory();
     }
-  }, [activeTab, loadClosingPreview, loadClosingsHistory]);
+  }, [activeTab, canViewDailyClosing, loadClosingPreview, loadClosingsHistory]);
+
+  useEffect(() => {
+    if (activeTab === 'closing' && !canViewDailyClosing) {
+      setActiveTab('overview');
+      setSearchParams({ tab: 'overview' });
+    }
+  }, [activeTab, canViewDailyClosing, setSearchParams]);
 
   // Sync tab with URL
   const handleTabChange = (val: string) => {
@@ -221,6 +231,7 @@ export default function ExecutiveDashboard() {
 
   // Handle Save Closing
   const handleSaveClosing = async () => {
+    if (!canCreateDailyClosing) return;
     if (!closingPreview || isSubmittingClosing) return;
     if (actualCashInput === '') {
       toast({ title: 'تنبيه', description: 'يرجى إدخال مبلغ النقدية الفعلي المحسوب بالدرج', variant: 'destructive' });
@@ -264,6 +275,7 @@ export default function ExecutiveDashboard() {
 
   // Handle Void Closing
   const handleConfirmVoid = async () => {
+    if (!canVoidDailyClosing) return;
     if (!voidingClosingId || !voidReason.trim() || isVoiding) return;
     setIsVoiding(true);
     try {
@@ -363,10 +375,12 @@ export default function ExecutiveDashboard() {
               <TrendingUp className="w-4 h-4" />
               اللوحة المالية الشاملة
             </TabsTrigger>
-            <TabsTrigger value="closing" className="gap-2 flex-1 sm:flex-initial">
-              <CheckCircle2 className="w-4 h-4" />
-              الإغلاق اليومي والمطابقة النقدية
-            </TabsTrigger>
+            {canViewDailyClosing && (
+              <TabsTrigger value="closing" className="gap-2 flex-1 sm:flex-initial">
+                <CheckCircle2 className="w-4 h-4" />
+                الإغلاق اليومي والمطابقة النقدية
+              </TabsTrigger>
+            )}
           </TabsList>
 
           {/* ========================================================================= */}
@@ -710,6 +724,7 @@ export default function ExecutiveDashboard() {
           {/* ========================================================================= */}
           {/* TAB 2: SAFE DAILY CLOSING & CASH RECONCILIATION                           */}
           {/* ========================================================================= */}
+          {canViewDailyClosing && (
           <TabsContent value="closing" className="space-y-6">
             {/* Top Date Switcher for Closing */}
             <div className="flex flex-wrap items-center justify-between gap-4 p-4 rounded-xl bg-slate-950/60 border border-slate-800">
@@ -929,7 +944,7 @@ export default function ExecutiveDashboard() {
                           عرض الـ Snapshot المؤرشف وقت الإغلاق
                         </Button>
                       </div>
-                    ) : (
+                    ) : canCreateDailyClosing ? (
                       <Button
                         onClick={handleSaveClosing}
                         disabled={isSubmittingClosing}
@@ -938,6 +953,10 @@ export default function ExecutiveDashboard() {
                         <CheckCircle2 className="w-4 h-4" />
                         {isSubmittingClosing ? 'جاري الحفظ...' : 'اعتماد وحفظ الإغلاق اليومي'}
                       </Button>
+                    ) : (
+                      <div className="text-center p-2 rounded-lg bg-slate-900 text-xs text-muted-foreground">
+                        صلاحية عرض الإغلاق لا تسمح باعتماده. يلزم منح صلاحية إنشاء الإغلاق اليومي.
+                      </div>
                     )}
                   </CardHeader>
                 </Card>
@@ -1040,7 +1059,7 @@ export default function ExecutiveDashboard() {
                                   >
                                     <Eye className="w-3.5 h-3.5" />
                                   </Button>
-                                  {!isVoided && (isAdmin || isOwner) && (
+                                  {!isVoided && canVoidDailyClosing && (
                                     <Button
                                       variant="ghost"
                                       size="sm"
@@ -1063,6 +1082,7 @@ export default function ExecutiveDashboard() {
               </CardContent>
             </Card>
           </TabsContent>
+          )}
         </Tabs>
       </div>
 

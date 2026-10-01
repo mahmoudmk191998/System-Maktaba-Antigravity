@@ -183,12 +183,13 @@ notificationsRouter.patch(
   async (req: AuthenticatedRequest, res: Response, next) => {
     try {
       const { id } = req.params;
+      const notificationId = Array.isArray(id) ? id[0] : id;
       const db = getFirestoreDb();
-      const docRef = db.collection('notifications').doc(id);
+      const docRef = db.collection('notifications').doc(notificationId);
       const snapshot = await docRef.get();
 
       if (!snapshot.exists) {
-        throw new NotFoundError(`Notification not found: '${id}'`);
+        throw new NotFoundError(`Notification not found: '${notificationId}'`);
       }
 
       const notifData = snapshot.data();

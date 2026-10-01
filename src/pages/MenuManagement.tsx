@@ -108,6 +108,7 @@ export default function MenuManagement() {
 
   const handleAddItem = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!canCreateMenu) return;
     if (!itemForm.name || !itemForm.price) { toast.error('يرجى ملء الحقول المطلوبة'); return; }
     
     const allergens = itemForm.allergens ? itemForm.allergens.split(',').map(a => a.trim()).filter(Boolean) : null;
@@ -154,6 +155,7 @@ export default function MenuManagement() {
 
   const handleUpdateItem = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!canEditMenu) return;
     if (!showEditItem) return;
 
     let image_url = showEditItem.image_url;
@@ -196,6 +198,7 @@ export default function MenuManagement() {
   };
 
   const handleBulkDeleteItems = async () => {
+    if (!canDeleteMenu) return;
     if (!window.confirm(`هل أنت متأكد من حذف ${selectedItems.length} صنف؟`)) return;
     for (const id of selectedItems) {
       await removeItem(id);
@@ -204,6 +207,7 @@ export default function MenuManagement() {
   };
 
   const handleBulkDeleteCategories = async () => {
+    if (!canDeleteMenu) return;
     if (!window.confirm(`هل أنت متأكد من حذف ${selectedCategories.length} فئة؟`)) return;
     for (const id of selectedCategories) {
       await removeCategory(id);
@@ -212,6 +216,7 @@ export default function MenuManagement() {
   };
 
   const handleBulkDeleteRecipes = async () => {
+    if (!canManageRecipes) return;
     if (!window.confirm(`هل أنت متأكد من حذف ${selectedRecipes.length} وصفة؟`)) return;
     for (const id of selectedRecipes) {
       await removeRecipe(id);
@@ -222,6 +227,7 @@ export default function MenuManagement() {
   // Handlers for Categories
   const handleAddCategory = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!canCreateMenu) return;
     if (!catForm.name) { toast.error('يرجى إدخال اسم الفئة'); return; }
     // Saving color as icon fallback mechanism if DB doesn't support color column directly (can append to icon if strictly necessary, but assuming we can pass generic payload to categories)
     const payload: any = { name: catForm.name, name_en: catForm.name_en, icon: catForm.icon, sort_order: catForm.sort_order };
@@ -234,6 +240,7 @@ export default function MenuManagement() {
 
   const handleUpdateCategory = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!canEditMenu) return;
     if (!showEditCategory) return;
     const payload: any = { name: showEditCategory.name, name_en: showEditCategory.name_en, icon: showEditCategory.icon, sort_order: showEditCategory.sort_order };
     try { payload.color = showEditCategory.color; } catch(e) {}
@@ -244,6 +251,7 @@ export default function MenuManagement() {
   // Handlers for Recipes
   const handleAddRecipe = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!canManageRecipes) return;
     if (!recipeForm.name) { toast.error('يرجى إدخال اسم الوصفة'); return; }
     const validIngredients = recipeForm.ingredients.filter(i => i.item_id && i.quantity > 0);
     const success = await addRecipe(
@@ -255,6 +263,7 @@ export default function MenuManagement() {
 
   const handleUpdateRecipe = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!canManageRecipes) return;
     if (!showEditRecipe || !showEditRecipe.name) { toast.error('يرجى إدخال اسم الوصفة'); return; }
     const validIngredients = showEditRecipe.ingredients.filter((i: any) => i.item_id && i.quantity > 0);
     const success = await updateRecipe(
@@ -333,7 +342,7 @@ export default function MenuManagement() {
                      <CardTitle className="text-xl flex items-center gap-2"><LayoutList className="w-5 h-5 text-primary"/> سجل أصناف البيع</CardTitle>
                    </div>
                    <div className="flex flex-col sm:flex-row gap-3 w-full md:w-auto">
-                      {selectedItems.length > 0 && (
+                      {canDeleteMenu && selectedItems.length > 0 && (
                         <Button onClick={handleBulkDeleteItems} variant="destructive" className="gap-2 shrink-0 md:mr-auto">
                           <Trash2 className="w-4 h-4" />
                           حذف ({selectedItems.length})
@@ -535,7 +544,7 @@ export default function MenuManagement() {
                 <span className="text-sm font-medium">الكل</span>
               </div>
             )}
-            {selectedCategories.length > 0 && (
+            {canDeleteMenu && selectedCategories.length > 0 && (
               <Button onClick={handleBulkDeleteCategories} variant="destructive" className="gap-2 shrink-0">
                 <Trash2 className="w-4 h-4" />
                 حذف ({selectedCategories.length})
@@ -606,7 +615,7 @@ export default function MenuManagement() {
                            <span className="text-sm font-medium">الكل</span>
                          </div>
                        )}
-                       {selectedRecipes.length > 0 && (
+                       {canManageRecipes && selectedRecipes.length > 0 && (
                          <Button onClick={handleBulkDeleteRecipes} variant="destructive" className="gap-2 shrink-0 md:mr-auto">
                            <Trash2 className="w-4 h-4" />
                            حذف ({selectedRecipes.length})

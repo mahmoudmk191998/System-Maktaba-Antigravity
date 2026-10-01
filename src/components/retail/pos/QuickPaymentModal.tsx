@@ -31,6 +31,8 @@ interface QuickPaymentModalProps {
   onOpenChange: (open: boolean) => void;
   grandTotal: number;
   customer?: Customer | null;
+  canSellOnCredit: boolean;
+  canUseCustomerAdvance: boolean;
   onConfirmPayment: (payments: PaymentEntry[], clientCheckoutId: string) => Promise<Sale | null>;
 }
 
@@ -48,6 +50,8 @@ export const QuickPaymentModal: React.FC<QuickPaymentModalProps> = ({
   onOpenChange,
   grandTotal,
   customer,
+  canSellOnCredit,
+  canUseCustomerAdvance,
   onConfirmPayment,
 }) => {
   const { number } = useFormatters();
@@ -64,9 +68,9 @@ export const QuickPaymentModal: React.FC<QuickPaymentModalProps> = ({
 
   // Customer Credit & Advance calculations
   const customerAdvance = useMemo(() => {
-    if (!customer) return 0;
+    if (!customer || !canUseCustomerAdvance) return 0;
     return (customer.currentBalance || 0) < 0 ? Math.abs(customer.currentBalance) : 0;
-  }, [customer]);
+  }, [customer, canUseCustomerAdvance]);
 
   const customerCurrentDebt = useMemo(() => {
     if (!customer) return 0;
@@ -74,11 +78,11 @@ export const QuickPaymentModal: React.FC<QuickPaymentModalProps> = ({
   }, [customer]);
 
   const customerAvailableCredit = useMemo(() => {
-    if (!customer || !customer.creditEnabled) return 0;
+    if (!customer || !canSellOnCredit || !customer.creditEnabled) return 0;
     if (customer.creditStatus === 'blocked') return 0;
     if (customer.creditLimit === 0) return 9999999; // unlimited
     return Math.max(0, customer.creditLimit - customerCurrentDebt);
-  }, [customer, customerCurrentDebt]);
+  }, [customer, customerCurrentDebt, canSellOnCredit]);
 
   useEffect(() => {
     if (open) {
@@ -110,6 +114,8 @@ export const QuickPaymentModal: React.FC<QuickPaymentModalProps> = ({
   }, [grandTotal, splitTotalPaid]);
 
   const handleAddSplitEntry = (method: PaymentMethodType) => {
+    if (method === 'credit' && !canSellOnCredit) return;
+    if (method === 'customer_credit' && !canUseCustomerAdvance) return;
     const remaining = Math.max(0, splitRemaining);
     let initialAmt = remaining;
     if (method === 'customer_credit') {
@@ -153,6 +159,10 @@ export const QuickPaymentModal: React.FC<QuickPaymentModalProps> = ({
         }
         finalPayments = [{ method: 'cash', amount: cashReceivedNum }];
       } else if (primaryMethod === 'credit') {
+        if (!canSellOnCredit) {
+          toast.error('ليس لديك صلاحية البيع الآجل');
+          return;
+        }
         if (!customer) {
           toast.error('يجب تحديد عميل لإجراء بيع آجل');
           return;
@@ -171,6 +181,10 @@ export const QuickPaymentModal: React.FC<QuickPaymentModalProps> = ({
         }
         finalPayments = [{ method: 'credit', amount: grandTotal }];
       } else if (primaryMethod === 'customer_credit') {
+        if (!canUseCustomerAdvance) {
+          toast.error('ليس لديك صلاحية استخدام الرصيد المقدم للعميل');
+          return;
+        }
         if (!customer || customerAdvance <= 0) {
           toast.error('العميل ليس لديه رصيد مقدم كافٍ');
           return;
@@ -192,6 +206,10 @@ export const QuickPaymentModal: React.FC<QuickPaymentModalProps> = ({
       // Validate split credit
       const creditPart = splitPayments.find((p) => p.method === 'credit')?.amount || 0;
       if (creditPart > 0) {
+        if (!canSellOnCredit) {
+          toast.error('ليس لديك صلاحية البيع الآجل');
+          return;
+        }
         if (!customer || !customer.creditEnabled) {
           toast.error('البيع الآجل غير متاح أو لم يتم تحديد عميل');
           return;
@@ -208,6 +226,10 @@ export const QuickPaymentModal: React.FC<QuickPaymentModalProps> = ({
 
       // Validate split customer advance
       const advancePart = splitPayments.find((p) => p.method === 'customer_credit')?.amount || 0;
+      if (advancePart > 0 && !canUseCustomerAdvance) {
+        toast.error('ليس لديك صلاحية استخدام الرصيد المقدم للعميل');
+        return;
+      }
       if (advancePart > 0 && advancePart > customerAdvance) {
         toast.error(`الجزء المخصوم من المقدم (${advancePart} ج.م) يتجاوز رصيد المقدم الفعلي (${customerAdvance} ج.م)`);
         return;
@@ -334,7 +356,7 @@ export const QuickPaymentModal: React.FC<QuickPaymentModalProps> = ({
                 </Button>
 
                 {/* Credit Sale (آجل) Button */}
-                {customer?.creditEnabled && (
+                {canSellOnCredit && customer?.creditEnabled && (
                   <Button
                     type="button"
                     variant={primaryMethod === 'credit' ? 'default' : 'outline'}
@@ -470,7 +492,7 @@ export const QuickPaymentModal: React.FC<QuickPaymentModalProps> = ({
                   <Button type="button" size="sm" variant="outline" className="h-7 text-xs" onClick={() => handleAddSplitEntry('instapay')}>
                     + انستاباي
                   </Button>
-                  {customer?.creditEnabled && (
+                  {canSellOnCredit && customer?.creditEnabled && (
                     <Button type="button" size="sm" variant="outline" className="h-7 text-xs border-amber-500 text-amber-700" onClick={() => handleAddSplitEntry('credit')}>
                       + آجل
                     </Button>

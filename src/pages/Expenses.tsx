@@ -34,6 +34,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
+import { useUserPermissions } from '@/hooks/usePermissions';
 import { 
   BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, 
   Tooltip as RechartsTooltip, ResponsiveContainer, Legend
@@ -45,6 +46,10 @@ const CATEGORIES: ExpenseCategory[] = ['رواتب', 'مشتريات', 'صيان
 
 export default function Expenses() {
   const { tenantId, branchId } = useTenantBranch();
+  const { hasPermission } = useUserPermissions();
+  const canManageExpenses = hasPermission('expenses.manage');
+  const canDeleteExpenses = hasPermission('expenses.delete');
+  const canExportExpenses = hasPermission('analytics.export');
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [loading, setLoading] = useState(true);
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
@@ -118,6 +123,10 @@ export default function Expenses() {
   }, [tenantId, branchId]); // Re-fetch on mount or tenant/branch change, filters apply in-memory
 
   const handleDelete = async (id: string) => {
+    if (!canDeleteExpenses) {
+      toast({ title: 'غير مصرح', description: 'ليس لديك صلاحية حذف المصروفات', variant: 'destructive' });
+      return;
+    }
     if (!window.confirm('هل أنت متأكد من حذف هذا المصروف؟')) return;
     try {
       await deleteExpense(id);
@@ -130,6 +139,10 @@ export default function Expenses() {
   };
 
   const handleBulkDelete = async () => {
+    if (!canDeleteExpenses) {
+      toast({ title: 'غير مصرح', description: 'ليس لديك صلاحية حذف المصروفات', variant: 'destructive' });
+      return;
+    }
     if (!window.confirm(`هل أنت متأكد من حذف ${selectedExpenses.length} مصروف؟`)) return;
     try {
       for (const id of selectedExpenses) {
@@ -145,6 +158,10 @@ export default function Expenses() {
 
   const handleUpdate = async () => {
     if (!editingExpense) return;
+    if (!canManageExpenses) {
+      toast({ title: 'غير مصرح', description: 'ليس لديك صلاحية تعديل المصروفات', variant: 'destructive' });
+      return;
+    }
     setIsSubmitting(true);
     try {
       await updateExpense(editingExpense.id, {
@@ -289,6 +306,10 @@ export default function Expenses() {
   }, [activeExpenses]);
 
   const handleExportCSV = () => {
+    if (!canExportExpenses) {
+      toast({ title: 'غير مصرح', description: 'ليس لديك صلاحية تصدير البيانات', variant: 'destructive' });
+      return;
+    }
     const headers = ['التاريخ', 'التصنيف', 'البيان', 'المبلغ'].join(',');
     const rows = filteredAndCategorizedExpenses.map(e => 
       `${e.date},${e.category},"${e.description.replace(/"/g, '""')}",${e.amount}`
@@ -346,17 +367,17 @@ export default function Expenses() {
             </div>
           )}
 
-          {selectedExpenses.length > 0 && (
+          {selectedExpenses.length > 0 && canDeleteExpenses && (
             <Button onClick={handleBulkDelete} variant="destructive" className="gap-2 shrink-0 hidden sm:flex">
               <Trash2 className="w-4 h-4" />
               حذف ({selectedExpenses.length})
             </Button>
           )}
-          <Button variant="outline" className="hidden sm:flex gap-2" onClick={handleExportCSV}>
+          <Button variant="outline" className="hidden sm:flex gap-2" onClick={handleExportCSV} disabled={!canExportExpenses}>
             <Download className="w-4 h-4" />
             تصدير
           </Button>
-          <Button onClick={() => setIsAddDialogOpen(true)} className="gap-2">
+          <Button onClick={() => setIsAddDialogOpen(true)} className="gap-2" disabled={!canManageExpenses}>
             <Plus className="w-4 h-4" />
             إضافة مصروف
           </Button>
@@ -619,7 +640,7 @@ export default function Expenses() {
                 <CardDescription>عرض تفصيلي لجميع المصروفات ضمن الفترة المحددة</CardDescription>
               </div>
               <div className="flex w-full sm:w-auto gap-2">
-                {selectedExpenses.length > 0 && (
+                {selectedExpenses.length > 0 && canDeleteExpenses && (
                   <Button onClick={handleBulkDelete} variant="destructive" className="gap-2 shrink-0 sm:hidden flex-1">
                     <Trash2 className="w-4 h-4" />
                     حذف المحددة
@@ -657,6 +678,7 @@ export default function Expenses() {
                       <div className="flex items-start justify-between gap-2">
                         <div className="flex items-center gap-2">
                           <Checkbox
+                            disabled={!canDeleteExpenses}
                             checked={selectedExpenses.includes(expense.id)}
                             onCheckedChange={(c) => {
                               if (c) setSelectedExpenses(prev => [...prev, expense.id]);
@@ -698,12 +720,12 @@ export default function Expenses() {
                           <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-primary" onClick={() => setViewingExpense(expense)}>
                             <Eye className="w-3.5 h-3.5" />
                           </Button>
-                          {!isVoided && (
+                          {!isVoided && canManageExpenses && (
                             <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-primary" onClick={() => setEditingExpense(expense)}>
                               <Edit className="w-3.5 h-3.5" />
                             </Button>
                           )}
-                          <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive" onClick={() => handleDelete(expense.id)}>
+                          <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive" onClick={() => handleDelete(expense.id)} disabled={!canDeleteExpenses}>
                             <Trash2 className="w-3.5 h-3.5" />
                           </Button>
                         </div>
@@ -721,6 +743,7 @@ export default function Expenses() {
                   <TableRow>
                     <TableHead className="w-[40px] px-4">
                       <Checkbox
+                        disabled={!canDeleteExpenses}
                         checked={filteredAndCategorizedExpenses.length > 0 && selectedExpenses.length === filteredAndCategorizedExpenses.length}
                         onCheckedChange={(c) => {
                           if (c) setSelectedExpenses(filteredAndCategorizedExpenses.map(e => e.id));
@@ -765,6 +788,7 @@ export default function Expenses() {
                         >
                           <TableCell className="px-4">
                             <Checkbox
+                              disabled={!canDeleteExpenses}
                               checked={selectedExpenses.includes(expense.id)}
                               onCheckedChange={(c) => {
                                 if (c) setSelectedExpenses(prev => [...prev, expense.id]);
@@ -818,12 +842,12 @@ export default function Expenses() {
                               <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-primary transition-colors" onClick={() => setViewingExpense(expense)}>
                                 <Eye className="w-4 h-4" />
                               </Button>
-                              {!isVoided && (
+                              {!isVoided && canManageExpenses && (
                                 <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-primary transition-colors" onClick={() => setEditingExpense(expense)}>
                                   <Edit className="w-4 h-4" />
                                 </Button>
                               )}
-                              <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive transition-colors" onClick={() => handleDelete(expense.id)}>
+                              <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive transition-colors" onClick={() => handleDelete(expense.id)} disabled={!canDeleteExpenses}>
                                 <Trash2 className="w-4 h-4" />
                               </Button>
                             </div>
@@ -837,13 +861,6 @@ export default function Expenses() {
             </div>
           </CardContent>
         </Card>
-
-        {/* Existing Add/Edit Dialogs */}
-        <AddExpenseDialog 
-          open={isAddDialogOpen} 
-          onOpenChange={setIsAddDialogOpen} 
-          onSuccess={fetchExpenses} 
-        />
 
         <Dialog open={!!editingExpense} onOpenChange={(open) => !open && setEditingExpense(null)}>
           <DialogContent className="sm:max-w-[425px] max-h-[90dvh] overflow-y-auto">
@@ -875,7 +892,7 @@ export default function Expenses() {
             )}
             <DialogFooter>
               <Button variant="outline" onClick={() => setEditingExpense(null)} disabled={isSubmitting}>إلغاء</Button>
-              <Button onClick={handleUpdate} disabled={isSubmitting}>{isSubmitting ? 'جاري الحفظ...' : 'حفظ التغييرات'}</Button>
+              <Button onClick={handleUpdate} disabled={isSubmitting || !canManageExpenses}>{isSubmitting ? 'جاري الحفظ...' : 'حفظ التغييرات'}</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
@@ -972,7 +989,7 @@ export default function Expenses() {
 
         {/* Add Expense Dialog */}
         <AddExpenseDialog
-          open={isAddDialogOpen}
+          open={isAddDialogOpen && canManageExpenses}
           onOpenChange={setIsAddDialogOpen}
           onSuccess={fetchExpenses}
           onOpenPayroll={() => setCategoryFilter('رواتب')}

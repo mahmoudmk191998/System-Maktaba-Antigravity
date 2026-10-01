@@ -16,6 +16,8 @@ import {
   saveTenantBranchProfile,
   saveTenantProfileDocument,
 } from '@/services/settings/settingsPersistence.service';
+import { ALL_PERMISSION_IDS } from '@/lib/permissionsModel';
+import { getPermissionDocumentId, PERMISSIONS_SCHEMA_VERSION } from '@/lib/staffAccess';
 
 const fetchCollection = async (
   colPath: string, 
@@ -153,11 +155,26 @@ export function useTenantBranch() {
           }
         } else {
           // Create tenant, branch, assign to profile
-          const newTenant = await addDoc(collection(db, 'tenants'), { name: 'MK' });
+          const newTenant = await addDoc(collection(db, 'tenants'), {
+            name: 'MK',
+            owner_uid: user.uid,
+            created_by: user.uid,
+          });
           setTenantId(newTenant.id);
           const newBranch = await addDoc(collection(db, 'branches'), { tenant_id: newTenant.id, name: 'الفرع الرئيسي' });
           setBranchId(newBranch.id);
-          await setDoc(profileRef, { tenant_id: newTenant.id, branch_id: newBranch.id, role: 'admin' }, { merge: true });
+          await setDoc(profileRef, {
+            tenant_id: newTenant.id,
+            tenantId: newTenant.id,
+            branch_id: newBranch.id,
+            branchId: newBranch.id,
+            role: 'admin',
+            permissions: [...ALL_PERMISSION_IDS],
+            permissions_version: PERMISSIONS_SCHEMA_VERSION,
+            status: 'active',
+            email: user.email || null,
+            full_name: user.displayName || user.email?.split('@')[0] || 'مدير النظام',
+          }, { merge: true });
           
           useAppStore.getState().setCurrentTenant({ id: newTenant.id, name: 'MK' });
           useAppStore.getState().setCurrentBranch({ 
@@ -169,7 +186,7 @@ export function useTenantBranch() {
             isActive: true 
           });
           
-          await addDoc(collection(db, 'user_roles'), { user_id: user.uid, role: 'admin' });
+          await setDoc(doc(db, 'user_roles', user.uid), { user_id: user.uid, role: 'admin', tenant_id: newTenant.id });
           
           const defaultUnits = [
             // Weight
@@ -198,24 +215,18 @@ export function useTenantBranch() {
             { name: 'متر', abbreviation: 'م', type: 'length', tenant_id: newTenant.id },
             { name: 'سنتيمتر', abbreviation: 'سم', type: 'length', tenant_id: newTenant.id },
           ];
-          for (const u of defaultUnits) await addDoc(collection(db, 'units'), u);
+          for (const unit of defaultUnits) {
+            await addDoc(collection(db, 'units'), { ...unit, tenant_id: newTenant.id });
+          }
           
-          const allPerms = [
-            'dashboard.view','pos.view','pos.create_order','pos.edit_order','pos.cancel_order','pos.apply_discount','pos.void_item','pos.refund','pos.open_drawer','pos.close_session',
-            'kitchen.view','kitchen.update_status','kitchen.recall_order',
-            'tables.view','tables.manage','reservations.view','reservations.create','reservations.edit','reservations.cancel',
-            'menu.view','menu.create','menu.edit','menu.delete','menu.change_price','menu.toggle_availability','recipes.view','recipes.manage',
-            'inventory.view','inventory.add','inventory.edit','inventory.delete','inventory.adjust','inventory.transfer','inventory.count',
-            'purchasing.view','purchasing.create','purchasing.approve','purchasing.receive','suppliers.view','suppliers.manage',
-            'delivery.view','delivery.assign','delivery.update_status','drivers.manage','zones.manage',
-            'customers.view','customers.create','customers.edit','customers.delete','loyalty.view','loyalty.manage',
-            'promotions.view','promotions.create','promotions.edit','promotions.delete','coupons.manage',
-            'hr.view_employees','hr.manage_employees','hr.view_salaries','hr.manage_salaries','hr.manage_shifts','hr.view_attendance',
-            'reports.sales','reports.inventory','reports.financial','reports.employees','reports.export',
-            'settings.view','settings.general','settings.branch','settings.taxes','settings.printers',
-            'audit.view','permissions.manage','users.manage',
-          ];
-          for (const p of allPerms) await addDoc(collection(db, 'user_permissions'), { user_id: user.uid, permission: p, granted_by: user.uid });
+          for (const permission of ALL_PERMISSION_IDS) {
+            await setDoc(doc(db, 'user_permissions', getPermissionDocumentId(user.uid, permission)), {
+              tenant_id: newTenant.id,
+              user_id: user.uid,
+              permission,
+              granted_by: user.uid,
+            });
+          }
         }
       } catch (e) {
         console.error('Init error:', e);
@@ -502,9 +513,14 @@ export function useRecipes(tenantId: string | null) {
     if (!tenantId) return;
     try {
       const recipesData = await fetchCollection('recipes', tenantId, 'tenant_id', 'name');
-      const ingredientsQ = query(collection(db, 'recipe_ingredients'));
-      const ingredientsSnap = await getDocs(ingredientsQ);
-      const allIngredients = ingredientsSnap.docs.map(d => ({ id: d.id, ...d.data() as any }));
+      // Query by each authorized recipe so legacy ingredients without tenant_id
+      // remain readable without opening a cross-tenant collection scan.
+      const ingredientSnapshots = await Promise.all(recipesData.map((recipe: any) =>
+        getDocs(query(collection(db, 'recipe_ingredients'), where('recipe_id', '==', recipe.id)))
+      ));
+      const allIngredients = ingredientSnapshots.flatMap((snapshot) =>
+        snapshot.docs.map(d => ({ id: d.id, ...d.data() as any }))
+      );
       
       const itemsData = await fetchCollection('inventory_items', tenantId, 'tenant_id');
 
@@ -528,7 +544,7 @@ export function useRecipes(tenantId: string | null) {
       const recDoc = await addDoc(collection(db, 'recipes'), { ...recipe, tenant_id: tenantId });
       if (ingredients.length > 0) {
         for (const ing of ingredients) {
-          await addDoc(collection(db, 'recipe_ingredients'), { ...ing, recipe_id: recDoc.id });
+          await addDoc(collection(db, 'recipe_ingredients'), { ...ing, recipe_id: recDoc.id, tenant_id: tenantId });
         }
       }
       toast.success('تمت إضافة الوصفة');
@@ -562,7 +578,7 @@ export function useRecipes(tenantId: string | null) {
       // 3. Add new ingredients
       if (ingredients.length > 0) {
         for (const ing of ingredients) {
-          await addDoc(collection(db, 'recipe_ingredients'), { ...ing, recipe_id: id });
+          await addDoc(collection(db, 'recipe_ingredients'), { ...ing, recipe_id: id, tenant_id: tenantId });
         }
       }
       

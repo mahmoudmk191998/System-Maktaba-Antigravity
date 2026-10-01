@@ -67,7 +67,7 @@ export default function ProductsPage() {
 
   const canCreate = isAdmin || hasPermission('products.create');
   const canEdit = isAdmin || hasPermission('products.edit');
-  const canArchive = isAdmin || hasPermission('products.archive') || hasPermission('products.delete');
+  const canArchive = isAdmin || hasPermission('products.archive');
   const canManageCategories = isAdmin || hasPermission('categories.manage');
   const canManageBrands = isAdmin || hasPermission('brands.manage');
 
