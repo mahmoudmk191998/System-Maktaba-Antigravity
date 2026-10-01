@@ -7,6 +7,7 @@ import { deleteApp, initializeApp } from 'firebase/app';
 import { getAuth, createUserWithEmailAndPassword, deleteUser as deleteAuthUser, signOut, updateProfile, type User as FirebaseUser } from 'firebase/auth';
 import { useTenantBranch } from '@/hooks/useDatabase';
 import { useAuth } from '@/hooks/useAuth';
+import { useUserPermissions } from '@/hooks/usePermissions';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
@@ -38,6 +39,8 @@ import {
   normalizePermissionIds,
   normalizeStaffEmail,
   PERMISSIONS_SCHEMA_VERSION,
+  canDelegatePermissionSet,
+  canManageRoleAssignment,
 } from '@/lib/staffAccess';
 import { replaceActiveStaffAccess } from '@/services/auth/staffProvisioning.service';
 import { notifySecurityRoleChanged } from '@/services/notifications.service';
@@ -72,6 +75,10 @@ const iconMap: Record<string, any> = {
 
 export default function Permissions() {
   const { user } = useAuth();
+  const {
+    permissions: actorPermissions,
+    isOwner: actorIsSovereign,
+  } = useUserPermissions();
   const { tenantId, branchId } = useTenantBranch();
   const [users, setUsers] = useState<UserEntry[]>([]);
   const [branches, setBranches] = useState<BranchItem[]>([]);
@@ -102,9 +109,15 @@ export default function Permissions() {
     if (!tenantId) return;
     const fetchBranches = async () => {
       try {
-        const bSnap = await getDocs(query(collection(db, 'branches'), where('tenant_id', '==', tenantId)));
-        const branchList = bSnap.docs.map((d) => ({ id: d.id, name: d.data().name || 'فرع بدون اسم' }));
-        setBranches(branchList);
+        const [legacySnap, canonicalSnap] = await Promise.all([
+          getDocs(query(collection(db, 'branches'), where('tenant_id', '==', tenantId))),
+          getDocs(query(collection(db, 'branches'), where('tenantId', '==', tenantId))),
+        ]);
+        const branchMap = new Map<string, BranchItem>();
+        [...legacySnap.docs, ...canonicalSnap.docs].forEach((d) => {
+          branchMap.set(d.id, { id: d.id, name: d.data().name || 'فرع بدون اسم' });
+        });
+        setBranches(Array.from(branchMap.values()));
       } catch (err) {
         console.warn('Error fetching branches for permissions:', err);
       }
@@ -117,9 +130,15 @@ export default function Permissions() {
     if (!tenantId) return;
     setLoading(true);
     try {
-      const profilesQ = query(collection(db, 'profiles'), where('tenant_id', '==', tenantId));
-      const profilesSnap = await getDocs(profilesQ);
-      const profiles = profilesSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      const [profilesLegacySnap, profilesCanonicalSnap] = await Promise.all([
+        getDocs(query(collection(db, 'profiles'), where('tenant_id', '==', tenantId))),
+        getDocs(query(collection(db, 'profiles'), where('tenantId', '==', tenantId))),
+      ]);
+      const profileMap = new Map<string, any>();
+      [...profilesLegacySnap.docs, ...profilesCanonicalSnap.docs].forEach((d) => {
+        profileMap.set(d.id, { id: d.id, ...d.data() });
+      });
+      const profiles = Array.from(profileMap.values());
       const userEntries: UserEntry[] = [];
       for (const p of profiles) {
         // Fetch user roles
@@ -246,6 +265,24 @@ export default function Permissions() {
 
   const isSelectedCurrentUser = user?.uid === selectedUser?.id;
 
+  const actorHasWildcard = actorPermissions.includes('*');
+  const canDelegate = useCallback(
+    (permissions: readonly string[]) =>
+      canDelegatePermissionSet(actorPermissions, permissions, actorIsSovereign || actorHasWildcard),
+    [actorPermissions, actorIsSovereign, actorHasWildcard]
+  );
+
+  const selectedIsSovereign = !!selectedUser && isOwnerRole(selectedUser.role);
+  const canManageSelectedAccess = !!selectedUser && (
+    actorIsSovereign ||
+    actorHasWildcard ||
+    (!selectedIsSovereign && canDelegate(selectedUser.permissions))
+  );
+
+  const canTogglePermission = (permissionId: string) =>
+    canManageSelectedAccess &&
+    (actorIsSovereign || actorHasWildcard || actorPermissions.includes(permissionId));
+
   // Check how many active admins/owners exist in this tenant
   const activeAdminCount = useMemo(() => {
     return users.filter((u) => u.account_state === 'active' && u.status === 'active' && isAdminOrOwnerRole(u.role)).length;
@@ -253,6 +290,16 @@ export default function Permissions() {
 
   // Toggle individual permission
   const togglePermission = (permId: string) => {
+    if (!canTogglePermission(permId)) {
+      toast.error('لا يمكنك منح أو تعديل صلاحية أعلى من الصلاحيات الممنوحة لحسابك.');
+      return;
+    }
+
+    if (selectedIsSovereign) {
+      toast.error('صلاحيات المالك والمدير الأعلى سيادية ولا يمكن تخصيصها جزئياً.');
+      return;
+    }
+
     // Safety check: Cannot remove permissions.manage from self
     if (isSelectedCurrentUser && permId === 'permissions.manage' && editPermissions.includes(permId)) {
       toast.error('لا يمكنك إزالة صلاحية إدارة الصلاحيات من حسابك الحالي لتجنب إغلاق النظام');
@@ -269,18 +316,23 @@ export default function Permissions() {
     const category = PERMISSION_CATEGORIES.find((c) => c.id === categoryId);
     if (!category) return;
     const catPerms = category.permissions.map((p) => p.id);
-    const allEnabled = catPerms.every((p) => editPermissions.includes(p));
+    const manageableCatPerms = catPerms.filter((p) => canTogglePermission(p));
+    if (manageableCatPerms.length === 0 || selectedIsSovereign) {
+      toast.error('لا توجد صلاحيات قابلة للتعديل في هذا القسم بواسطة حسابك.');
+      return;
+    }
+    const allEnabled = manageableCatPerms.every((p) => editPermissions.includes(p));
 
     if (allEnabled) {
       // If current user, do not disable permissions.manage
       setEditPermissions((prev) =>
         prev.filter((p) => {
           if (isSelectedCurrentUser && p === 'permissions.manage') return true;
-          return !catPerms.includes(p);
+          return !manageableCatPerms.includes(p);
         })
       );
     } else {
-      setEditPermissions((prev) => [...new Set([...prev, ...catPerms])]);
+      setEditPermissions((prev) => [...new Set([...prev, ...manageableCatPerms])]);
     }
   };
 
@@ -333,6 +385,20 @@ export default function Permissions() {
     if (!template) return;
 
     const newPerms = getRolePermissionIds(roleKey);
+    if (!canManageRoleAssignment(
+      actorPermissions,
+      roleKey,
+      newPerms,
+      actorIsSovereign || actorHasWildcard
+    )) {
+      toast.error('لا يمكنك تعيين دور أو صلاحيات أعلى من مستوى وصول حسابك.');
+      return;
+    }
+
+    if (!canManageSelectedAccess && !isSelectedCurrentUser) {
+      toast.error('لا يمكنك تعديل حساب يملك صلاحيات أعلى من حسابك.');
+      return;
+    }
     setEditPermissions(newPerms);
 
     setLoading(true);
@@ -391,6 +457,10 @@ export default function Permissions() {
   // Toggle User Status (Active vs Disabled)
   const toggleUserStatus = async () => {
     if (!selectedUser) return;
+    if (!canManageSelectedAccess) {
+      toast.error('لا يمكنك تغيير حالة حساب يملك صلاحيات أعلى من حسابك.');
+      return;
+    }
 
     if (isSelectedCurrentUser) {
       toast.error('لا يمكنك تعطيل حسابك الشخصي الذي تستخدمه حالياً.');
@@ -440,6 +510,10 @@ export default function Permissions() {
   // Update User Branch
   const handleBranchChange = async (newBranchId: string) => {
     if (!selectedUser) return;
+    if (!canManageSelectedAccess) {
+      toast.error('لا يمكنك تغيير فرع حساب يملك صلاحيات أعلى من حسابك.');
+      return;
+    }
     const finalBranchId = newBranchId === 'all' ? null : newBranchId;
 
     try {
@@ -466,6 +540,14 @@ export default function Permissions() {
     setLoading(true);
     try {
       const safePermissions = normalizePermissionIds(editPermissions);
+      if (selectedIsSovereign) {
+        toast.error('حسابات المالك والمدير الأعلى تملك صلاحيات سيادية كاملة ولا تقبل تخصيصاً جزئياً.');
+        return;
+      }
+      if (!canManageSelectedAccess || !canDelegate(safePermissions)) {
+        toast.error('رفض الحفظ: لا يمكنك منح صلاحيات لا يملكها حسابك.');
+        return;
+      }
       const now = new Date().toISOString();
       if (selectedUser.account_state === 'pending' && selectedUser.invitation_id) {
         await updateDoc(doc(db, 'staff_invitations', selectedUser.invitation_id), {
@@ -541,6 +623,14 @@ export default function Permissions() {
       const email = normalizeStaffEmail(newUserForm.email);
       const branchVal = newUserForm.branchId === 'all' ? null : newUserForm.branchId;
       const initialPerms = getRolePermissionIds(newUserForm.role);
+      if (!canManageRoleAssignment(
+        actorPermissions,
+        newUserForm.role,
+        initialPerms,
+        actorIsSovereign || actorHasWildcard
+      )) {
+        throw new Error('لا يمكنك إنشاء مستخدم بدور أو صلاحيات أعلى من حسابك');
+      }
       let targetId = email;
 
       if (useGoogleAuth) {
@@ -637,6 +727,11 @@ export default function Permissions() {
 
     if (isSelectedCurrentUser) {
       toast.error('لا يمكنك حذف حسابك الشخصي الذي تستخدمه حالياً.');
+      return;
+    }
+
+    if (!canManageSelectedAccess) {
+      toast.error('لا يمكنك إلغاء وصول حساب يملك صلاحيات أعلى من حسابك.');
       return;
     }
 
@@ -867,6 +962,7 @@ export default function Permissions() {
                   <div className="flex items-center gap-2 flex-wrap">
                     <Button
                       onClick={savePermissions}
+                      disabled={!canManageSelectedAccess || selectedIsSovereign}
                       className="h-11 rounded-2xl gap-2 font-bold px-6 shadow-lg shadow-primary/25"
                     >
                       <Save className="w-4 h-4" />
@@ -892,12 +988,14 @@ export default function Permissions() {
                   {/* Role Selector */}
                   <div className="space-y-1.5 bg-background/50 p-3 rounded-2xl border border-border/40">
                     <Label className="text-xs text-muted-foreground font-bold">الدور الوظيفي (Role)</Label>
-                    <Select value={selectedUser.role} onValueChange={applyRoleTemplate}>
+                    <Select value={selectedUser.role} onValueChange={applyRoleTemplate} disabled={!canManageSelectedAccess || selectedIsSovereign}>
                       <SelectTrigger className="h-9 rounded-xl text-xs font-bold border-border/60">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent className="rounded-xl">
-                        {Object.values(ROLE_TEMPLATES).map((tmpl) => (
+                        {Object.values(ROLE_TEMPLATES)
+                          .filter((tmpl) => actorIsSovereign || actorHasWildcard || !isOwnerRole(tmpl.key))
+                          .map((tmpl) => (
                           <SelectItem key={tmpl.key} value={tmpl.key} className="text-xs font-bold cursor-pointer">
                             {tmpl.label}
                           </SelectItem>
@@ -909,7 +1007,7 @@ export default function Permissions() {
                   {/* Branch Assignment */}
                   <div className="space-y-1.5 bg-background/50 p-3 rounded-2xl border border-border/40">
                     <Label className="text-xs text-muted-foreground font-bold">الفرع المخصص</Label>
-                    <Select value={selectedUser.branch_id || 'all'} onValueChange={handleBranchChange}>
+                    <Select value={selectedUser.branch_id || 'all'} onValueChange={handleBranchChange} disabled={!canManageSelectedAccess}>
                       <SelectTrigger className="h-9 rounded-xl text-xs font-bold border-border/60">
                         <SelectValue placeholder="اختر الفرع..." />
                       </SelectTrigger>
@@ -935,7 +1033,7 @@ export default function Permissions() {
                     <Switch
                       checked={selectedUser.status === 'active'}
                       onCheckedChange={toggleUserStatus}
-                      disabled={isSelectedCurrentUser}
+                      disabled={isSelectedCurrentUser || !canManageSelectedAccess}
                     />
                   </div>
 
@@ -1038,6 +1136,7 @@ export default function Permissions() {
                             <div
                               key={perm.id}
                               onClick={() => togglePermission(perm.id)}
+                              aria-disabled={!canTogglePermission(perm.id) || selectedIsSovereign}
                               className={cn(
                                 'flex items-center justify-between p-3 rounded-xl border transition-all cursor-pointer select-none',
                                 isChecked
@@ -1052,9 +1151,10 @@ export default function Permissions() {
                                 </p>
                               </div>
                               <Switch
-                                checked={isChecked}
+                                checked={selectedIsSovereign ? true : isChecked}
                                 onCheckedChange={() => togglePermission(perm.id)}
                                 onClick={(e) => e.stopPropagation()}
+                                disabled={!canTogglePermission(perm.id) || selectedIsSovereign}
                                 className="scale-90"
                               />
                             </div>
@@ -1111,7 +1211,7 @@ export default function Permissions() {
                 type="email"
                 value={newUserForm.email}
                 onChange={(e) => setNewUserForm((f) => ({ ...f, email: e.target.value }))}
-                placeholder="user@restaurant.com"
+                placeholder="employee@gmail.com"
                 className="rounded-xl h-10"
                 required
                 dir="ltr"
