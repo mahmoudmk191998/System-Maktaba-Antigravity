@@ -18,6 +18,7 @@ export interface PermissionsHookResult {
   isDisabled: boolean;
   hasAnyRole: boolean;
   userStatus: 'active' | 'disabled';
+  userRole: string | null;
   refresh: () => void;
 }
 
@@ -26,6 +27,7 @@ export function useUserPermissions(): PermissionsHookResult {
   const [permissions, setPermissions] = useState<string[]>([]);
   const [roles, setRoles] = useState<string[]>([]);
   const [userStatus, setUserStatus] = useState<'active' | 'disabled'>('active');
+  const [primaryRole, setPrimaryRole] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -33,6 +35,7 @@ export function useUserPermissions(): PermissionsHookResult {
       setPermissions([]);
       setRoles([]);
       setUserStatus('active');
+      setPrimaryRole(null);
       setLoading(false);
       return;
     }
@@ -90,12 +93,14 @@ export function useUserPermissions(): PermissionsHookResult {
           const data = snapshot.data();
           currentStatus = data.status === 'disabled' ? 'disabled' : 'active';
           profileRole = typeof data.role === 'string' ? data.role : null;
+          setPrimaryRole(profileRole);
           profilePerms = data.permissions_version === PERMISSIONS_SCHEMA_VERSION && Array.isArray(data.permissions)
             ? normalizePermissionIds(data.permissions)
             : null;
           setUserStatus(currentStatus);
         } else {
           profileRole = null;
+          setPrimaryRole(null);
           profilePerms = null;
         }
         profileLoaded = true;
@@ -174,6 +179,7 @@ export function useUserPermissions(): PermissionsHookResult {
   const isOwner = userStatus !== 'disabled' && roles.some((r) => isOwnerRole(r));
   const isDisabled = userStatus === 'disabled';
   const hasAnyRole = userStatus !== 'disabled' && roles.length > 0;
+  const userRole = userStatus === 'disabled' ? null : (primaryRole || roles[0] || null);
 
   const refresh = useCallback(() => { }, []);
 
@@ -190,6 +196,7 @@ export function useUserPermissions(): PermissionsHookResult {
     isDisabled,
     hasAnyRole,
     userStatus,
+    userRole,
     refresh,
   };
 }
@@ -237,7 +244,6 @@ export const routePermissions: Record<string, string[]> = {
   '/delivery': ['delivery.view'],
   '/callcenter': ['callcenter.view'],
   '/customers': ['customers.view'],
-  '/loyalty': ['loyalty.view'],
   '/promotions': ['promotions.view'],
   '/shifts': ['hr.manage_shifts'],
   '/hr': ['hr.view_employees'],
