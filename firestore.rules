@@ -2,938 +2,651 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-
-    // Helper functions
     function isAuthenticated() {
       return request.auth != null;
     }
 
-    function getDocTenantId(docData) {
-      return docData != null 
-        ? ('tenantId' in docData 
-            ? docData.tenantId 
-            : ('tenant_id' in docData ? docData.tenant_id : null))
-        : null;
+    function profileExists() {
+      return isAuthenticated() && exists(/databases/$(database)/documents/profiles/$(request.auth.uid));
     }
 
-    function getUserProfile() {
-      return exists(/databases/$(database)/documents/profiles/$(request.auth.uid))
-        ? get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data
-        : null;
+    function userProfile() {
+      return get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data;
     }
 
-    function getUserRole() {
-      return (request.auth != null && 'role' in request.auth.token)
-        ? request.auth.token.role
-        : (exists(/databases/$(database)/documents/profiles/$(request.auth.uid)) && 'role' in get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data
-            ? get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.role
-            : null);
+    function userRole() {
+      return profileExists() && 'role' in userProfile() ? userProfile().role : null;
     }
 
     function userTenantId() {
-      return (request.auth != null && 'tenant_id' in request.auth.token)
-        ? request.auth.token.tenant_id 
-        : ((request.auth != null && 'tenantId' in request.auth.token)
-            ? request.auth.token.tenantId 
-            : (exists(/databases/$(database)/documents/profiles/$(request.auth.uid))
-                ? (
-                    'tenant_id' in get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data
-                      ? get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.tenant_id
-                      : ('tenantId' in get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data
-                          ? get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.tenantId
-                          : null)
-                  )
-                : null));
+      return profileExists()
+        ? ('tenant_id' in userProfile()
+            ? userProfile().tenant_id
+            : ('tenantId' in userProfile() ? userProfile().tenantId : null))
+        : null;
     }
 
-    function isSystemAdmin() {
-      return isAuthenticated() && getUserRole() in ['owner', 'super_admin', 'admin'];
+    function isActive() {
+      return profileExists() && (!('status' in userProfile()) || userProfile().status == 'active');
     }
 
-    function hasTenantAccess(tId) {
-      return isAuthenticated() && (
-        isSystemAdmin() ||
-        (tId != null && userTenantId() == tId)
+    function isSovereign() {
+      return isActive() && userRole() in ['owner', 'super_admin'];
+    }
+
+    function isLegacyProfile() {
+      return isActive() && (!('permissions_version' in userProfile()) || userProfile().permissions_version != 2);
+    }
+
+    function hasAnyPermission(requiredPermissions) {
+      return isActive() && (
+        isSovereign() ||
+        isLegacyProfile() ||
+        ('permissions' in userProfile() &&
+          userProfile().permissions is list &&
+          userProfile().permissions.hasAny(requiredPermissions))
       );
     }
 
-    // =========================================================================
-    // 1. SENSITIVE SERVER-ONLY COLLECTIONS
-    // Direct Browser / Mobile Client SDK access is STRICTLY FORBIDDEN.
-    // Only RMS Backend (Firebase Admin SDK) can access these collections.
-    // =========================================================================
+    function hasPermission(permission) {
+      return hasAnyPermission([permission]);
+    }
 
-    // API Credentials, Hashes, and Secrets
+    function dataTenantId(data) {
+      return data != null
+        ? ('tenantId' in data ? data.tenantId : ('tenant_id' in data ? data.tenant_id : null))
+        : null;
+    }
+
+    function dataBranchId(data) {
+      return data != null
+        ? ('branchId' in data ? data.branchId : ('branch_id' in data ? data.branch_id : null))
+        : null;
+    }
+
+    function hasTenantAccess(tenantId) {
+      return isActive() && tenantId != null && (
+        userRole() == 'super_admin' || userTenantId() == tenantId
+      );
+    }
+
+    function isBootstrapTenantOwner(tenantId) {
+      return isAuthenticated() && tenantId != null &&
+        exists(/databases/$(database)/documents/tenants/$(tenantId)) &&
+        get(/databases/$(database)/documents/tenants/$(tenantId)).data.owner_uid == request.auth.uid;
+    }
+
+    function hasDataTenantAccess(data) {
+      return hasTenantAccess(dataTenantId(data)) || (
+        dataTenantId(data) == null &&
+        dataBranchId(data) != null &&
+        exists(/databases/$(database)/documents/branches/$(dataBranchId(data))) &&
+        hasTenantAccess(dataTenantId(get(/databases/$(database)/documents/branches/$(dataBranchId(data))).data))
+      );
+    }
+
+    function validCreate() {
+      return hasDataTenantAccess(request.resource.data);
+    }
+
+    function validUpdate() {
+      return hasDataTenantAccess(resource.data) &&
+        hasDataTenantAccess(request.resource.data) &&
+        dataTenantId(request.resource.data) == dataTenantId(resource.data);
+    }
+
+    function validExisting() {
+      return hasDataTenantAccess(resource.data);
+    }
+
+    function validWriteScope() {
+      return resource == null
+        ? validCreate()
+        : (request.resource == null ? validExisting() : validUpdate());
+    }
+
+    function targetUserInOwnTenant(userId) {
+      return exists(/databases/$(database)/documents/profiles/$(userId)) &&
+        hasTenantAccess(dataTenantId(get(/databases/$(database)/documents/profiles/$(userId)).data));
+    }
+
+    function validStaffBranch(data) {
+      return dataBranchId(data) == null || (
+        exists(/databases/$(database)/documents/branches/$(dataBranchId(data))) &&
+        dataTenantId(get(/databases/$(database)/documents/branches/$(dataBranchId(data))).data) == dataTenantId(data)
+      );
+    }
+
+    function invitedEmailMatches(email) {
+      return isAuthenticated() && 'email' in request.auth.token &&
+        email == request.auth.token.email;
+    }
+
+    function invitationAllowsProfile(profileId) {
+      return isAuthenticated() && profileId == request.auth.uid &&
+        'email' in request.auth.token &&
+        exists(/databases/$(database)/documents/staff_invitations/$(request.auth.token.email)) &&
+        get(/databases/$(database)/documents/staff_invitations/$(request.auth.token.email)).data.invitation_status == 'pending' &&
+        request.resource.data.email == request.auth.token.email &&
+        request.resource.data.tenant_id == get(/databases/$(database)/documents/staff_invitations/$(request.auth.token.email)).data.tenant_id &&
+        request.resource.data.tenantId == get(/databases/$(database)/documents/staff_invitations/$(request.auth.token.email)).data.tenant_id &&
+        request.resource.data.branch_id == get(/databases/$(database)/documents/staff_invitations/$(request.auth.token.email)).data.branch_id &&
+        request.resource.data.branchId == get(/databases/$(database)/documents/staff_invitations/$(request.auth.token.email)).data.branch_id &&
+        validStaffBranch(request.resource.data) &&
+        request.resource.data.role == get(/databases/$(database)/documents/staff_invitations/$(request.auth.token.email)).data.role &&
+        request.resource.data.status == get(/databases/$(database)/documents/staff_invitations/$(request.auth.token.email)).data.status &&
+        request.resource.data.permissions == get(/databases/$(database)/documents/staff_invitations/$(request.auth.token.email)).data.permissions &&
+        request.resource.data.permissions_version == 2;
+    }
+
+    // Backend credentials, webhook secrets and delivery telemetry are never
+    // exposed to a browser client. The Admin SDK bypasses these rules.
     match /api_clients/{clientId} {
       allow read, write: if false;
     }
-    match /integrations/{integrationId} {
-      allow read, write: if false;
-    }
 
-    // Audit logs of API client key lifecycle actions
     match /api_client_audit_logs/{logId} {
       allow read, write: if false;
     }
 
-    // API Usage telemetry and event streams
     match /api_usage_events/{eventId} {
       allow read, write: if false;
     }
 
-    // Webhook destination endpoints and secret hashes
     match /webhook_endpoints/{endpointId} {
       allow read, write: if false;
     }
 
-    // Outgoing webhook delivery queues and payloads
     match /webhook_events/{eventId} {
       allow read, write: if false;
     }
 
-    // Webhook delivery attempts and response metadata
     match /webhook_delivery_attempts/{attemptId} {
       allow read, write: if false;
     }
+
     match /webhook_dead_letters/{letterId} {
       allow read, write: if false;
     }
 
-    // Atomic sequential order numbering counters
-    match /branch_counters/{counterId} {
-      allow read, write: if isAuthenticated();
-    }
-    match /orderCounters/{counterId} {
-      allow read, write: if isAuthenticated();
-    }
-    match /sequence_counters/{counterId} {
-      allow read, write: if isAuthenticated();
+    match /idempotency_records/{recordId} {
+      allow read, write: if false;
     }
 
-    // Client-side transaction idempotency locks
-    match /sale_idempotency/{recordId} {
-      allow read, write: if isAuthenticated();
-    }
-    match /return_idempotency/{recordId} {
-      allow read, write: if isAuthenticated();
-    }
-    match /purchase_idempotency/{recordId} {
-      allow read, write: if isAuthenticated();
-    }
-    match /customer_idempotency/{recordId} {
-      allow read, write: if isAuthenticated();
-    }
-
-    // =========================================================================
-    // 2. POS & AUTHENTICATED STAFF APPLICATION COLLECTIONS
-    // Authenticated users with valid session can interact according to POS workflows.
-    // =========================================================================
-
-    // Core Retail & Branch Configuration
-    match /tenants/{tenantId} {
-      allow read, write: if isAuthenticated();
-    }
-    match /branches/{branchId} {
-      allow read, write: if isAuthenticated();
+    match /staff_invitations/{email} {
+      allow read: if invitedEmailMatches(email) ||
+        (hasPermission('permissions.manage') && validExisting());
+      allow create: if hasPermission('permissions.manage') && validCreate() && validStaffBranch(request.resource.data);
+      allow update: if (hasPermission('permissions.manage') && validUpdate() && validStaffBranch(request.resource.data)) || (
+        invitedEmailMatches(email) &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'invitation_status', 'claimed_uid', 'claimed_at', 'updated_at'
+        ]) &&
+        request.resource.data.invitation_status == 'claimed' &&
+        request.resource.data.claimed_uid == request.auth.uid
+      );
+      allow delete: if hasPermission('permissions.manage') && validExisting();
     }
 
-    // HR Attendance Settings (Public read for unauthenticated QR token validation)
-    match /hr_settings/{tenantId} {
-      allow read: if true;
-      allow write: if isAuthenticated();
-    }
-
-    // HR Employees (Public read for active employee selection in QR screen; modifications restricted to authenticated managers)
-    match /employees/{employeeId} {
-      allow read: if true;
-      allow write: if isAuthenticated();
-    }
-
-    // HR Shifts (Public read for shift schedule calculations)
-    match /shifts/{shiftId} {
-      allow read: if true;
-      allow write: if isAuthenticated();
-    }
-
-    // HR Attendance Records
-    // Public attendance screen can check status (read), check-in (create), and check-out (update).
-    // Deletion is STRICTLY RESTRICTED to authenticated managers only.
-    match /attendance/{attendanceId} {
-      allow read: if true;
-      allow create: if request.resource.data.keys().hasAll(['employee_id', 'tenant_id']);
-      allow update: if request.resource.data.employee_id == resource.data.employee_id
-                    && request.resource.data.tenant_id == resource.data.tenant_id;
-      allow delete: if isAuthenticated();
-    }
-
-    // HR Payroll, Advances, and Salary Payments (Strictly Authenticated Staff/Managers)
-    match /payrolls/{payrollId} {
-      allow read, write: if isAuthenticated();
-    }
-    match /salary_payments/{paymentId} {
-      allow read, write: if isAuthenticated();
-    }
-    match /advances/{advanceId} {
-      allow read, write: if isAuthenticated();
-    }
-    match /advance_installments/{installmentId} {
-      allow read, write: if isAuthenticated();
-    }
-
-    // Audit Logs (Authenticated read and creation; updates and deletions strictly forbidden)
-    match /audit_logs/{logId} {
-      allow read: if isAuthenticated();
-      allow create: if isAuthenticated();
-      allow update, delete: if false;
-    }
-
-    // Menu Catalog, Items, Categories, Addons
-    match /menu_categories/{categoryId} {
-      allow read, write: if isAuthenticated();
-    }
-    match /menu_items/{itemId} {
-      allow read, write: if isAuthenticated();
-    }
-    match /products/{productId} {
-      allow read, write: if isAuthenticated();
-    }
-    match /addons/{addonId} {
-      allow read, write: if isAuthenticated();
-    }
-
-    // Orders, Line Items, and Status History
-    match /orders/{orderId} {
-      allow read, write: if isAuthenticated();
-    }
-    match /order_items/{itemId} {
-      allow read, write: if isAuthenticated();
-    }
-    match /order_status_history/{historyId} {
-      allow read, write: if isAuthenticated();
-    }
-
-    // Transactions, Shifts, Financial Records
-    match /payments/{paymentId} {
-      allow read, write: if isAuthenticated();
-    }
-    match /pos_shifts/{shiftId} {
-      allow read, write: if isAuthenticated();
-    }
-    match /accounting_records/{recordId} {
-      allow read, write: if isAuthenticated();
-    }
-    match /daily_closings/{closingId} {
-      allow read, write: if isAuthenticated();
-    }
-    match /expenses/{expenseId} {
-      allow read, write: if isAuthenticated();
-    }
-    match /call_center_orders/{orderId} {
-      allow read, write: if isAuthenticated();
-    }
-
-    // Dining Tables & Reservations
-    match /tables/{tableId} {
-      allow read, write: if isAuthenticated();
-    }
-    match /reservations/{resId} {
-      allow read, write: if isAuthenticated();
-    }
-
-    // Inventory, Recipes & Procurement
-    match /inventory_items/{itemId} {
-      allow read, write: if isAuthenticated();
-    }
-    match /units/{unitId} {
-      allow read, write: if isAuthenticated();
-    }
-    match /suppliers/{supplierId} {
-      allow read, write: if isAuthenticated();
-    }
-    match /purchase_orders/{orderId} {
-      allow read, write: if isAuthenticated();
-    }
-    match /recipes/{recipeId} {
-      allow read, write: if isAuthenticated();
-    }
-    match /recipe_ingredients/{ingredientId} {
-      allow read, write: if isAuthenticated();
-    }
-    match /branch_stock/{stockId} {
-      allow read, write: if isAuthenticated();
-    }
-    match /stock_movements/{movementId} {
-      allow read, write: if isAuthenticated();
-    }
-
-    // Marketing, Discounts & Delivery Zones
-    match /delivery_zones/{zoneId} {
-      allow read, write: if isAuthenticated();
-    }
-    match /promotions/{promoId} {
-      allow read, write: if isAuthenticated();
-    }
-    match /coupons/{couponId} {
-      allow read, write: if isAuthenticated();
-    }
-    match /offers/{offerId} {
-      allow read, write: if isAuthenticated();
-    }
-
-    // User Profiles, Roles & Granular Permissions
     match /profiles/{profileId} {
-      allow read, write: if isAuthenticated();
+      allow read: if (isAuthenticated() && request.auth.uid == profileId) ||
+        (hasPermission('permissions.manage') && validExisting());
+      allow create: if invitationAllowsProfile(profileId) ||
+        (hasPermission('permissions.manage') && validCreate() && validStaffBranch(request.resource.data)) ||
+        (isAuthenticated() && request.auth.uid == profileId && !profileExists() &&
+          request.resource.data.role == 'admin' &&
+          request.resource.data.tenant_id == request.resource.data.tenantId &&
+          validStaffBranch(request.resource.data) &&
+          isBootstrapTenantOwner(request.resource.data.tenant_id));
+      allow update: if (hasPermission('permissions.manage') && validUpdate() && validStaffBranch(request.resource.data)) || (
+        isAuthenticated() && request.auth.uid == profileId &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'full_name', 'phone', 'avatar_url', 'branch_id', 'branchId', 'updated_at'
+        ]) && (
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['branch_id', 'branchId']) ||
+          (dataBranchId(request.resource.data) != null &&
+            exists(/databases/$(database)/documents/branches/$(dataBranchId(request.resource.data))) &&
+            hasTenantAccess(dataTenantId(get(/databases/$(database)/documents/branches/$(dataBranchId(request.resource.data))).data)))
+        )
+      );
+      allow delete: if hasPermission('permissions.manage') && validExisting() &&
+        profileId.matches('^user_[0-9]+$');
     }
 
     match /user_roles/{roleId} {
-      allow read, write: if isAuthenticated();
+      allow read: if (isAuthenticated() && resource.data.user_id == request.auth.uid) ||
+        (hasPermission('permissions.manage') && targetUserInOwnTenant(resource.data.user_id));
+      allow create: if (hasPermission('permissions.manage') && targetUserInOwnTenant(request.resource.data.user_id)) || (
+        isAuthenticated() && request.resource.data.user_id == request.auth.uid &&
+        request.resource.data.role == userRole() && request.resource.data.tenant_id == userTenantId()
+      );
+      allow update, delete: if hasPermission('permissions.manage') && targetUserInOwnTenant(resource.data.user_id);
     }
 
-    match /user_permissions/{permId} {
-      allow read, write: if isAuthenticated();
+    match /user_permissions/{permissionId} {
+      allow read: if (isAuthenticated() && resource.data.user_id == request.auth.uid) ||
+        (hasPermission('permissions.manage') && targetUserInOwnTenant(resource.data.user_id));
+      allow create: if (hasPermission('permissions.manage') && targetUserInOwnTenant(request.resource.data.user_id)) || (
+        isAuthenticated() && request.resource.data.user_id == request.auth.uid &&
+        request.resource.data.tenant_id == userTenantId() &&
+        request.resource.data.permission in userProfile().permissions
+      );
+      allow update, delete: if hasPermission('permissions.manage') && targetUserInOwnTenant(resource.data.user_id);
     }
 
-    match /users/{userId} {
-      allow read, write: if isAuthenticated();
+    match /tenants/{tenantId} {
+      allow read: if hasTenantAccess(tenantId) && hasAnyPermission(['dashboard.view', 'settings.view']);
+      allow create: if isAuthenticated() && !profileExists() &&
+        request.resource.data.owner_uid == request.auth.uid;
+      allow update: if hasTenantAccess(tenantId) && hasPermission('settings.manage');
+      allow delete: if hasTenantAccess(tenantId) && isSovereign();
     }
+
+    match /branches/{branchId} {
+      allow read: if validExisting() && hasAnyPermission([
+        'dashboard.view', 'settings.view', 'permissions.manage', 'pos.view', 'inventory.view'
+      ]);
+      allow create: if (isAuthenticated() && !profileExists() &&
+          isBootstrapTenantOwner(dataTenantId(request.resource.data))) ||
+        (hasPermission('settings.manage') && validCreate());
+      allow update: if hasPermission('settings.manage') && validUpdate();
+      allow delete: if hasPermission('settings.manage') && validExisting();
+    }
+
+    match /{catalogCollection}/{catalogId} {
+      allow read: if catalogCollection in [
+          'products', 'product_variants', 'product_skus', 'product_barcodes',
+          'categories', 'product_categories', 'brands', 'product_brands',
+          'units', 'variant_attributes', 'menu_categories', 'menu_items', 'addons'
+        ] && validExisting() && hasAnyPermission([
+          'products.view', 'pos.view', 'inventory.view', 'purchasing.view', 'menu.view'
+        ]);
+      allow create: if catalogCollection in ['products', 'product_variants', 'product_skus', 'product_barcodes'] &&
+        validCreate() && hasPermission('products.create');
+      allow update: if catalogCollection in ['products', 'product_variants', 'product_skus', 'product_barcodes'] &&
+        validUpdate() && hasPermission('products.edit');
+      allow update: if catalogCollection == 'products' && validUpdate() &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['archived', 'active', 'updatedAt', 'updatedBy']) &&
+        hasPermission('products.archive');
+      allow update: if catalogCollection in ['product_skus', 'product_barcodes'] && validUpdate() &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['archived', 'updatedAt']) &&
+        hasPermission('products.archive');
+      allow delete: if catalogCollection in ['products', 'product_variants', 'product_skus', 'product_barcodes'] &&
+        validExisting() && hasPermission('products.delete');
+      allow create, update, delete: if catalogCollection in ['categories', 'product_categories'] &&
+        validWriteScope() && hasPermission('categories.manage');
+      allow create, update, delete: if catalogCollection in ['brands', 'product_brands'] &&
+        validWriteScope() && hasPermission('brands.manage');
+      allow create, update, delete: if catalogCollection in ['units', 'variant_attributes'] &&
+        validWriteScope() && hasPermission('units.manage');
+      allow create: if catalogCollection in ['menu_categories', 'menu_items', 'addons'] &&
+        validCreate() && hasAnyPermission(['menu.create', 'menu.manage']);
+      allow update: if catalogCollection in ['menu_categories', 'menu_items', 'addons'] &&
+        validUpdate() && hasAnyPermission(['menu.edit', 'menu.manage']);
+      allow update: if catalogCollection == 'menu_items' && validUpdate() &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['is_available']) &&
+        hasPermission('menu.toggle_availability');
+      allow delete: if catalogCollection in ['menu_categories', 'menu_items', 'addons'] &&
+        validExisting() && hasAnyPermission(['menu.delete', 'menu.manage']);
+    }
+
+    match /recipes/{recipeId} {
+      allow read: if validExisting() && hasAnyPermission(['recipes.view', 'products.view', 'pos.view', 'inventory.view']);
+      allow create, update, delete: if validWriteScope() && hasAnyPermission(['recipes.manage', 'products.edit']);
+    }
+
+    match /recipe_ingredients/{ingredientId} {
+      allow read: if hasAnyPermission(['recipes.view', 'products.view', 'pos.view', 'inventory.view']) &&
+        exists(/databases/$(database)/documents/recipes/$(resource.data.recipe_id)) &&
+        hasDataTenantAccess(get(/databases/$(database)/documents/recipes/$(resource.data.recipe_id)).data);
+      allow create: if hasAnyPermission(['recipes.manage', 'products.edit']) &&
+        exists(/databases/$(database)/documents/recipes/$(request.resource.data.recipe_id)) &&
+        hasDataTenantAccess(get(/databases/$(database)/documents/recipes/$(request.resource.data.recipe_id)).data);
+      allow update: if hasAnyPermission(['recipes.manage', 'products.edit']) &&
+        exists(/databases/$(database)/documents/recipes/$(resource.data.recipe_id)) &&
+        hasDataTenantAccess(get(/databases/$(database)/documents/recipes/$(resource.data.recipe_id)).data) &&
+        exists(/databases/$(database)/documents/recipes/$(request.resource.data.recipe_id)) &&
+        hasDataTenantAccess(get(/databases/$(database)/documents/recipes/$(request.resource.data.recipe_id)).data);
+      allow delete: if hasAnyPermission(['recipes.manage', 'products.edit']) &&
+        exists(/databases/$(database)/documents/recipes/$(resource.data.recipe_id)) &&
+        hasDataTenantAccess(get(/databases/$(database)/documents/recipes/$(resource.data.recipe_id)).data);
+    }
+
+    match /{salesCollection}/{salesId} {
+      allow read: if salesCollection in [
+          'sales', 'orders', 'payments', 'sale_payments', 'held_sales',
+          'sale_returns', 'sales_returns', 'sale_refunds', 'sale_exchanges',
+          'cashier_shifts', 'cash_register_shifts', 'cash_shifts', 'pos_shifts',
+          'cash_register_transactions'
+        ] && validExisting() && hasAnyPermission([
+          'pos.view', 'orders.view', 'sales.view', 'returns.view', 'cash_register.open'
+        ]);
+      allow create: if salesCollection in ['sales', 'orders', 'payments', 'held_sales'] &&
+        validCreate() && hasAnyPermission(['sales.create', 'pos.create_order']);
+      allow create: if salesCollection == 'sale_payments' && validCreate() &&
+        hasAnyPermission(['sales.create', 'pos.create_order']) && (
+          (!(request.resource.data.method in ['credit', 'customer_credit'])) ||
+          (request.resource.data.method == 'credit' && hasPermission('sales.credit')) ||
+          (request.resource.data.method == 'customer_credit' && hasPermission('sales.customer_credit'))
+        );
+      allow create: if salesCollection in ['sale_returns', 'sales_returns'] && validCreate() && hasPermission('returns.create');
+      allow create: if salesCollection == 'sale_refunds' && validCreate() && hasPermission('returns.refund');
+      allow create: if salesCollection == 'sale_exchanges' && validCreate() && hasPermission('returns.exchange');
+      allow create, update: if salesCollection in [
+          'cashier_shifts', 'cash_register_shifts', 'cash_shifts', 'pos_shifts', 'cash_register_transactions'
+        ] && validWriteScope() && hasAnyPermission([
+          'cash_register.open', 'cash_register.close', 'pos.open_drawer', 'pos.close_session'
+        ]);
+      allow update: if salesCollection in ['sales', 'orders', 'payments', 'sale_payments', 'held_sales'] &&
+        validUpdate() && hasAnyPermission(['pos.edit_order', 'orders.manage', 'sales.cancel']);
+      allow delete: if salesCollection in ['sales', 'orders', 'held_sales'] &&
+        validExisting() && hasAnyPermission(['pos.cancel_order', 'sales.cancel']);
+    }
+
+    match /order_items/{itemId} {
+      allow read: if hasAnyPermission(['pos.view', 'orders.view', 'sales.view']) &&
+        exists(/databases/$(database)/documents/orders/$(resource.data.order_id)) &&
+        hasDataTenantAccess(get(/databases/$(database)/documents/orders/$(resource.data.order_id)).data);
+      allow create: if hasAnyPermission(['sales.create', 'pos.create_order']) &&
+        exists(/databases/$(database)/documents/orders/$(request.resource.data.order_id)) &&
+        hasDataTenantAccess(get(/databases/$(database)/documents/orders/$(request.resource.data.order_id)).data);
+      allow update: if hasAnyPermission(['pos.edit_order', 'orders.manage']) &&
+        exists(/databases/$(database)/documents/orders/$(resource.data.order_id)) &&
+        hasDataTenantAccess(get(/databases/$(database)/documents/orders/$(resource.data.order_id)).data);
+      allow delete: if hasAnyPermission(['pos.cancel_order', 'sales.cancel']) &&
+        exists(/databases/$(database)/documents/orders/$(resource.data.order_id)) &&
+        hasDataTenantAccess(get(/databases/$(database)/documents/orders/$(resource.data.order_id)).data);
+    }
+
+    match /{salesChildCollection}/{itemId} {
+      allow read: if salesChildCollection in ['sale_items', 'sale_return_items', 'sales_return_items'] &&
+        validExisting() && hasAnyPermission(['sales.view', 'returns.view']);
+      allow create: if salesChildCollection == 'sale_items' && validCreate() && hasPermission('sales.create');
+      allow create: if salesChildCollection in ['sale_return_items', 'sales_return_items'] &&
+        validCreate() && hasPermission('returns.create');
+      allow update, delete: if false;
+    }
+
+    match /{inventoryCollection}/{inventoryId} {
+      allow read: if inventoryCollection in [
+          'inventory_items', 'branch_stock', 'stock_movements', 'branch_transfers',
+          'inventory_counts', 'damage_loss_records', 'inventory_locations'
+        ] && validExisting() && hasAnyPermission(['inventory.view', 'transfers.view']);
+      allow create: if inventoryCollection == 'inventory_items' && validCreate() && hasPermission('inventory.add');
+      allow update: if inventoryCollection == 'inventory_items' && validUpdate() && hasPermission('inventory.edit');
+      allow delete: if inventoryCollection == 'inventory_items' && validExisting() && hasPermission('inventory.delete');
+      allow create, update: if inventoryCollection == 'branch_stock' && validWriteScope() && hasAnyPermission([
+        'inventory.add', 'inventory.edit', 'inventory.adjust', 'inventory.opening_balance', 'inventory.count.post',
+        'sales.create', 'returns.create', 'purchases.receive'
+      ]);
+      allow create: if inventoryCollection == 'stock_movements' && validCreate() && hasAnyPermission([
+        'inventory.adjust', 'inventory.waste', 'inventory.damage', 'sales.create', 'returns.create', 'purchases.receive'
+      ]);
+      allow create: if inventoryCollection == 'branch_transfers' && validCreate() && hasPermission('transfers.create');
+      allow update: if inventoryCollection == 'branch_transfers' && validUpdate() && hasAnyPermission([
+        'transfers.approve', 'transfers.dispatch', 'transfers.receive'
+      ]);
+      allow create, update: if inventoryCollection == 'inventory_counts' && validWriteScope() &&
+        hasAnyPermission(['inventory.count', 'inventory.count.post']);
+      allow create, update: if inventoryCollection == 'damage_loss_records' && validWriteScope() &&
+        hasAnyPermission(['inventory.waste', 'inventory.damage']);
+      allow create, update, delete: if inventoryCollection == 'inventory_locations' &&
+        validWriteScope() && hasPermission('inventory.edit');
+    }
+
+    match /{purchaseCollection}/{purchaseId} {
+      allow read: if purchaseCollection in [
+          'suppliers', 'supplier_products', 'purchase_orders', 'goods_receipts',
+          'goods_received_notes', 'purchase_returns', 'supplier_ledger', 'supplier_payments'
+        ] && validExisting() && hasAnyPermission([
+          'suppliers.view', 'purchasing.view', 'purchases.view', 'purchase_returns.view', 'supplier_accounts.view'
+        ]);
+      allow create: if purchaseCollection == 'suppliers' && validCreate() && hasPermission('suppliers.create');
+      allow update: if purchaseCollection == 'suppliers' && validUpdate() && hasPermission('suppliers.edit');
+      allow delete: if purchaseCollection == 'suppliers' && validExisting() && hasPermission('suppliers.archive');
+      allow create, update, delete: if purchaseCollection == 'supplier_products' && validWriteScope() && hasPermission('suppliers.manage');
+      allow create: if purchaseCollection == 'purchase_orders' && validCreate() && hasPermission('purchases.create');
+      allow update: if purchaseCollection == 'purchase_orders' && validUpdate() && hasAnyPermission([
+        'purchases.edit', 'purchases.submit', 'purchases.approve', 'purchases.receive', 'purchases.cancel'
+      ]);
+      allow delete: if purchaseCollection == 'purchase_orders' && validExisting() && hasPermission('purchases.cancel');
+      allow create: if purchaseCollection in ['goods_receipts', 'goods_received_notes'] && validCreate() && hasPermission('purchases.receive');
+      allow create: if purchaseCollection == 'purchase_returns' && validCreate() && hasPermission('purchase_returns.create');
+      allow create: if purchaseCollection == 'supplier_ledger' && validCreate() &&
+        hasAnyPermission(['purchases.receive', 'purchase_returns.approve', 'suppliers.pay']);
+      allow create: if purchaseCollection == 'supplier_payments' && validCreate() &&
+        hasAnyPermission(['suppliers.pay', 'supplier_payments.create']);
+      allow update, delete: if false;
+    }
+
     match /customers/{customerId} {
-      allow read, write: if isAuthenticated();
+      allow read: if validExisting() && hasPermission('customers.view');
+      allow create: if validCreate() && hasAnyPermission(['customers.create', 'customer.create_from_pos']);
+      allow update: if validUpdate() && hasAnyPermission(['customers.edit', 'customers.credit.manage', 'customers.adjust_balance']);
+      allow delete: if validExisting() && hasPermission('customers.delete');
     }
 
-    // =========================================================================
-    // Smart Notifications Center & Read State Security
-    // =========================================================================
+    match /{customerCollection}/{customerDocumentId} {
+      allow read: if customerCollection in [
+          'customer_ledger', 'customer_receivables', 'customer_payments',
+          'customer_payment_allocations', 'price_lists', 'price_list_items', 'customer_product_prices'
+        ] && validExisting() && hasAnyPermission([
+          'customers.accounts.view', 'receivables.view', 'price_lists.view'
+        ]);
+      allow create: if customerCollection in ['customer_payments', 'customer_payment_allocations', 'customer_ledger'] &&
+        validCreate() && hasPermission('customers.payment.create');
+      allow update: if customerCollection == 'customer_payments' && validUpdate() && hasPermission('customers.payment.reverse');
+      allow create, update: if customerCollection == 'customer_receivables' && validWriteScope() &&
+        hasAnyPermission(['sales.credit', 'receivables.manage', 'customers.payment.create']);
+      allow create, update, delete: if customerCollection in ['price_lists', 'price_list_items', 'customer_product_prices'] &&
+        validWriteScope() && hasPermission('price_lists.manage');
+      allow delete: if false;
+    }
+
+    match /employees/{employeeId} {
+      allow read: if validExisting() && hasPermission('hr.view_employees');
+      allow create, update, delete: if validWriteScope() && hasPermission('hr.manage_employees');
+    }
+
+    match /{hrCollection}/{hrId} {
+      allow read: if hrCollection in ['shifts', 'branch_shifts', 'hr_settings'] && validExisting() &&
+        hasAnyPermission(['hr.manage_shifts', 'attendance.view']);
+      allow create, update, delete: if hrCollection in ['shifts', 'branch_shifts', 'hr_settings'] &&
+        validWriteScope() && hasPermission('hr.manage_shifts');
+      allow read: if hrCollection == 'attendance' && validExisting() && hasPermission('attendance.view');
+      allow create: if hrCollection == 'attendance' && validCreate() && hasPermission('attendance.manage');
+      allow update: if hrCollection == 'attendance' && validUpdate() && hasPermission('attendance.correct');
+      allow delete: if hrCollection == 'attendance' && validExisting() && hasPermission('attendance.correct');
+      allow read: if hrCollection == 'employee_leaves' && validExisting() && hasPermission('leave.view');
+      allow create: if hrCollection == 'employee_leaves' && validCreate() && hasPermission('leave.create');
+      allow update: if hrCollection == 'employee_leaves' && validUpdate() && hasAnyPermission([
+        'leave.approve', 'leave.reject', 'leave.cancel', 'leave.manage_balance'
+      ]);
+      allow read: if hrCollection in ['payrolls', 'salary_payments'] && validExisting() && hasPermission('payroll.view');
+      allow create, update: if hrCollection in ['payrolls', 'salary_payments'] && validWriteScope() && hasPermission('payroll.pay');
+      allow delete: if hrCollection in ['payrolls', 'salary_payments'] && validExisting() && hasPermission('payroll.void');
+      allow read: if hrCollection in ['advances', 'advance_installments'] && validExisting() && hasPermission('advances.view');
+      allow create, update, delete: if hrCollection in ['advances', 'advance_installments'] &&
+        validWriteScope() && hasPermission('advances.manage');
+      allow read: if hrCollection == 'expenses' && validExisting() && hasPermission('expenses.view');
+      allow create, update: if hrCollection == 'expenses' && validWriteScope() && hasPermission('expenses.manage');
+      allow delete: if hrCollection == 'expenses' && validExisting() && hasPermission('expenses.delete');
+    }
+
+    match /{financeCollection}/{financeId} {
+      allow read: if financeCollection in [
+          'chart_of_accounts', 'account_code_index', 'journal_entries', 'journal_lines',
+          'fiscal_years', 'fiscal_periods', 'accounting_settings', 'accounting_events',
+          'accounting_records', 'financial_accounts', 'opening_balance_migrations', 'daily_closings'
+        ] && validExisting() && hasAnyPermission([
+          'accounting.view', 'financial_reports.view', 'treasury.view', 'daily_closing.view'
+        ]);
+      allow create, update, delete: if financeCollection in ['chart_of_accounts', 'account_code_index'] &&
+        validWriteScope() && hasPermission('accounting.manage_chart');
+      allow create: if financeCollection in ['journal_entries', 'journal_lines', 'accounting_events'] &&
+        validCreate() && hasPermission('accounting.create_entry');
+      allow update: if financeCollection in ['journal_entries', 'journal_lines'] &&
+        validUpdate() && hasPermission('accounting.reverse_entry');
+      allow create, update: if financeCollection in ['fiscal_years', 'fiscal_periods', 'accounting_settings'] &&
+        validWriteScope() && hasPermission('accounting.manage_periods');
+      allow create: if financeCollection == 'opening_balance_migrations' && validCreate() && hasPermission('accounting.opening_balances');
+      allow create: if financeCollection == 'daily_closings' && validCreate() && hasPermission('daily_closing.create');
+      allow update: if financeCollection == 'daily_closings' && validUpdate() && (
+        hasPermission('daily_closing.update') ||
+        (hasPermission('daily_closing.void') &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'status', 'voidReason', 'voidedAt', 'voidedBy'
+          ]))
+      );
+      allow delete: if financeCollection == 'daily_closings' && false;
+      allow create, update: if financeCollection in ['accounting_records', 'financial_accounts'] &&
+        validWriteScope() && hasAnyPermission(['accounting.create_entry', 'treasury.manage', 'bank_accounts.manage']);
+    }
+
+    match /{analyticsCollection}/{analyticsId} {
+      allow read: if analyticsCollection in [
+          'daily_analytics_metrics', 'stats_daily', 'stats_monthly',
+          'analytics_settings', 'reorder_settings', 'season_definitions'
+        ] && validExisting() && hasAnyPermission([
+          'analytics.view', 'analytics.export', 'analytics.view_costs', 'analytics.partner_intelligence',
+          'reports.view', 'reports.sales', 'reports.inventory', 'dashboard.view'
+        ]);
+      allow create, update: if analyticsCollection in ['daily_analytics_metrics', 'stats_daily', 'stats_monthly'] &&
+        validWriteScope() && hasAnyPermission([
+          'analytics.rebuild_aggregates', 'sales.create', 'returns.create', 'purchases.receive'
+        ]);
+      allow delete: if analyticsCollection in ['daily_analytics_metrics', 'stats_daily', 'stats_monthly'] &&
+        validExisting() && hasPermission('analytics.rebuild_aggregates');
+      allow create, update, delete: if analyticsCollection in ['analytics_settings', 'reorder_settings', 'season_definitions'] &&
+        validWriteScope() && hasPermission('analytics.demand_reorder');
+    }
+
+    match /{governanceCollection}/{governanceId} {
+      allow read: if governanceCollection in ['approval_requests', 'approval_steps', 'approval_settings'] &&
+        validExisting() && hasPermission('approvals.view');
+      allow create, update: if governanceCollection in ['approval_requests', 'approval_steps'] &&
+        validWriteScope() && hasPermission('approvals.action');
+      allow create, update, delete: if governanceCollection == 'approval_settings' &&
+        validWriteScope() && hasPermission('approvals.manage_policy');
+      allow read: if governanceCollection == 'attachments' && validExisting() && hasPermission('attachments.manage');
+      allow create, update, delete: if governanceCollection == 'attachments' &&
+        validWriteScope() && hasPermission('attachments.manage');
+      allow read: if governanceCollection == 'settings_audit_log' && validExisting() && hasPermission('settings_audit.view');
+      allow create: if governanceCollection == 'settings_audit_log' && validCreate() && hasPermission('settings.manage');
+      allow read: if governanceCollection == 'feature_flags' && validExisting() && hasAnyPermission(['settings.view', 'feature_flags.manage']);
+      allow create, update, delete: if governanceCollection == 'feature_flags' &&
+        validWriteScope() && hasPermission('feature_flags.manage');
+    }
+
+    match /backups/{backupId} {
+      allow read: if validExisting() && hasPermission('backup.view');
+      allow create: if validCreate() && hasPermission('backup.create');
+      allow delete: if validExisting() && hasPermission('backup.delete');
+      allow update: if false;
+    }
+
+    match /restore_jobs/{jobId} {
+      allow read: if validExisting() && hasPermission('backup.view');
+      allow create, update: if validWriteScope() && hasPermission('backup.restore');
+      allow delete: if false;
+    }
+
+    match /audit_logs/{logId} {
+      allow read: if validExisting() && hasPermission('audit.view');
+      allow create: if validCreate();
+      allow update, delete: if false;
+    }
+
     match /notifications/{notificationId} {
-      allow read: if isAuthenticated();
-
-      // System Notifications Creation Guard:
-      // Strictly prevent client forgery of sensitive notifications (security, settings, payroll, expenses, etc.)
-      allow create: if isAuthenticated() && (
-        // 1. Sovereign Admins and Owners can create validated notifications
-        request.auth.token.role in ['owner', 'admin'] ||
-        get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.role in ['owner', 'admin'] ||
-
-        // 2. Staff members can only create notifications corresponding to their authorized department:
-        (
-          request.resource.data.category in ['orders', 'inventory', 'purchases', 'suppliers', 'waste', 'attendance', 'payroll', 'advances', 'expenses'] &&
-          request.resource.data.type in ['info', 'success', 'warning', 'critical'] &&
-          request.resource.data.priority in ['low', 'normal', 'high', 'critical'] &&
-          request.resource.data.status in ['active', 'resolved'] &&
-
-          // Non-admins can NEVER forge security or settings notifications
-          request.resource.data.category != 'security' &&
-          request.resource.data.category != 'settings' &&
-
-          (
-            // Orders: cashiers, waiters, managers, accountants
-            (request.resource.data.category == 'orders' &&
-              get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.role in ['cashier', 'waiter', 'manager', 'accountant']) ||
-
-            // Inventory, Waste, Purchases, Suppliers: inventory, accountant, manager
-            (request.resource.data.category in ['inventory', 'waste', 'purchases', 'suppliers'] &&
-              get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.role in ['inventory', 'manager', 'accountant']) ||
-
-            // Attendance: hr, manager
-            (request.resource.data.category == 'attendance' &&
-              get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.role in ['hr', 'manager']) ||
-
-            // Payroll, Advances, Expenses: accountant
-            (request.resource.data.category in ['payroll', 'advances', 'expenses'] &&
-              get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.role in ['accountant'])
-          )
-        )
-      );
-
-      // Notification Updates Guard:
-      // Content fields (title, message, category, priority, deduplicationKey, branchId, requiredPermission) are strictly IMMUTABLE.
-      // Only status / resolvedAt can be updated, and only by authorized personnel (admin/owner/manager or inventory for stock)
-      allow update: if isAuthenticated() && (
-        request.resource.data.title == resource.data.title &&
-        request.resource.data.message == resource.data.message &&
-        request.resource.data.category == resource.data.category &&
-        request.resource.data.priority == resource.data.priority &&
-        request.resource.data.branchId == resource.data.branchId &&
-        (!('deduplicationKey' in resource.data) || request.resource.data.deduplicationKey == resource.data.deduplicationKey) &&
-        (!('requiredPermission' in resource.data) || request.resource.data.requiredPermission == resource.data.requiredPermission) &&
-        (
-          request.auth.token.role in ['owner', 'admin'] ||
-          get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.role in ['owner', 'admin', 'manager'] ||
-          (resource.data.category in ['inventory', 'waste'] &&
-            get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.role in ['inventory'])
-        )
-      );
-
-      // Deletion is strictly restricted to Owner / Admin
-      allow delete: if isAuthenticated() && (
-        request.auth.token.role in ['owner', 'admin'] || 
-        get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.role in ['owner', 'admin']
-      );
+      allow read: if validExisting();
+      allow create: if validCreate() && hasAnyPermission([
+        'sales.create', 'inventory.adjust', 'purchases.create', 'attendance.manage',
+        'payroll.pay', 'advances.manage', 'expenses.manage', 'permissions.manage', 'settings.manage'
+      ]);
+      allow update, delete: if false;
     }
 
     match /notification_reads/{readId} {
-      // User can only view and manage their own read tracking
-      allow read, write: if isAuthenticated() && (
-        readId.matches('^' + request.auth.uid + '_.*') ||
+      allow read, create, update, delete: if isActive() && (
         (resource != null && resource.data.userId == request.auth.uid) ||
         (request.resource != null && request.resource.data.userId == request.auth.uid)
       );
     }
 
-    // =========================================================================
-    // Backup & Disaster Recovery Subsystem
-    // Access is strictly restricted to Sovereign Owners and System Admins
-    // =========================================================================
-    match /backups/{backupId} {
-      allow read, write: if isAuthenticated() && (
-        request.auth.token.role in ['owner', 'admin'] ||
-        get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.role in ['owner', 'admin']
-      );
-    }
-    match /restore_jobs/{jobId} {
-      allow read, write: if isAuthenticated() && (
-        request.auth.token.role in ['owner', 'admin'] ||
-        get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.role in ['owner', 'admin']
-      );
-    }
-
-    // =========================================================================
-    // Employee Leave Management Subsystem
-    // =========================================================================
-    match /employee_leaves/{leaveId} {
-      allow read: if isAuthenticated() && (
-        resource == null ||
-        hasTenantAccess(resource.data.tenant_id)
-      );
-
-      allow create: if isAuthenticated() && (
-        hasTenantAccess(request.resource.data.tenant_id) &&
-        (
-          request.auth.token.role in ['owner', 'admin', 'hr', 'manager'] ||
-          get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.role in ['owner', 'admin', 'hr', 'manager']
-        )
-      );
-
-      allow update: if isAuthenticated() && (
-        hasTenantAccess(resource.data.tenant_id) &&
-        (
-          request.auth.token.role in ['owner', 'admin', 'hr', 'manager'] ||
-          get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.role in ['owner', 'admin', 'hr', 'manager']
-        )
-      );
-
-      allow delete: if isAuthenticated() && (
-        request.auth.token.role in ['owner', 'admin'] ||
-        get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.role in ['owner', 'admin']
-      );
+    match /{legacyCollection}/{legacyId} {
+      allow read: if legacyCollection in [
+          'tables', 'reservations', 'delivery_zones', 'drivers', 'promotions', 'coupons',
+          'offers', 'call_center_orders', 'maintenance_records', 'production_batches', 'integrations'
+        ] && validExisting() && hasAnyPermission([
+          'tables.view', 'delivery.view', 'promotions.view', 'callcenter.view',
+          'maintenance.view', 'production.view', 'integrations.view'
+        ]);
+      allow create, update, delete: if legacyCollection in ['tables', 'reservations'] &&
+        validWriteScope() && hasPermission('tables.manage');
+      allow create, update, delete: if legacyCollection in ['delivery_zones', 'drivers', 'call_center_orders'] &&
+        validWriteScope() && hasPermission('delivery.manage');
+      allow create, update, delete: if legacyCollection in ['promotions', 'coupons', 'offers'] &&
+        validWriteScope() && hasPermission('promotions.manage');
+      allow create, update, delete: if legacyCollection == 'maintenance_records' &&
+        validWriteScope() && hasPermission('maintenance.manage');
+      allow create, update, delete: if legacyCollection == 'production_batches' &&
+        validWriteScope() && hasPermission('production.manage');
+      allow create, update, delete: if legacyCollection == 'integrations' &&
+        validWriteScope() && hasPermission('integrations.manage');
     }
 
-    // =========================================================================
-    // Retail Bookstore & Stationery Collections (Strict Tenant Isolation)
-    // =========================================================================
-
-    // Retail Products Catalog
-    match /products/{productId} {
-      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(getDocTenantId(resource.data)));
-      allow create: if isAuthenticated() && hasTenantAccess(getDocTenantId(request.resource.data));
-      allow update, delete: if isAuthenticated() && hasTenantAccess(getDocTenantId(resource.data));
-    }
-    match /product_variants/{variantId} {
-      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(getDocTenantId(resource.data)));
-      allow create: if isAuthenticated() && hasTenantAccess(getDocTenantId(request.resource.data));
-      allow update, delete: if isAuthenticated() && hasTenantAccess(getDocTenantId(resource.data));
-    }
-    match /product_skus/{skuDocId} {
-      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(getDocTenantId(resource.data)));
-      allow create: if isAuthenticated() && hasTenantAccess(getDocTenantId(request.resource.data));
-      allow update, delete: if isAuthenticated() && hasTenantAccess(getDocTenantId(resource.data));
-    }
-    match /product_barcodes/{barcodeDocId} {
-      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(getDocTenantId(resource.data)));
-      allow create: if isAuthenticated() && hasTenantAccess(getDocTenantId(request.resource.data));
-      allow update, delete: if isAuthenticated() && hasTenantAccess(getDocTenantId(resource.data));
-    }
-    match /categories/{categoryId} {
-      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(getDocTenantId(resource.data)));
-      allow create: if isAuthenticated() && hasTenantAccess(getDocTenantId(request.resource.data));
-      allow update, delete: if isAuthenticated() && hasTenantAccess(getDocTenantId(resource.data));
-    }
-    match /product_categories/{categoryId} {
-      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(getDocTenantId(resource.data)));
-      allow create: if isAuthenticated() && hasTenantAccess(getDocTenantId(request.resource.data));
-      allow update, delete: if isAuthenticated() && hasTenantAccess(getDocTenantId(resource.data));
-    }
-    match /brands/{brandId} {
-      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(getDocTenantId(resource.data)));
-      allow create: if isAuthenticated() && hasTenantAccess(getDocTenantId(request.resource.data));
-      allow update, delete: if isAuthenticated() && hasTenantAccess(getDocTenantId(resource.data));
-    }
-    match /product_brands/{brandId} {
-      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(getDocTenantId(resource.data)));
-      allow create: if isAuthenticated() && hasTenantAccess(getDocTenantId(request.resource.data));
-      allow update, delete: if isAuthenticated() && hasTenantAccess(getDocTenantId(resource.data));
-    }
-    match /units/{unitId} {
-      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(getDocTenantId(resource.data)));
-      allow create: if isAuthenticated() && hasTenantAccess(getDocTenantId(request.resource.data));
-      allow update, delete: if isAuthenticated() && hasTenantAccess(getDocTenantId(resource.data));
-    }
-    match /variant_attributes/{attrId} {
-      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(getDocTenantId(resource.data)));
-      allow create: if isAuthenticated() && hasTenantAccess(getDocTenantId(request.resource.data));
-      allow update, delete: if isAuthenticated() && hasTenantAccess(getDocTenantId(resource.data));
+    match /{controlCollection}/{controlId} {
+      allow read, create, update, delete: if (
+          (resource != null && validExisting()) ||
+          (request.resource != null && validCreate())
+        ) && (
+          (controlCollection in ['branch_counters', 'orderCounters'] &&
+            hasAnyPermission(['sales.create', 'pos.create_order', 'settings.manage'])) ||
+          (controlCollection == 'sequence_counters' && hasAnyPermission([
+            'sales.create', 'returns.create', 'purchases.create', 'purchases.receive',
+            'customers.create', 'customers.payment.create', 'suppliers.create', 'suppliers.pay',
+            'accounting.create_entry'
+          ])) ||
+          (controlCollection == 'sale_idempotency' && hasPermission('sales.create')) ||
+          (controlCollection == 'return_idempotency' && hasAnyPermission(['returns.create', 'returns.refund'])) ||
+          (controlCollection == 'purchase_idempotency' && hasAnyPermission([
+            'purchases.create', 'purchases.receive', 'purchase_returns.create', 'suppliers.pay'
+          ])) ||
+          (controlCollection == 'customer_idempotency' && hasPermission('customers.payment.create')) ||
+          (controlCollection == 'stock_idempotency' && hasAnyPermission(['inventory.adjust', 'purchases.receive'])) ||
+          (controlCollection == 'journal_idempotency' && hasPermission('accounting.create_entry')) ||
+          (controlCollection == 'system_migrations' &&
+            hasAnyPermission(['system_health.repair', 'analytics.rebuild_aggregates']))
+        );
     }
 
-    // Retail Inventory & Stock Movements
-    match /branch_stock/{stockId} {
-      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
-      allow write: if isAuthenticated() && (
-        (resource == null && hasTenantAccess(request.resource.data.tenantId)) ||
-        (resource != null && hasTenantAccess(resource.data.tenantId))
-      );
-    }
-    match /stock_movements/{movementId} {
-      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
-      allow create: if isAuthenticated() && hasTenantAccess(request.resource.data.tenantId);
-      allow update, delete: if false; // Immutable audit trail
-    }
-    match /branch_transfers/{transferId} {
-      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
-      allow create: if isAuthenticated() && hasTenantAccess(request.resource.data.tenantId);
-      allow update, delete: if isAuthenticated() && hasTenantAccess(resource.data.tenantId);
-    }
-    match /inventory_counts/{countId} {
-      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
-      allow create: if isAuthenticated() && hasTenantAccess(request.resource.data.tenantId);
-      allow update, delete: if isAuthenticated() && hasTenantAccess(resource.data.tenantId);
-    }
-    match /damage_loss_records/{recordId} {
-      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
-      allow create: if isAuthenticated() && hasTenantAccess(request.resource.data.tenantId);
-      allow update, delete: if isAuthenticated() && hasTenantAccess(resource.data.tenantId);
-    }
-    match /stock_idempotency/{recordId} {
-      allow read, write: if isAuthenticated() && (
-        (resource == null && hasTenantAccess(request.resource.data.tenantId)) ||
-        (resource != null && hasTenantAccess(resource.data.tenantId))
-      );
-    }
-    match /inventory_locations/{locationId} {
-      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
-      allow write: if isAuthenticated() && (
-        (resource == null && hasTenantAccess(request.resource.data.tenantId)) ||
-        (resource != null && hasTenantAccess(resource.data.tenantId))
-      );
+    // Explicit data-center permissions intentionally span tenant collections,
+    // but never cross the tenant boundary or expose server-only secrets.
+    match /{dataCollection}/{dataId} {
+      allow read: if !(dataCollection in [
+          'api_clients', 'api_client_audit_logs', 'api_usage_events',
+          'webhook_endpoints', 'webhook_events', 'webhook_delivery_attempts', 'webhook_dead_letters',
+          'idempotency_records'
+        ]) && validExisting() && (
+          hasPermission('backup.create') ||
+          (dataCollection in ['products', 'customers', 'suppliers'] && hasPermission('datacenter.export'))
+        );
+      allow create, update, delete: if !(dataCollection in [
+          'profiles', 'user_roles', 'user_permissions', 'staff_invitations',
+          'api_clients', 'api_client_audit_logs', 'api_usage_events',
+          'webhook_endpoints', 'webhook_events', 'webhook_delivery_attempts', 'webhook_dead_letters',
+          'idempotency_records'
+        ]) && validWriteScope() && (
+          hasAnyPermission(['backup.restore', 'data.reset']) ||
+          (dataCollection in [
+              'products', 'branch_stock', 'stock_movements',
+              'customers', 'customer_ledger', 'suppliers', 'supplier_ledger'
+            ] && hasPermission('datacenter.import'))
+        );
     }
 
-    // Retail Sales & Invoices & Legacy Orders
-    match /sales/{saleId} {
-      allow read: if isAuthenticated() && (
-        resource == null || 
-        hasTenantAccess(resource.data.tenantId) || 
-        ('tenant_id' in resource.data && hasTenantAccess(resource.data.tenant_id))
-      );
-      allow create: if isAuthenticated() && (
-        hasTenantAccess(request.resource.data.tenantId) || 
-        ('tenant_id' in request.resource.data && hasTenantAccess(request.resource.data.tenant_id))
-      );
-      allow update: if isAuthenticated() && (
-        hasTenantAccess(resource.data.tenantId) || 
-        ('tenant_id' in resource.data && hasTenantAccess(resource.data.tenant_id))
-      );
-      allow delete: if isAuthenticated() && isSystemAdmin();
-    }
-    match /orders/{orderId} {
-      allow read, write: if isAuthenticated();
-    }
-    match /order_items/{itemId} {
-      allow read, write: if isAuthenticated();
-    }
-    match /sale_items/{itemId} {
-      allow read, write: if isAuthenticated();
-    }
-    match /sale_payments/{paymentId} {
-      allow read, write: if isAuthenticated() && (
-        (resource == null && hasTenantAccess(request.resource.data.tenantId)) ||
-        (resource != null && hasTenantAccess(resource.data.tenantId))
-      );
-    }
-    match /sale_idempotency/{recordId} {
-      allow read, write: if isAuthenticated() && (
-        (resource == null && hasTenantAccess(request.resource.data.tenantId)) ||
-        (resource != null && hasTenantAccess(resource.data.tenantId))
-      );
-    }
-    match /held_sales/{heldId} {
-      allow read, write: if isAuthenticated() && (
-        (resource == null && hasTenantAccess(request.resource.data.tenantId)) ||
-        (resource != null && hasTenantAccess(resource.data.tenantId))
-      );
-    }
-    match /sale_returns/{returnId} {
-      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
-      allow create: if isAuthenticated() && hasTenantAccess(request.resource.data.tenantId);
-      allow update, delete: if false; // Immutable return record
-    }
-    match /sales_returns/{returnId} {
-      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
-      allow create: if isAuthenticated() && hasTenantAccess(request.resource.data.tenantId);
-      allow update, delete: if false; // Immutable return record
-    }
-    match /sale_return_items/{itemId} {
-      allow read, write: if isAuthenticated();
-    }
-    match /sales_return_items/{itemId} {
-      allow read, write: if isAuthenticated();
-    }
-    match /sale_refunds/{refundId} {
-      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
-      allow create: if isAuthenticated() && hasTenantAccess(request.resource.data.tenantId);
-      allow update, delete: if false; // Immutable refund record
-    }
-    match /sale_exchanges/{exchangeId} {
-      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
-      allow create: if isAuthenticated() && hasTenantAccess(request.resource.data.tenantId);
-      allow update, delete: if false; // Immutable exchange record
-    }
-    match /return_idempotency/{recordId} {
-      allow read, write: if isAuthenticated() && (
-        (resource == null && hasTenantAccess(request.resource.data.tenantId)) ||
-        (resource != null && hasTenantAccess(resource.data.tenantId))
-      );
-    }
-    match /cashier_shifts/{shiftId} {
-      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(getDocTenantId(resource.data)));
-      allow write: if isAuthenticated() && (
-        (resource == null && hasTenantAccess(getDocTenantId(request.resource.data))) ||
-        (resource != null && hasTenantAccess(getDocTenantId(resource.data)))
-      );
-    }
-    match /cash_register_shifts/{shiftId} {
-      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(getDocTenantId(resource.data)));
-      allow write: if isAuthenticated() && (
-        (resource == null && hasTenantAccess(getDocTenantId(request.resource.data))) ||
-        (resource != null && hasTenantAccess(getDocTenantId(resource.data)))
-      );
-    }
-    match /cash_shifts/{shiftId} {
-      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(getDocTenantId(resource.data)));
-      allow write: if isAuthenticated() && (
-        (resource == null && hasTenantAccess(getDocTenantId(request.resource.data))) ||
-        (resource != null && hasTenantAccess(getDocTenantId(resource.data)))
-      );
-    }
-    match /pos_shifts/{shiftId} {
-      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(getDocTenantId(resource.data)));
-      allow write: if isAuthenticated() && (
-        (resource == null && hasTenantAccess(getDocTenantId(request.resource.data))) ||
-        (resource != null && hasTenantAccess(getDocTenantId(resource.data)))
-      );
-    }
-    match /branch_shifts/{shiftId} {
-      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(getDocTenantId(resource.data)));
-      allow write: if isAuthenticated() && (
-        (resource == null && hasTenantAccess(getDocTenantId(request.resource.data))) ||
-        (resource != null && hasTenantAccess(getDocTenantId(resource.data)))
-      );
-    }
-    match /cash_register_transactions/{txId} {
-      allow read, write: if isAuthenticated() && (
-        (resource == null && hasTenantAccess(getDocTenantId(request.resource.data))) ||
-        (resource != null && hasTenantAccess(getDocTenantId(resource.data)))
-      );
-    }
-    match /sequence_counters/{counterId} {
-      allow read, write: if isAuthenticated();
-    }
-
-    // Suppliers & Purchasing Engine (Phase 7)
-    match /suppliers/{supplierId} {
-      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
-      allow write: if isAuthenticated() && (
-        (resource == null && hasTenantAccess(request.resource.data.tenantId)) ||
-        (resource != null && hasTenantAccess(resource.data.tenantId))
-      );
-    }
-    match /supplier_products/{id} {
-      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
-      allow write: if isAuthenticated() && (
-        (resource == null && hasTenantAccess(request.resource.data.tenantId)) ||
-        (resource != null && hasTenantAccess(resource.data.tenantId))
-      );
-    }
-    match /purchase_orders/{poId} {
-      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
-      allow create: if isAuthenticated() && hasTenantAccess(request.resource.data.tenantId);
-      allow update: if isAuthenticated() && hasTenantAccess(resource.data.tenantId);
-      allow delete: if isAuthenticated() && hasTenantAccess(resource.data.tenantId) && (
-        request.auth.token.role in ['owner', 'admin', 'purchasing_manager'] ||
-        get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.role in ['owner', 'admin', 'purchasing_manager']
-      );
-    }
-    match /goods_receipts/{receiptId} {
-      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
-      allow create: if isAuthenticated() && hasTenantAccess(request.resource.data.tenantId);
-      allow update, delete: if false; // Immutable GRN record
-    }
-    match /goods_received_notes/{receiptId} {
-      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
-      allow create: if isAuthenticated() && hasTenantAccess(request.resource.data.tenantId);
-      allow update, delete: if false; // Immutable GRN record
-    }
-    match /purchase_returns/{returnId} {
-      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
-      allow create: if isAuthenticated() && hasTenantAccess(request.resource.data.tenantId);
-      allow update, delete: if false; // Immutable Purchase Return record
-    }
-    match /supplier_ledger/{entryId} {
-      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
-      allow create: if isAuthenticated() && hasTenantAccess(request.resource.data.tenantId);
-      allow update, delete: if false; // Immutable Supplier Ledger
-    }
-    match /supplier_payments/{paymentId} {
-      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
-      allow create: if isAuthenticated() && hasTenantAccess(request.resource.data.tenantId);
-      allow update, delete: if false; // Immutable Supplier Payment
-    }
-    match /purchase_idempotency/{recordId} {
-      allow read, write: if isAuthenticated() && (
-        (resource == null && hasTenantAccess(request.resource.data.tenantId)) ||
-        (resource != null && hasTenantAccess(resource.data.tenantId))
-      );
-    }
-
-    // Customers, Wholesale & Credit Sales (Phase 8)
-    match /customers/{customerId} {
-      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
-      allow write: if isAuthenticated() && (
-        (resource == null && hasTenantAccess(request.resource.data.tenantId)) ||
-        (resource != null && hasTenantAccess(resource.data.tenantId))
-      );
-    }
-    match /customer_ledger/{entryId} {
-      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
-      allow create: if isAuthenticated() && hasTenantAccess(request.resource.data.tenantId);
-      allow update, delete: if false; // Immutable Customer Ledger
-    }
-    match /customer_receivables/{receivableId} {
-      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
-      allow write: if isAuthenticated() && (
-        (resource == null && hasTenantAccess(request.resource.data.tenantId)) ||
-        (resource != null && hasTenantAccess(resource.data.tenantId))
-      );
-    }
-    match /customer_payments/{paymentId} {
-      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
-      allow create: if isAuthenticated() && hasTenantAccess(request.resource.data.tenantId);
-      allow update: if isAuthenticated() && hasTenantAccess(resource.data.tenantId);
-      allow delete: if false;
-    }
-    match /customer_payment_allocations/{allocationId} {
-      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
-      allow create: if isAuthenticated() && hasTenantAccess(request.resource.data.tenantId);
-      allow update, delete: if false; // Immutable Allocation
-    }
-    match /price_lists/{listId} {
-      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
-      allow write: if isAuthenticated() && (
-        (resource == null && hasTenantAccess(request.resource.data.tenantId)) ||
-        (resource != null && hasTenantAccess(resource.data.tenantId))
-      );
-    }
-    match /price_list_items/{itemId} {
-      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
-      allow write: if isAuthenticated() && (
-        (resource == null && hasTenantAccess(request.resource.data.tenantId)) ||
-        (resource != null && hasTenantAccess(resource.data.tenantId))
-      );
-    }
-    match /customer_product_prices/{id} {
-      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
-      allow write: if isAuthenticated() && (
-        (resource == null && hasTenantAccess(request.resource.data.tenantId)) ||
-        (resource != null && hasTenantAccess(resource.data.tenantId))
-      );
-    }
-    match /customer_idempotency/{recordId} {
-      allow read, write: if isAuthenticated() && (
-        (resource == null && hasTenantAccess(request.resource.data.tenantId)) ||
-        (resource != null && hasTenantAccess(resource.data.tenantId))
-      );
-    }
-
-    // Advanced Accounting, General Ledger & Treasury (Phase 9)
-    match /chart_of_accounts/{accountId} {
-      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
-      allow write: if isAuthenticated() && (
-        (resource == null && hasTenantAccess(request.resource.data.tenantId)) ||
-        (resource != null && hasTenantAccess(resource.data.tenantId))
-      );
-    }
-    match /account_code_index/{indexId} {
-      allow read, write: if isAuthenticated() && (
-        (resource == null && hasTenantAccess(request.resource.data.tenantId)) ||
-        (resource != null && hasTenantAccess(resource.data.tenantId))
-      );
-    }
-    match /journal_entries/{entryId} {
-      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
-      allow create: if isAuthenticated() && hasTenantAccess(request.resource.data.tenantId);
-      allow update: if isAuthenticated() && hasTenantAccess(resource.data.tenantId);
-      allow delete: if false; // Immutable General Ledger Journal Entries
-    }
-    match /journal_lines/{lineId} {
-      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
-      allow create: if isAuthenticated() && hasTenantAccess(request.resource.data.tenantId);
-      allow update, delete: if false; // Immutable General Ledger Lines
-    }
-    match /journal_idempotency/{idempId} {
-      allow read, write: if isAuthenticated() && (
-        (resource == null && hasTenantAccess(request.resource.data.tenantId)) ||
-        (resource != null && hasTenantAccess(resource.data.tenantId))
-      );
-    }
-    match /fiscal_years/{yearId} {
-      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
-      allow write: if isAuthenticated() && (
-        (resource == null && hasTenantAccess(request.resource.data.tenantId)) ||
-        (resource != null && hasTenantAccess(resource.data.tenantId))
-      );
-    }
-    match /fiscal_periods/{periodId} {
-      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
-      allow write: if isAuthenticated() && (
-        (resource == null && hasTenantAccess(request.resource.data.tenantId)) ||
-        (resource != null && hasTenantAccess(resource.data.tenantId))
-      );
-    }
-    match /accounting_settings/{settingsId} {
-      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
-      allow write: if isAuthenticated() && (
-        (resource == null && hasTenantAccess(request.resource.data.tenantId)) ||
-        (resource != null && hasTenantAccess(resource.data.tenantId))
-      );
-    }
-    match /accounting_events/{eventId} {
-      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
-      allow write: if isAuthenticated() && (
-        (resource == null && hasTenantAccess(request.resource.data.tenantId)) ||
-        (resource != null && hasTenantAccess(resource.data.tenantId))
-      );
-    }
-    match /financial_accounts/{accId} {
-      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
-      allow write: if isAuthenticated() && (
-        (resource == null && hasTenantAccess(request.resource.data.tenantId)) ||
-        (resource != null && hasTenantAccess(resource.data.tenantId))
-      );
-    }
-    match /opening_balance_migrations/{migrationId} {
-      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
-      allow create: if isAuthenticated() && hasTenantAccess(request.resource.data.tenantId);
-      allow update, delete: if false; // One-time Immutable Opening Balance Record
-    }
-
-    // Phase 10: Advanced BI, Analytics & Demand Intelligence
-    match /daily_analytics_metrics/{metricId} {
-      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
-      allow write: if isAuthenticated() && (
-        (resource == null && hasTenantAccess(request.resource.data.tenantId)) ||
-        (resource != null && hasTenantAccess(resource.data.tenantId))
-      );
-    }
-    match /analytics_settings/{settingsId} {
-      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
-      allow write: if isAuthenticated() && (
-        (resource == null && hasTenantAccess(request.resource.data.tenantId)) ||
-        (resource != null && hasTenantAccess(resource.data.tenantId))
-      );
-    }
-    match /reorder_settings/{settingsId} {
-      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
-      allow write: if isAuthenticated() && (
-        (resource == null && hasTenantAccess(request.resource.data.tenantId)) ||
-        (resource != null && hasTenantAccess(resource.data.tenantId))
-      );
-    }
-    match /season_definitions/{seasonId} {
-      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
-      allow write: if isAuthenticated() && (
-        (resource == null && hasTenantAccess(request.resource.data.tenantId)) ||
-        (resource != null && hasTenantAccess(resource.data.tenantId))
-      );
-    }
-
-    // Phase 11: Governance, System Hardening & Document Management
-    match /approval_requests/{requestId} {
-      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
-      allow write: if isAuthenticated() && (
-        (resource == null && hasTenantAccess(request.resource.data.tenantId)) ||
-        (resource != null && hasTenantAccess(resource.data.tenantId))
-      );
-    }
-    match /approval_steps/{stepId} {
-      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
-      allow write: if isAuthenticated() && (
-        (resource == null && hasTenantAccess(request.resource.data.tenantId)) ||
-        (resource != null && hasTenantAccess(resource.data.tenantId))
-      );
-    }
-    match /approval_settings/{settingsId} {
-      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
-      allow write: if isAuthenticated() && (
-        (resource == null && hasTenantAccess(request.resource.data.tenantId)) ||
-        (resource != null && hasTenantAccess(resource.data.tenantId))
-      );
-    }
-    match /attachments/{attachmentId} {
-      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
-      allow create: if isAuthenticated() && hasTenantAccess(request.resource.data.tenantId);
-      allow update: if isAuthenticated() && hasTenantAccess(resource.data.tenantId);
-      allow delete: if isAuthenticated() && hasTenantAccess(resource.data.tenantId) && isSystemAdmin();
-    }
-    match /settings_audit_log/{auditId} {
-      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
-      allow create: if isAuthenticated() && hasTenantAccess(request.resource.data.tenantId);
-      allow update, delete: if false; // Immutable settings audit trail
-    }
-    match /feature_flags/{flagId} {
-      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
-      allow write: if isAuthenticated() && (
-        (resource == null && hasTenantAccess(request.resource.data.tenantId)) ||
-        (resource != null && hasTenantAccess(resource.data.tenantId))
-      );
-    }
-
-    // High-Performance Aggregated Analytics Cache & Migration Ledgers
-    match /stats_daily/{statId} {
-      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
-      allow create: if isAuthenticated() && hasTenantAccess(request.resource.data.tenantId);
-      allow update: if isAuthenticated() && (
-        isSystemAdmin() ||
-        (hasTenantAccess(resource.data.tenantId) && request.resource.data.tenantId == resource.data.tenantId)
-      );
-      allow delete: if isAuthenticated() && (isSystemAdmin() || hasTenantAccess(resource.data.tenantId));
-    }
-    match /stats_monthly/{statId} {
-      allow read: if isAuthenticated() && (resource == null || hasTenantAccess(resource.data.tenantId));
-      allow create: if isAuthenticated() && hasTenantAccess(request.resource.data.tenantId);
-      allow update: if isAuthenticated() && (
-        isSystemAdmin() ||
-        (hasTenantAccess(resource.data.tenantId) && request.resource.data.tenantId == resource.data.tenantId)
-      );
-      allow delete: if isAuthenticated() && (isSystemAdmin() || hasTenantAccess(resource.data.tenantId));
-    }
-    match /system_migrations/{migrationId} {
-      allow read, write, delete: if isAuthenticated() && (
-        isSystemAdmin() ||
-        (resource != null && hasTenantAccess(resource.data.tenantId)) ||
-        (request.resource != null && hasTenantAccess(request.resource.data.tenantId))
-      );
-    }
-
-    // Default catch-all: strictly restrict unlisted collections to admin/owner
     match /{document=**} {
-      allow read, write: if isSystemAdmin();
+      allow read, write: if false;
     }
   }
 }

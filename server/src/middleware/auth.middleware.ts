@@ -7,7 +7,7 @@ import { getFirebaseAuth, getFirestoreDb } from '../config/firebase.js';
 import { env } from '../config/environment.js';
 import { ApiPermission, API_PERMISSIONS, hasPermissionMatch } from '../types/permissions.types.js';
 
-const ADMIN_ALL_PERMISSIONS: (ApiPermission | string)[] = ['*', ...API_PERMISSIONS];
+const ADMIN_ALL_PERMISSIONS: string[] = ['*', ...API_PERMISSIONS];
 
 export function createAuthMiddleware(clientService: ApiClientService = defaultApiClientService) {
   return async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
@@ -57,17 +57,19 @@ export function createAuthMiddleware(clientService: ApiClientService = defaultAp
         // Path 2: Check for Firebase Auth ID token (Admin Dashboard session)
         let verifiedUid: string | null = null;
         let tokenTenantId: string | null = null;
+        let firebasePermissions: string[] = [];
+        let allowedBranchIds: string[] = [];
 
         // Test mode mock support
         if (env.NODE_ENV === 'test' && rawCredential.startsWith('mock_admin_token_')) {
           verifiedUid = rawCredential.replace('mock_admin_token_', '');
           tokenTenantId = (req.header('X-Tenant-ID') as string) || 'tenant_main';
+          firebasePermissions = ADMIN_ALL_PERMISSIONS;
         } else if (rawCredential.split('.').length === 3) {
           try {
             const firebaseAuth = getFirebaseAuth();
             const decoded = await firebaseAuth.verifyIdToken(rawCredential);
             verifiedUid = decoded.uid;
-            tokenTenantId = (decoded.tenant_id as string) || (req.header('X-Tenant-ID') as string);
           } catch (fbErr) {
             throw new UnauthorizedError('Invalid client credentials');
           }
@@ -79,15 +81,65 @@ export function createAuthMiddleware(clientService: ApiClientService = defaultAp
           throw new UnauthorizedError('Invalid client credentials');
         }
 
-        // Resolve tenant_id from Firestore profiles if not in token/header
-        if (!tokenTenantId) {
+        // Firebase sessions are authorized from the canonical profile. Never
+        // trust an X-Tenant-ID header or a client-supplied role/permission set.
+        if (env.NODE_ENV !== 'test') {
           try {
             const db = getFirestoreDb();
             const profileDoc = await db.collection('profiles').doc(verifiedUid).get();
-            if (profileDoc.exists) {
-              tokenTenantId = profileDoc.data()?.tenant_id;
+            if (!profileDoc.exists) {
+              throw new UnauthorizedError('User access profile is missing');
             }
-          } catch (_) {}
+
+            const profile = profileDoc.data() || {};
+            if (profile.status === 'disabled') {
+              throw new ForbiddenError('User account is disabled');
+            }
+
+            tokenTenantId = profile.tenant_id || profile.tenantId || null;
+            if (!tokenTenantId) {
+              throw new UnauthorizedError('User tenant assignment is missing');
+            }
+
+            const requestedTenantId = req.header('X-Tenant-ID');
+            if (requestedTenantId && requestedTenantId !== tokenTenantId) {
+              throw new ForbiddenError('Tenant mismatch for authenticated user');
+            }
+
+            let role = typeof profile.role === 'string' ? profile.role : null;
+            if (!role) {
+              const roleSnapshot = await db.collection('user_roles')
+                .where('user_id', '==', verifiedUid)
+                .limit(1)
+                .get();
+              role = roleSnapshot.empty ? null : roleSnapshot.docs[0].data().role;
+            }
+
+            if (role === 'owner' || role === 'super_admin') {
+              firebasePermissions = ['*'];
+            } else if (profile.permissions_version === 2 && Array.isArray(profile.permissions)) {
+              firebasePermissions = profile.permissions.filter((permission: unknown): permission is string =>
+                typeof permission === 'string'
+              );
+            } else if (role === 'admin') {
+              // Compatibility for pre-v2 admin profiles. The permissions page
+              // migrates these accounts to an explicit, revocable permission set.
+              firebasePermissions = ADMIN_ALL_PERMISSIONS;
+            } else {
+              const permissionsSnapshot = await db.collection('user_permissions')
+                .where('user_id', '==', verifiedUid)
+                .get();
+              firebasePermissions = permissionsSnapshot.docs
+                .map((permissionDoc) => permissionDoc.data().permission)
+                .filter((permission: unknown): permission is string => typeof permission === 'string');
+            }
+
+            const branchId = profile.branch_id || profile.branchId;
+            allowedBranchIds = branchId ? [String(branchId)] : [];
+          } catch (error) {
+            if (error instanceof UnauthorizedError || error instanceof ForbiddenError) throw error;
+            throw new UnauthorizedError('Unable to resolve user authorization profile');
+          }
         }
 
         const resolvedTenantId = tokenTenantId || 'tenant_main';
@@ -95,8 +147,8 @@ export function createAuthMiddleware(clientService: ApiClientService = defaultAp
         req.apiClient = {
           clientId: `usr_${verifiedUid}`,
           tenantId: resolvedTenantId,
-          allowedBranchIds: [],
-          permissions: ADMIN_ALL_PERMISSIONS,
+          allowedBranchIds,
+          permissions: firebasePermissions,
           rateLimitTier: 'premium',
         };
       }

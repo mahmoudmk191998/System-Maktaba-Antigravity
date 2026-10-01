@@ -2,9 +2,9 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { MainLayout } from '@/components/layout';
 import { cn } from '@/lib/utils';
 import { db, firebaseConfig } from '@/lib/firebase';
-import { collection, query, where, getDocs, doc, deleteDoc, addDoc, updateDoc, setDoc, writeBatch } from 'firebase/firestore';
-import { initializeApp } from 'firebase/app';
-import { getAuth, createUserWithEmailAndPassword, updateProfile } from 'firebase/auth';
+import { collection, query, where, getDoc, getDocs, doc, deleteDoc, addDoc, updateDoc, setDoc, writeBatch, limit } from 'firebase/firestore';
+import { deleteApp, initializeApp } from 'firebase/app';
+import { getAuth, createUserWithEmailAndPassword, deleteUser as deleteAuthUser, signOut, updateProfile, type User as FirebaseUser } from 'firebase/auth';
 import { useTenantBranch } from '@/hooks/useDatabase';
 import { useAuth } from '@/hooks/useAuth';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -32,6 +32,14 @@ import {
   isOwnerRole,
   isAdminOrOwnerRole,
 } from '@/lib/permissionsModel';
+import {
+  buildStaffInvitation,
+  getRolePermissionIds,
+  normalizePermissionIds,
+  normalizeStaffEmail,
+  PERMISSIONS_SCHEMA_VERSION,
+} from '@/lib/staffAccess';
+import { replaceActiveStaffAccess } from '@/services/auth/staffProvisioning.service';
 import { notifySecurityRoleChanged } from '@/services/notifications.service';
 
 interface UserEntry {
@@ -42,6 +50,8 @@ interface UserEntry {
   permissions: string[];
   status: 'active' | 'disabled';
   branch_id?: string | null;
+  account_state: 'active' | 'pending';
+  invitation_id?: string;
 }
 
 interface BranchItem {
@@ -110,13 +120,6 @@ export default function Permissions() {
       const profilesQ = query(collection(db, 'profiles'), where('tenant_id', '==', tenantId));
       const profilesSnap = await getDocs(profilesQ);
       const profiles = profilesSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
-
-      if (profiles.length === 0) {
-        setUsers([]);
-        setLoading(false);
-        return;
-      }
-
       const userEntries: UserEntry[] = [];
       for (const p of profiles) {
         // Fetch user roles
@@ -131,17 +134,91 @@ export default function Permissions() {
 
         const role = roles[0]?.role || (p as any).role || 'viewer';
         const userStatus: 'active' | 'disabled' = (p as any).status === 'disabled' ? 'disabled' : 'active';
+        const legacyPermissions = normalizePermissionIds(perms.map((x: any) => x.permission));
+        const profilePermissions = (p as any).permissions_version === PERMISSIONS_SCHEMA_VERSION && Array.isArray((p as any).permissions)
+          ? normalizePermissionIds((p as any).permissions)
+          : null;
+        const effectivePermissions = profilePermissions ?? (
+          isAdminOrOwnerRole(role) ? [...ALL_PERMISSION_IDS] : legacyPermissions
+        );
+        const profileEmail = normalizeStaffEmail(String((p as any).email || ''));
+
+        // Older Google entries were stored with a fake user_<timestamp> id and
+        // could never authenticate. Convert only that known legacy shape into a
+        // real invitation while preserving tenant, branch, role and permissions.
+        if (/^user_\d+$/.test(p.id) && profileEmail) {
+          const migrationBatch = writeBatch(db);
+          migrationBatch.set(
+            doc(db, 'staff_invitations', profileEmail),
+            {
+              ...buildStaffInvitation({
+                fullName: (p as any).full_name || profileEmail.split('@')[0],
+                email: profileEmail,
+                tenantId,
+                branchId: (p as any).branch_id || null,
+                role,
+                permissions: effectivePermissions,
+                status: userStatus,
+              }, user?.uid || 'legacy_migration'),
+              migrated_from_profile_id: p.id,
+              created_at: (p as any).created_at || new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            },
+            { merge: true }
+          );
+          rolesSnap.docs.forEach((roleDocument) => migrationBatch.delete(roleDocument.ref));
+          permsSnap.docs.forEach((permissionDocument) => migrationBatch.delete(permissionDocument.ref));
+          migrationBatch.delete(doc(db, 'profiles', p.id));
+          await migrationBatch.commit();
+          continue;
+        }
+
+        // One-time compatibility migration: profile permissions become the
+        // authoritative source used by UI guards and Firestore rules.
+        if (profilePermissions === null) {
+          await replaceActiveStaffAccess({
+            userId: p.id,
+            fullName: (p as any).full_name || profileEmail.split('@')[0] || 'مستخدم',
+            email: profileEmail,
+            tenantId,
+            branchId: (p as any).branch_id || null,
+            role,
+            permissions: effectivePermissions,
+            status: userStatus,
+            grantedBy: user?.uid || 'permissions_migration',
+          });
+        }
 
         userEntries.push({
           id: p.id,
           full_name: (p as any).full_name || (p as any).email?.split('@')[0] || 'مستخدم',
           email: (p as any).email || '',
           role,
-          permissions: perms.map((x: any) => x.permission),
+          permissions: effectivePermissions,
           status: userStatus,
           branch_id: (p as any).branch_id || null,
+          account_state: 'active',
         });
       }
+
+      const invitationsSnapshot = await getDocs(
+        query(collection(db, 'staff_invitations'), where('tenant_id', '==', tenantId))
+      );
+      invitationsSnapshot.docs.forEach((invitationDocument) => {
+        const invitation = invitationDocument.data();
+        if (invitation.invitation_status !== 'pending') return;
+        userEntries.push({
+          id: `invite:${invitationDocument.id}`,
+          invitation_id: invitationDocument.id,
+          full_name: invitation.full_name || invitation.email?.split('@')[0] || 'مستخدم Google',
+          email: invitation.email || invitationDocument.id,
+          role: invitation.role || 'viewer',
+          permissions: normalizePermissionIds(Array.isArray(invitation.permissions) ? invitation.permissions : []),
+          status: invitation.status === 'disabled' ? 'disabled' : 'active',
+          branch_id: invitation.branch_id || null,
+          account_state: 'pending',
+        });
+      });
 
       setUsers(userEntries);
 
@@ -156,7 +233,7 @@ export default function Permissions() {
     } finally {
       setLoading(false);
     }
-  }, [tenantId, selectedUser?.id]);
+  }, [tenantId, selectedUser?.id, user?.uid]);
 
   useEffect(() => {
     fetchUsers();
@@ -171,7 +248,7 @@ export default function Permissions() {
 
   // Check how many active admins/owners exist in this tenant
   const activeAdminCount = useMemo(() => {
-    return users.filter((u) => u.status === 'active' && isAdminOrOwnerRole(u.role)).length;
+    return users.filter((u) => u.account_state === 'active' && u.status === 'active' && isAdminOrOwnerRole(u.role)).length;
   }, [users]);
 
   // Toggle individual permission
@@ -255,55 +332,37 @@ export default function Permissions() {
     const template = ROLE_TEMPLATES[roleKey];
     if (!template) return;
 
-    const newPerms = template.permissions.includes('*') ? [...ALL_PERMISSION_IDS] : [...template.permissions];
+    const newPerms = getRolePermissionIds(roleKey);
     setEditPermissions(newPerms);
 
     setLoading(true);
     try {
-      // 1. Update user_roles collection
-      const rolesQ = query(collection(db, 'user_roles'), where('user_id', '==', selectedUser.id));
-      const rolesSnap = await getDocs(rolesQ);
-      for (const rDoc of rolesSnap.docs) {
-        await deleteDoc(rDoc.ref);
-      }
-      await addDoc(collection(db, 'user_roles'), {
-        user_id: selectedUser.id,
-        role: roleKey,
-        tenant_id: tenantId,
-        updated_at: new Date().toISOString(),
-      });
-
-      // 2. Update profiles collection
-      await updateDoc(doc(db, 'profiles', selectedUser.id), {
-        role: roleKey,
-        updated_at: new Date().toISOString(),
-      });
-
-      // 3. Update user_permissions collection using atomic batch
-      const permsQ = query(collection(db, 'user_permissions'), where('user_id', '==', selectedUser.id));
-      const permsSnap = await getDocs(permsQ);
-      const permBatch = writeBatch(db);
-      for (const pDoc of permsSnap.docs) {
-        permBatch.delete(pDoc.ref);
-      }
-      const nowStr = new Date().toISOString();
-      for (const p of newPerms) {
-        const pRef = doc(collection(db, 'user_permissions'));
-        permBatch.set(pRef, {
-          tenant_id: tenantId || null,
-          user_id: selectedUser.id,
-          permission: p,
-          granted_by: user?.uid || null,
-          created_at: nowStr,
+      if (selectedUser.account_state === 'pending' && selectedUser.invitation_id) {
+        await updateDoc(doc(db, 'staff_invitations', selectedUser.invitation_id), {
+          role: roleKey,
+          permissions: newPerms,
+          permissions_version: PERMISSIONS_SCHEMA_VERSION,
+          updated_at: new Date().toISOString(),
+        });
+      } else {
+        await replaceActiveStaffAccess({
+          userId: selectedUser.id,
+          fullName: selectedUser.full_name,
+          email: selectedUser.email,
+          tenantId: tenantId || '',
+          branchId: selectedUser.branch_id || null,
+          role: roleKey,
+          permissions: newPerms,
+          status: selectedUser.status,
+          grantedBy: user?.uid || '',
         });
       }
-      await permBatch.commit();
 
       // 4. Record Audit Log
       await addDoc(collection(db, 'audit_logs'), {
         tenant_id: tenantId,
         action: 'ROLE_CHANGED',
-        target_id: selectedUser.id,
+        target_id: selectedUser.invitation_id || selectedUser.id,
         target_name: selectedUser.full_name,
         user: user?.email || 'المدير',
         details: `تغيير دور المستخدم ${selectedUser.full_name} إلى ${template.label}`,
@@ -348,7 +407,10 @@ export default function Permissions() {
 
     setLoading(true);
     try {
-      await updateDoc(doc(db, 'profiles', selectedUser.id), {
+      const targetRef = selectedUser.account_state === 'pending' && selectedUser.invitation_id
+        ? doc(db, 'staff_invitations', selectedUser.invitation_id)
+        : doc(db, 'profiles', selectedUser.id);
+      await updateDoc(targetRef, {
         status: newStatus,
         updated_at: new Date().toISOString(),
       });
@@ -381,8 +443,12 @@ export default function Permissions() {
     const finalBranchId = newBranchId === 'all' ? null : newBranchId;
 
     try {
-      await updateDoc(doc(db, 'profiles', selectedUser.id), {
+      const targetRef = selectedUser.account_state === 'pending' && selectedUser.invitation_id
+        ? doc(db, 'staff_invitations', selectedUser.invitation_id)
+        : doc(db, 'profiles', selectedUser.id);
+      await updateDoc(targetRef, {
         branch_id: finalBranchId,
+        branchId: finalBranchId,
         updated_at: new Date().toISOString(),
       });
       setSelectedUser((prev) => (prev ? { ...prev, branch_id: finalBranchId } : null));
@@ -399,28 +465,27 @@ export default function Permissions() {
 
     setLoading(true);
     try {
-      // 1. Delete existing user_permissions and add new ones in an atomic batch
-      const permsQ = query(collection(db, 'user_permissions'), where('user_id', '==', selectedUser.id));
-      const permsSnap = await getDocs(permsQ);
-      
-      const batch = writeBatch(db);
-      for (const pDoc of permsSnap.docs) {
-        batch.delete(pDoc.ref);
-      }
-
+      const safePermissions = normalizePermissionIds(editPermissions);
       const now = new Date().toISOString();
-      for (const p of editPermissions) {
-        const pRef = doc(collection(db, 'user_permissions'));
-        batch.set(pRef, {
-          tenant_id: tenantId || null,
-          user_id: selectedUser.id,
-          permission: p,
-          granted_by: user?.uid || null,
-          created_at: now,
+      if (selectedUser.account_state === 'pending' && selectedUser.invitation_id) {
+        await updateDoc(doc(db, 'staff_invitations', selectedUser.invitation_id), {
+          permissions: safePermissions,
+          permissions_version: PERMISSIONS_SCHEMA_VERSION,
+          updated_at: now,
+        });
+      } else {
+        await replaceActiveStaffAccess({
+          userId: selectedUser.id,
+          fullName: selectedUser.full_name,
+          email: selectedUser.email,
+          tenantId: tenantId || '',
+          branchId: selectedUser.branch_id || null,
+          role: selectedUser.role,
+          permissions: safePermissions,
+          status: selectedUser.status,
+          grantedBy: user?.uid || '',
         });
       }
-
-      await batch.commit();
 
       // 2. Audit log
       if (tenantId) {
@@ -431,7 +496,7 @@ export default function Permissions() {
             target_id: selectedUser.id,
             target_name: selectedUser.full_name,
             user: user?.email || 'المدير',
-            details: `تحديث الصلاحيات للمستخدم ${selectedUser.full_name} (${editPermissions.length} صلاحية)`,
+            details: `تحديث الصلاحيات للمستخدم ${selectedUser.full_name} (${safePermissions.length} صلاحية)`,
             created_at: now,
           });
         } catch (auditErr) {
@@ -439,8 +504,9 @@ export default function Permissions() {
         }
       }
 
-      toast.success(`تم حفظ ${editPermissions.length} صلاحية للمستخدم بنجاح`);
-      setSelectedUser((prev) => (prev ? { ...prev, permissions: editPermissions } : null));
+      toast.success(`تم حفظ ${safePermissions.length} صلاحية للمستخدم بنجاح`);
+      setEditPermissions(safePermissions);
+      setSelectedUser((prev) => (prev ? { ...prev, permissions: safePermissions } : null));
       await fetchUsers();
     } catch (err: any) {
       console.error('Error saving permissions:', err);
@@ -469,75 +535,98 @@ export default function Permissions() {
     }
 
     setAddingUser(true);
+    let secondaryApp: ReturnType<typeof initializeApp> | null = null;
+    let createdAuthUser: FirebaseUser | null = null;
     try {
-      let createdUid = '';
+      const email = normalizeStaffEmail(newUserForm.email);
+      const branchVal = newUserForm.branchId === 'all' ? null : newUserForm.branchId;
+      const initialPerms = getRolePermissionIds(newUserForm.role);
+      let targetId = email;
 
       if (useGoogleAuth) {
-        createdUid = `user_${Date.now()}`;
-      } else {
-        const secondaryApp = initializeApp(firebaseConfig, `user-create-${Date.now()}`);
-        const secondaryAuth = getAuth(secondaryApp);
-        const cred = await createUserWithEmailAndPassword(secondaryAuth, newUserForm.email, newUserForm.password);
-        createdUid = cred.user.uid;
-        await updateProfile(cred.user, { displayName: newUserForm.name });
-      }
+        const existingProfile = await getDocs(query(
+          collection(db, 'profiles'),
+          where('tenant_id', '==', tenantId),
+          where('email', '==', email),
+          limit(1)
+        ));
+        if (!existingProfile.empty) {
+          throw new Error('هذا البريد مرتبط بحساب موظف موجود بالفعل');
+        }
 
-      // Create profile document
-      const branchVal = newUserForm.branchId === 'all' ? null : newUserForm.branchId;
-      await setDoc(doc(db, 'profiles', createdUid), {
-        full_name: newUserForm.name,
-        email: newUserForm.email,
-        tenant_id: tenantId,
-        branch_id: branchVal,
-        role: newUserForm.role,
-        status: 'active',
-        created_at: new Date().toISOString(),
-      });
+        const invitationRef = doc(db, 'staff_invitations', email);
+        const existingInvitation = await getDoc(invitationRef);
+        if (existingInvitation.exists() && existingInvitation.data().tenant_id !== tenantId) {
+          throw new Error('هذا البريد مرتبط بدعوة منشأة أخرى');
+        }
 
-      // Add user_roles
-      await addDoc(collection(db, 'user_roles'), {
-        user_id: createdUid,
-        role: newUserForm.role,
-        tenant_id: tenantId,
-        created_at: new Date().toISOString(),
-      });
-
-      // Apply initial role permissions
-      const initialTemplate = ROLE_TEMPLATES[newUserForm.role];
-      const initialPerms = initialTemplate
-        ? initialTemplate.permissions.includes('*')
-          ? ALL_PERMISSION_IDS
-          : initialTemplate.permissions
-        : [];
-
-      for (const p of initialPerms) {
-        await addDoc(collection(db, 'user_permissions'), {
-          user_id: createdUid,
-          permission: p,
-          granted_by: user?.uid,
-          created_at: new Date().toISOString(),
+        await setDoc(invitationRef, {
+          ...buildStaffInvitation({
+            fullName: newUserForm.name,
+            email,
+            tenantId,
+            branchId: branchVal,
+            role: newUserForm.role,
+            permissions: initialPerms,
+          }, user?.uid || ''),
+          created_at: existingInvitation.data()?.created_at || new Date().toISOString(),
+          updated_at: new Date().toISOString(),
         });
+      } else {
+        secondaryApp = initializeApp(firebaseConfig, `user-create-${Date.now()}`);
+        const secondaryAuth = getAuth(secondaryApp);
+        const cred = await createUserWithEmailAndPassword(secondaryAuth, email, newUserForm.password);
+        createdAuthUser = cred.user;
+        targetId = cred.user.uid;
+        await updateProfile(cred.user, { displayName: newUserForm.name });
+        await replaceActiveStaffAccess({
+          userId: cred.user.uid,
+          fullName: newUserForm.name,
+          email,
+          tenantId,
+          branchId: branchVal,
+          role: newUserForm.role,
+          permissions: initialPerms,
+          status: 'active',
+          grantedBy: user?.uid || '',
+        });
+        createdAuthUser = null;
+        await signOut(secondaryAuth).catch(() => {});
       }
 
       // Log to audit
-      await addDoc(collection(db, 'audit_logs'), {
-        tenant_id: tenantId,
-        action: 'USER_CREATED',
-        target_id: createdUid,
-        target_name: newUserForm.name,
-        user: user?.email || 'المدير',
-        details: `إضافة مستخدم جديد: ${newUserForm.name} بدور: ${getRoleLabel(newUserForm.role)}`,
-        created_at: new Date().toISOString(),
-      });
+      try {
+        await addDoc(collection(db, 'audit_logs'), {
+          tenant_id: tenantId,
+          action: useGoogleAuth ? 'GOOGLE_STAFF_INVITED' : 'USER_CREATED',
+          target_id: targetId,
+          target_name: newUserForm.name,
+          user: user?.email || 'المدير',
+          details: `${useGoogleAuth ? 'دعوة حساب Google' : 'إضافة مستخدم جديد'}: ${newUserForm.name} بدور: ${getRoleLabel(newUserForm.role)}`,
+          created_at: new Date().toISOString(),
+        });
+      } catch (auditError) {
+        console.warn('Staff creation audit log failed non-fatally:', auditError);
+      }
 
-      toast.success('تمت إضافة المستخدم بنجاح');
+      toast.success(useGoogleAuth
+        ? 'تم حفظ دعوة Google. سيتم ربطها تلقائياً عند أول تسجيل دخول بهذا البريد.'
+        : 'تمت إضافة المستخدم وربط حساب الدخول بنجاح');
       setShowAddUser(false);
       setNewUserForm({ name: '', email: '', password: '', role: 'cashier', branchId: 'all' });
       await fetchUsers();
     } catch (err: any) {
       console.error('Error creating user:', err);
+      if (createdAuthUser) {
+        await deleteAuthUser(createdAuthUser).catch((rollbackError) => {
+          console.error('Failed to roll back partially created Auth user:', rollbackError);
+        });
+      }
       toast.error('حدث خطأ أثناء إنشاء المستخدم: ' + (err.message || ''));
     } finally {
+      if (secondaryApp) {
+        await deleteApp(secondaryApp).catch(() => {});
+      }
       setAddingUser(false);
     }
   };
@@ -558,31 +647,41 @@ export default function Permissions() {
 
     setDeletingUser(true);
     try {
-      // 1. Delete roles
-      const rolesQ = query(collection(db, 'user_roles'), where('user_id', '==', selectedUser.id));
-      const rolesSnap = await getDocs(rolesQ);
-      for (const d of rolesSnap.docs) await deleteDoc(d.ref);
-
-      // 2. Delete permissions
-      const permsQ = query(collection(db, 'user_permissions'), where('user_id', '==', selectedUser.id));
-      const permsSnap = await getDocs(permsQ);
-      for (const d of permsSnap.docs) await deleteDoc(d.ref);
-
-      // 3. Delete profile
-      await deleteDoc(doc(db, 'profiles', selectedUser.id));
+      if (selectedUser.account_state === 'pending' && selectedUser.invitation_id) {
+        await deleteDoc(doc(db, 'staff_invitations', selectedUser.invitation_id));
+      } else {
+        // Browser Firebase clients cannot delete/disable another Auth user. Keep a
+        // disabled tombstone profile so that a later login cannot be onboarded as
+        // a new tenant owner, and revoke every effective permission atomically.
+        await replaceActiveStaffAccess({
+          userId: selectedUser.id,
+          fullName: selectedUser.full_name,
+          email: selectedUser.email,
+          tenantId: tenantId || '',
+          branchId: selectedUser.branch_id || null,
+          role: 'viewer',
+          permissions: [],
+          status: 'disabled',
+          grantedBy: user?.uid || '',
+        });
+        await updateDoc(doc(db, 'profiles', selectedUser.id), {
+          deleted_at: new Date().toISOString(),
+          deleted_by: user?.uid || null,
+        });
+      }
 
       // 4. Audit log
       await addDoc(collection(db, 'audit_logs'), {
         tenant_id: tenantId,
-        action: 'USER_DELETED',
-        target_id: selectedUser.id,
+        action: selectedUser.account_state === 'pending' ? 'STAFF_INVITATION_REVOKED' : 'USER_ACCESS_REVOKED',
+        target_id: selectedUser.invitation_id || selectedUser.id,
         target_name: selectedUser.full_name,
         user: user?.email || 'المدير',
-        details: `حذف المستخدم: ${selectedUser.full_name} (${selectedUser.email})`,
+        details: `${selectedUser.account_state === 'pending' ? 'إلغاء دعوة' : 'إلغاء وصول'} المستخدم: ${selectedUser.full_name} (${selectedUser.email})`,
         created_at: new Date().toISOString(),
       });
 
-      toast.success('تم حذف المستخدم بنجاح');
+      toast.success(selectedUser.account_state === 'pending' ? 'تم إلغاء الدعوة بنجاح' : 'تم إلغاء وصول المستخدم بنجاح');
       setShowDeleteConfirm(false);
       setSelectedUser(null);
       await fetchUsers();
@@ -717,7 +816,7 @@ export default function Permissions() {
                             isDisabledUser ? 'text-destructive' : 'text-emerald-500'
                           )}
                         >
-                          {isDisabledUser ? 'معطل' : 'نشط'}
+                          {u.account_state === 'pending' ? 'بانتظار تسجيل Google' : (isDisabledUser ? 'معطل' : 'نشط')}
                         </span>
                       </div>
                     </div>
@@ -752,6 +851,8 @@ export default function Permissions() {
                         <h2 className="text-xl sm:text-2xl font-black text-foreground">{selectedUser.full_name}</h2>
                         {selectedUser.status === 'disabled' ? (
                           <Badge variant="destructive" className="font-bold">حساب معطل</Badge>
+                        ) : selectedUser.account_state === 'pending' ? (
+                          <Badge variant="outline" className="text-amber-500 border-amber-500/30 bg-amber-500/5 font-bold">دعوة Google معلّقة</Badge>
                         ) : (
                           <Badge variant="outline" className="text-emerald-500 border-emerald-500/30 bg-emerald-500/5 font-bold">نشط</Badge>
                         )}
@@ -1095,7 +1196,7 @@ export default function Permissions() {
                 disabled={addingUser}
                 className="rounded-xl h-10 text-xs font-bold gap-2 px-5"
               >
-                {addingUser ? 'جاري الإضافة...' : 'إنشاء المستخدم'}
+                {addingUser ? 'جاري الإضافة...' : (useGoogleAuth ? 'حفظ دعوة Google' : 'إنشاء المستخدم')}
               </Button>
             </div>
           </form>
@@ -1108,16 +1209,18 @@ export default function Permissions() {
           <DialogHeader>
             <DialogTitle className="text-lg font-bold text-destructive flex items-center gap-2">
               <AlertTriangle className="w-5 h-5" />
-              تأكيد حذف المستخدم
+              {selectedUser?.account_state === 'pending' ? 'تأكيد إلغاء الدعوة' : 'تأكيد إلغاء وصول المستخدم'}
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-3 py-2 text-sm text-muted-foreground leading-relaxed">
             <p>
-              هل أنت متأكد من رغبتك في حذف حساب المستخدم{' '}
+              هل أنت متأكد من رغبتك في {selectedUser?.account_state === 'pending' ? 'إلغاء دعوة' : 'إلغاء وصول'} المستخدم{' '}
               <strong className="text-foreground">{selectedUser?.full_name}</strong> نهائياً؟
             </p>
             <p className="text-xs text-destructive/90 bg-destructive/10 p-2.5 rounded-xl border border-destructive/20">
-              سيتم سحب جميع الصلاحيات والأدوار فوراً وحذف ملف الدخول.
+              {selectedUser?.account_state === 'pending'
+                ? 'لن يتمكن هذا البريد من ربط نفسه بالمنشأة عبر Google.'
+                : 'سيتم سحب جميع الصلاحيات وتعطيل ملف النظام فوراً مع الاحتفاظ بسجل تدقيق قابل للمراجعة.'}
             </p>
           </div>
           <div className="flex items-center justify-end gap-2 pt-2">
@@ -1134,7 +1237,7 @@ export default function Permissions() {
               onClick={handleDeleteUser}
               className="rounded-xl text-xs font-bold h-10 gap-2"
             >
-              {deletingUser ? 'جاري الحذف...' : 'تأكيد الحذف النهائي'}
+              {deletingUser ? 'جاري التنفيذ...' : (selectedUser?.account_state === 'pending' ? 'إلغاء الدعوة' : 'إلغاء الوصول')}
             </Button>
           </div>
         </DialogContent>

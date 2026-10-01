@@ -38,7 +38,7 @@ export function isValidPermission(permission: string): permission is ApiPermissi
  * Bidirectional typed mapping layer between frontend dot-notation permissions
  * and backend colon-notation permissions to prevent authorization gaps.
  */
-export const PERMISSION_MAPPINGS: Record<string, string> = {
+export const PERMISSION_MAPPINGS: Record<string, string | readonly string[]> = {
   // Settings
   'settings.view': 'settings:read',
   'settings.manage': 'settings:manage',
@@ -50,15 +50,15 @@ export const PERMISSION_MAPPINGS: Record<string, string> = {
   'orders.manage': 'orders:update',
   'pos.create_order': 'orders:create',
   'pos.view': 'orders:read',
-  'orders:create': 'pos.create_order',
-  'orders:read': 'orders.view',
-  'orders:update': 'orders.manage',
-  'orders:update_status': 'orders.manage',
+  'orders:create': ['pos.create_order', 'sales.create'],
+  'orders:read': ['orders.view', 'sales.view'],
+  'orders:update': ['orders.manage', 'pos.edit_order'],
+  'orders:update_status': ['orders.manage', 'pos.edit_order'],
 
   // Menu / Catalog
   'menu.view': 'menu:read',
   'menu.manage': 'menu:manage',
-  'menu:read': 'menu.view',
+  'menu:read': ['menu.view', 'products.view'],
   'menu:manage': 'menu.manage',
 
   // Attendance
@@ -69,8 +69,7 @@ export const PERMISSION_MAPPINGS: Record<string, string> = {
   'attendance:manage': 'attendance.manage',
 
   // Branches
-  'branches.view': 'branches:read',
-  'branches:read': 'branches.view',
+  'branches:read': ['settings.view', 'dashboard.view'],
 
   // Delivery
   'delivery.view': 'delivery:read',
@@ -79,8 +78,12 @@ export const PERMISSION_MAPPINGS: Record<string, string> = {
 
   // Customers
   'customers.view': 'customers:read',
-  'customers.manage': 'customers:manage',
   'customers:read': 'customers.view',
+
+  // Offers / Reservations
+  'offers:read': 'promotions.view',
+  'reservations:create': 'tables.manage',
+  'reservations:read': 'tables.view',
 
   // Finance / Payroll
   'payroll.view': 'payroll:read',
@@ -99,6 +102,7 @@ export const PERMISSION_MAPPINGS: Record<string, string> = {
   'inventory.view': 'inventory:read',
   'inventory.adjust': 'inventory:manage',
   'inventory:read': 'inventory.view',
+  'inventory:manage': ['inventory.adjust', 'inventory.edit'],
 
   // Suppliers
   'suppliers.view': 'suppliers:read',
@@ -108,6 +112,9 @@ export const PERMISSION_MAPPINGS: Record<string, string> = {
   // Security / Permissions
   'permissions.manage': 'permissions:manage',
   'permissions:manage': 'permissions.manage',
+  'integrations.manage': 'api_clients:manage',
+  'api_clients:manage': 'integrations.manage',
+  'webhooks:manage': 'integrations.manage',
 };
 
 /**
@@ -121,7 +128,8 @@ export function hasPermissionMatch(clientPerms: string[], required: string): boo
 
   // Check mapped equivalent
   const mapped = PERMISSION_MAPPINGS[required];
-  if (mapped && clientPerms.includes(mapped)) return true;
+  const mappedPermissions = Array.isArray(mapped) ? mapped : (mapped ? [mapped] : []);
+  if (mappedPermissions.some((permission) => clientPerms.includes(permission))) return true;
 
   // Check generic dot <-> colon conversion
   const colonForm = required.replace('.', ':');
