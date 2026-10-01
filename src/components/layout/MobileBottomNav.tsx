@@ -84,6 +84,11 @@ export function MobileBottomNav() {
   const isInventoryActive = pathname.startsWith('/inventory') || pathname.startsWith('/purchasing') || pathname.startsWith('/suppliers') || pathname.startsWith('/waste');
   const isMoreActive = !isHomeActive && !isPosActive && !isProductsActive && !isInventoryActive;
 
+  const canOpenDashboard = isAdmin || hasAnyPermission(['dashboard.view']);
+  const canOpenPOS = isAdmin || hasAnyPermission(['pos.view']);
+  const canOpenProducts = isAdmin || hasAnyPermission(['products.view', 'menu.view']);
+  const canOpenInventory = isAdmin || hasAnyPermission(['inventory.view']);
+
   // Filter allowed modules
   const allowedModules = useMemo(() => {
     return allAppModules.filter(m => isAdmin || hasAnyPermission(m.perms));
@@ -136,6 +141,7 @@ export function MobileBottomNav() {
             to="/"
             className={cn(
               "flex flex-col items-center justify-center flex-1 h-full py-1 text-center transition-all duration-200 active:scale-90",
+              !canOpenDashboard && "hidden",
               isHomeActive
                 ? "text-primary font-bold"
                 : "text-muted-foreground hover:text-foreground"
@@ -155,6 +161,7 @@ export function MobileBottomNav() {
             to="/pos"
             className={cn(
               "flex flex-col items-center justify-center flex-1 h-full py-1 text-center transition-all duration-200 active:scale-90",
+              !canOpenPOS && "hidden",
               isPosActive
                 ? "text-primary font-bold"
                 : "text-muted-foreground hover:text-foreground"
@@ -174,6 +181,7 @@ export function MobileBottomNav() {
             to="/products"
             className={cn(
               "flex flex-col items-center justify-center flex-1 h-full py-1 text-center transition-all duration-200 active:scale-90",
+              !canOpenProducts && "hidden",
               isProductsActive
                 ? "text-primary font-bold"
                 : "text-muted-foreground hover:text-foreground"
@@ -193,6 +201,7 @@ export function MobileBottomNav() {
             to="/inventory"
             className={cn(
               "flex flex-col items-center justify-center flex-1 h-full py-1 text-center transition-all duration-200 active:scale-90",
+              !canOpenInventory && "hidden",
               isInventoryActive
                 ? "text-primary font-bold"
                 : "text-muted-foreground hover:text-foreground"
