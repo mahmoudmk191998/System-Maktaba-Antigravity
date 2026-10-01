@@ -37,6 +37,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { LibraryAtmosphere } from '@/components/auth/LibraryAtmosphere';
+import { claimPendingStaffInvitation } from '@/services/auth/staffProvisioning.service';
 
 export default function Auth() {
   const navigate = useNavigate();
@@ -94,15 +95,24 @@ export default function Auth() {
       const provider = new GoogleAuthProvider();
       const result = await signInWithPopup(firebaseAuth, provider);
       const additionalInfo = getAdditionalUserInfo(result);
-      
-      if (additionalInfo?.isNewUser) {
+
+      // An employee invited from Permissions may be a brand-new Firebase Auth
+      // user. Claim the invitation BEFORE applying the public "new user" guard,
+      // otherwise the invited Google account gets deleted on its first login.
+      const claimedStaffInvitation = await claimPendingStaffInvitation(result.user);
+
+      if (additionalInfo?.isNewUser && !claimedStaffInvitation) {
         await result.user.delete();
         await firebaseAuth.signOut();
         toast.error('الحساب غير مسجل في بطاقات المكتبة. يرجى إنشاء حساب جديد أولاً.');
         return;
       }
-      
-      toast.success('تم التحقق من بطاقة القارئ عبر حساب جوجل بنجاح');
+
+      toast.success(
+        claimedStaffInvitation
+          ? 'تم ربط حساب Google بحساب الموظف وصلاحياته بنجاح'
+          : 'تم التحقق من بطاقة القارئ عبر حساب جوجل بنجاح'
+      );
       navigate('/');
     } catch (error: any) {
       toast.error(error.message || 'خطأ في تسجيل الدخول بحساب جوجل');
@@ -117,8 +127,11 @@ export default function Auth() {
       const provider = new GoogleAuthProvider();
       const result = await signInWithPopup(firebaseAuth, provider);
       const additionalInfo = getAdditionalUserInfo(result);
-      
-      if (!additionalInfo?.isNewUser) {
+      const claimedStaffInvitation = await claimPendingStaffInvitation(result.user);
+
+      if (claimedStaffInvitation) {
+        toast.success('تم ربط حساب Google بدعوة الموظف وصلاحياته المحددة');
+      } else if (!additionalInfo?.isNewUser) {
         toast.success('بطاقة هذا الحساب موجودة بالفعل. تم تسجيل الدخول.');
       } else {
         toast.success('تم إصدار بطاقة حساب جوجل بنجاح في سجلات المكتبة');
