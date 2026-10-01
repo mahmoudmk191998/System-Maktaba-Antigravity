@@ -10,12 +10,15 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useTenantBranch } from '@/hooks/useDatabase';
+import { useUserPermissions } from '@/hooks/usePermissions';
 import { db } from '@/lib/firebase';
 import { collection, query, where, getDocs, addDoc, updateDoc, deleteDoc, doc, orderBy } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
 
 export default function Maintenance() {
   const { branchId } = useTenantBranch();
+  const { hasPermission, isAdmin } = useUserPermissions();
+  const canManageMaintenance = isAdmin || hasPermission('maintenance.manage');
   const { toast } = useToast();
 
   const [records, setRecords] = useState<any[]>([]);
@@ -58,6 +61,10 @@ export default function Maintenance() {
 
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!canManageMaintenance) {
+      toast({ title: 'غير مصرح', description: 'لا تملك صلاحية إدارة الصيانة', variant: 'destructive' });
+      return;
+    }
     if (!assetName) return;
     setIsSubmitting(true);
     try {
@@ -83,6 +90,10 @@ export default function Maintenance() {
 
   const handleUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!canManageMaintenance) {
+      toast({ title: 'غير مصرح', description: 'لا تملك صلاحية إدارة الصيانة', variant: 'destructive' });
+      return;
+    }
     if (!editingRecord) return;
     setIsSubmitting(true);
     try {
@@ -104,6 +115,10 @@ export default function Maintenance() {
   };
 
   const handleDelete = async (id: string) => {
+    if (!canManageMaintenance) {
+      toast({ title: 'غير مصرح', description: 'لا تملك صلاحية إدارة الصيانة', variant: 'destructive' });
+      return;
+    }
     if (!window.confirm('هل أنت متأكد من حذف هذا السجل؟')) return;
     try {
       await deleteDoc(doc(db, 'maintenance_records', id));
@@ -118,12 +133,12 @@ export default function Maintenance() {
     <MainLayout
       title="الأصول والصيانة"
       subtitle="إدارة المعدات، الماكينات، وجدولة ومتابعة أعمال الصيانة الدورية."
-      actions={
+      actions={canManageMaintenance ? (
         <Button onClick={() => setIsAddOpen(true)} className="gap-2">
           <Plus className="w-4 h-4" />
           تسجيل صيانة
         </Button>
-      }
+      ) : null}
     >
       <div className="grid gap-6">
         <Card>
@@ -190,14 +205,18 @@ export default function Maintenance() {
                         </TableCell>
                         <TableCell>{record.cost} جنية</TableCell>
                         <TableCell className="text-center">
-                          <div className="flex justify-center items-center gap-1">
-                            <Button variant="ghost" size="icon" className="h-8 w-8 hover:text-primary" onClick={() => setEditingRecord(record)}>
-                              <Edit className="w-4 h-4" />
-                            </Button>
-                            <Button variant="ghost" size="icon" className="h-8 w-8 hover:text-destructive" onClick={() => handleDelete(record.id)}>
-                              <Trash2 className="w-4 h-4" />
-                            </Button>
-                          </div>
+                          {canManageMaintenance ? (
+                            <div className="flex justify-center items-center gap-1">
+                              <Button variant="ghost" size="icon" className="h-8 w-8 hover:text-primary" onClick={() => setEditingRecord(record)}>
+                                <Edit className="w-4 h-4" />
+                              </Button>
+                              <Button variant="ghost" size="icon" className="h-8 w-8 hover:text-destructive" onClick={() => handleDelete(record.id)}>
+                                <Trash2 className="w-4 h-4" />
+                              </Button>
+                            </div>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">عرض فقط</span>
+                          )}
                         </TableCell>
                       </TableRow>
                     ))
@@ -210,7 +229,7 @@ export default function Maintenance() {
       </div>
 
       {/* Add Dialog */}
-      <Dialog open={isAddOpen} onOpenChange={setIsAddOpen}>
+      <Dialog open={canManageMaintenance && isAddOpen} onOpenChange={setIsAddOpen}>
         <DialogContent>
           <form onSubmit={handleAdd}>
             <DialogHeader>
@@ -261,7 +280,7 @@ export default function Maintenance() {
       </Dialog>
 
       {/* Edit Dialog */}
-      <Dialog open={!!editingRecord} onOpenChange={(open) => !open && setEditingRecord(null)}>
+      <Dialog open={canManageMaintenance && !!editingRecord} onOpenChange={(open) => !open && setEditingRecord(null)}>
         <DialogContent>
           <form onSubmit={handleUpdate}>
             <DialogHeader>
